@@ -6,8 +6,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from forecast_log.backtest import (
+    PATH_HORIZON,
     forecast_rows,
     render_report,
+    rolling_paths,
     run_backtest,
     timeline_document,
     write_report,
@@ -71,12 +73,17 @@ def backtest_command(root: Path) -> dict:
     if extra is not None:
         print(f"输入含前瞻数据：{describe_features()}")
     rows = forecast_rows(vxn, ndx, extra)
-    report = run_backtest(vxn, ndx, rows, extra)
+    # Concave once: the report and the chart read the same rolling paths.
+    paths = {
+        "vxn": rolling_paths(vxn, PATH_HORIZON, extra),
+        "ndx": rolling_paths(ndx, PATH_HORIZON),
+    }
+    report = run_backtest(vxn, ndx, rows, extra, paths)
     report["reference"] = ref
     path = root / "artifacts" / "backtest_report.json"
     write_report(path, report)
     timeline_path = root / "artifacts" / "timeline.json"
-    write_report(timeline_path, timeline_document(vxn, ndx, rows, extra), indent=None)
+    write_report(timeline_path, timeline_document(vxn, ndx, rows, extra, paths), indent=None)
     print(render_report(report))
     print(f"完整结果写在 {path}")
     print(f"时间轴写在 {timeline_path}")

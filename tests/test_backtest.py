@@ -135,3 +135,51 @@ def test_climatology_waits_until_the_outcome_session():
     matured = rows + [{"as_of": "2020-01-10", "resolve": "2020-01-20", "outcome": 0}]
     # One resolved outcome is below the minimum of 30, so the baseline stays unset.
     assert _climatology(matured) == [None, None, None]
+
+
+def test_rolling_path_never_reads_the_sessions_it_is_scored_on():
+    from forecast_log.backtest import PATH_HORIZON, rolling_paths
+
+    rng = np.random.default_rng(3)
+    closes = np.clip(19 + rng.normal(0, 0.5, size=min_index(PATH_HORIZON) + 300), 12, 30)
+    series = _series(closes)
+    rows = rolling_paths(series)
+    assert rows
+    # Overwrite every close after the middle day: forecasts made before it cannot move.
+    cut = len(series.bars) // 2
+    shattered = tuple(
+        Bar(bar.date, 90.0 if position > cut else bar.close)
+        for position, bar in enumerate(series.bars)
+    )
+    again = {row["as_of"]: row for row in rolling_paths(Series("^VXN", "America/New_York", "t", shattered))}
+    for row in rows:
+        if row["resolve"] is not None and row["resolve"] <= series.bars[cut].date.isoformat():
+            assert again[row["as_of"]]["path"] == row["path"]
+
+
+def test_rolling_path_scores_against_the_close_that_printed():
+    from forecast_log.backtest import PATH_HORIZON, path_document, path_summary, rolling_paths
+
+    series = _series(np.clip(18 + np.sin(np.arange(min_index(7) + 300) / 9.0) * 3, 10, 30))
+    rows = rolling_paths(series)
+    dates = [bar.date.isoformat() for bar in series.bars]
+    first = rows[0]
+    assert first["as_of"] == dates[dates.index(first["as_of"])]
+    assert first["resolve"] == dates[dates.index(first["as_of"]) + PATH_HORIZON]
+    assert first["actual"][-1] == series.bars[dates.index(first["resolve"])].close
+    assert len(first["path"]) == PATH_HORIZON
+    assert all(point["low"] <= point["median"] <= point["high"] for point in first["path"])
+    summary = path_summary(rows)
+    # The newest rows run past the last close, so the scored sample is shorter than the paths.
+    assert summary["n"] == sum(1 for row in rows if row["actual"][-1] is not None)
+    assert 0 < summary["n"] < len(rows)
+    assert [step["step"] for step in summary["steps"]] == list(range(1, PATH_HORIZON + 1))
+    document = path_document(rows)
+    assert (
+        len(document["time"])
+        == len(document["median"])
+        == len(document["low"])
+        == summary["n"]
+    )
+    assert document["summary"]["terminal"]["step"] == PATH_HORIZON
+    assert 0.0 <= document["summary"]["terminal"]["coverage"] <= 1.0

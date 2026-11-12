@@ -8,11 +8,17 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from forecast_log.bars import Bar, Series
-from forecast_log.estimate import NEIGHBOURS, AnalogModel, min_index
+from forecast_log.estimate import LONG_LOOKBACK, NEIGHBOURS, AnalogModel, min_index
 from forecast_log.horizon import sessions_after
 
 NY = ZoneInfo("America/New_York")
 CLIM_MIN = 30
+# The rolling path: every session states a 7-session fan, and each step is scored when
+# that session prints. This is the only place in the repo that compares a forecast made
+# H sessions ago with what actually printed on the session it was about.
+PATH_HORIZON = 7
+# A "shock" is a move this big or larger by the resolve session, in either direction.
+SHOCK = 0.12
 
 
 def brier(probability, outcome) -> float:
@@ -321,6 +327,8 @@ def daily_forecasts(series: Series, extra=None) -> dict:
     predicted = np.array([row["median"] for row in rows], dtype=float)
     actual = np.array([row["actual"] for row in rows], dtype=float)
     previous = np.array([row["previous"] for row in rows], dtype=float)
+    hi = np.array([row["high"] for row in rows], dtype=float)
+    lo = np.array([row["low"] for row in rows], dtype=float)
     return {
         "rows": rows,
         "tomorrow": tomorrow,
@@ -330,6 +338,10 @@ def daily_forecasts(series: Series, extra=None) -> dict:
             "median_abs_pct_error": round(float(np.median(pct)), 4) if len(rows) else None,
             "level_corr": round(float(np.corrcoef(predicted, actual)[0, 1]), 4) if len(rows) > 2 else None,
             "baseline_mae": round(float(np.abs(previous - actual).mean()), 4) if len(rows) else None,
+            "median_abs_move": round(float(np.median(np.abs(actual / previous - 1.0))), 4)
+            if len(rows)
+            else None,
+            "mean_width": round(float(np.mean((hi - lo) / predicted)), 4) if len(rows) else None,
             "band_coverage": round(
                 float(
                     np.mean(
@@ -350,7 +362,216 @@ def daily_forecasts(series: Series, extra=None) -> dict:
     }
 
 
-def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], extra=None) -> dict:
+def rolling_paths(series: Series, horizon: int = PATH_HORIZON, extra=None) -> list[dict]:
+    """One forecast per session: a full fan, plus the closes it will be scored against.
+
+    `forecast(i, ...)` only reads closes[0..i] and analogues that finished at or before
+    `i`, so every row here is what the model would have printed that evening. `actual`
+    holds the later closes; nothing in the forecast saw them.
+    """
+    bars = series.bars
+    closes = np.array([bar.close for bar in bars], dtype=float)
+    model = AnalogModel(closes, extra)
+    start = model.first_index(horizon) + 1
+    rows = []
+    # Runs to the last printed session: a forecast made today still has a path, it just has
+    # no `actual` yet for the steps that are still in the future (None, never dropped early).
+    for i in range(start, len(bars)):
+        estimate = model.forecast(i, horizon, closes[i], with_path=True)
+        recent = np.diff(np.log(closes[i - horizon : i + 1]))
+        rows.append(
+            {
+                "as_of": bars[i].date.isoformat(),
+                # The session the whole `horizon`-long path lands on, if it has printed.
+                "resolve": bars[i + horizon].date.isoformat() if i + horizon < len(bars) else None,
+                "anchor": float(closes[i]),
+                "recent_vol": float(np.std(recent)),
+                # What a "revert to the one-year middle" rule would say, for the direction check.
+                "center": float(np.median(closes[max(0, i - LONG_LOOKBACK) : i + 1])),
+                "path": [
+                    {
+                        "step": point.horizon,
+                        "date": bars[i + point.horizon].date.isoformat()
+                        if i + point.horizon < len(bars)
+                        else None,
+                        "median": round(point.median, 4),
+                        "low": round(point.low, 4),
+                        "high": round(point.high, 4),
+                    }
+                    for point in estimate.path
+                ],
+                "actual": [
+                    float(closes[i + step]) if i + step < len(bars) else None
+                    for step in range(1, horizon + 1)
+                ],
+            }
+        )
+    return rows
+
+
+def path_summary(rows: list[dict], horizon: int = PATH_HORIZON) -> dict:
+    """How far off a forecast made H sessions earlier is, by step and at the terminal step."""
+    # Only steps whose session has printed can be scored; the newest rows still run past the
+    # last close, and those cells stay empty rather than getting a made-up value.
+    scored = [row for row in rows if row["actual"][-1] is not None]
+    if not scored:
+        return {"horizon": horizon, "n": 0, "steps": [], "latest": []}
+    anchor = np.array([row["anchor"] for row in scored], dtype=float)
+    steps = []
+    for step in range(1, horizon + 1):
+        sample = [row for row in rows if row["actual"][step - 1] is not None]
+        step_anchor = np.array([row["anchor"] for row in sample], dtype=float)
+        actual = np.array([row["actual"][step - 1] for row in sample], dtype=float)
+        median = np.array([row["path"][step - 1]["median"] for row in sample], dtype=float)
+        low = np.array([row["path"][step - 1]["low"] for row in sample], dtype=float)
+        high = np.array([row["path"][step - 1]["high"] for row in sample], dtype=float)
+        error = np.abs(median - actual)
+        # The baseline a longer horizon has to beat: nothing moves from where it is today.
+        naive = np.abs(step_anchor - actual)
+        coverage = float(np.mean((actual >= low) & (actual <= high)))
+        relative = np.abs(actual / step_anchor - 1.0)
+        steps.append(
+            {
+                "step": step,
+                "n": len(sample),
+                "mae": round(float(error.mean()), 4),
+                "naive_mae": round(float(naive.mean()), 4),
+                "beats_naive": round(float(1.0 - error.mean() / naive.mean()), 4),
+                "median_abs_pct": round(float(np.median(error / actual)), 4),
+                "naive_median_abs_pct": round(float(np.median(naive / actual)), 4),
+                "coverage": round(coverage, 4),
+                "mean_width": round(float(np.mean((high - low) / median)), 4),
+                # 这一档实际走了多远。带宽和它的比值才是「包住」的原因。
+                "median_abs_move": round(
+                    float(np.median(np.abs(actual / step_anchor - 1.0))), 4
+                ),
+                # The constant "today's close +/- x%" band that would cover just as often.
+                "naive_width": round(2.0 * float(np.quantile(relative, coverage)), 4),
+                "direction_hit": round(
+                    float(np.mean(np.sign(median - step_anchor) == np.sign(actual - step_anchor))), 4
+                ),
+            }
+        )
+
+    terminal = steps[-1]
+    actual = np.array([row["actual"][-1] for row in scored], dtype=float)
+    median = np.array([row["path"][-1]["median"] for row in scored], dtype=float)
+    low = np.array([row["path"][-1]["low"] for row in scored], dtype=float)
+    high = np.array([row["path"][-1]["high"] for row in scored], dtype=float)
+    width = (high - low) / median
+    shock = np.abs(actual / anchor - 1.0) > SHOCK
+    recent = np.array([row["recent_vol"] for row in scored], dtype=float)
+    center = np.array([row["center"] for row in scored], dtype=float)
+
+    def terciles(signal: np.ndarray) -> list[float | None]:
+        if np.all(np.isnan(signal)):
+            return [None, None, None]
+        cuts = np.nanquantile(signal, [1 / 3, 2 / 3])
+        bands = [signal <= cuts[0], (signal > cuts[0]) & (signal <= cuts[1]), signal > cuts[1]]
+        return [None if not band.any() else round(float(shock[band].mean()), 4) for band in bands]
+
+    latest = [
+        {
+            "as_of": row["as_of"],
+            "resolve": row["resolve"],
+            "anchor": round(row["anchor"], 2),
+            "median": round(row["path"][-1]["median"], 2),
+            "low": round(row["path"][-1]["low"], 2),
+            "high": round(row["path"][-1]["high"], 2),
+            "actual": round(row["actual"][-1], 2),
+            "error_pct": round((row["path"][-1]["median"] / row["actual"][-1] - 1) * 100, 2),
+            "inside": bool(
+                row["path"][-1]["low"] <= row["actual"][-1] <= row["path"][-1]["high"]
+            ),
+        }
+        for row in scored[-8:]
+    ]
+    return {
+        "horizon": horizon,
+        "n": len(scored),
+        "first_as_of": rows[0]["as_of"],
+        "last_as_of": rows[-1]["as_of"],
+        "last_resolve": scored[-1]["resolve"],
+        "steps": steps,
+        "terminal": {
+            "step": terminal["step"],
+            "mae": terminal["mae"],
+            "naive_mae": terminal["naive_mae"],
+            "beats_naive": terminal["beats_naive"],
+            "median_abs_pct": terminal["median_abs_pct"],
+            "naive_median_abs_pct": terminal["naive_median_abs_pct"],
+            "coverage": terminal["coverage"],
+            "direction_hit": terminal["direction_hit"],
+            "direction_hit_reversion": round(
+                float(np.mean(np.sign(center - anchor) == np.sign(actual - anchor))), 4
+            ),
+            "always_down_hit": round(float(np.mean(actual < anchor)), 4),
+            "change_corr": round(
+                float(np.corrcoef(np.log(median / anchor), np.log(actual / anchor))[0, 1]), 4
+            ),
+            "shock_threshold": SHOCK,
+            "shock_base_rate": round(float(shock.mean()), 4),
+            "shock_by_width": terciles(width),
+            "shock_by_recent_vol": terciles(recent),
+        },
+        "latest": latest,
+    }
+
+
+def ladder_document(rows: list[dict], dates: list[str], pending: list[dict] | None = None) -> dict:
+    """One column per lead time N, aligned to the session axis (null where nothing was said).
+
+    N = 1 是提前一个交易日说的，N = 7 是提前七个。列上每一格都是「目标日那天收盘前 N 天
+    说的中位和区间」，与实际收盘同一根时间轴对齐，图和表都能直接比。
+    """
+    horizon = len(rows[0]["path"]) if rows else PATH_HORIZON
+    index = {day: position for position, day in enumerate(dates)}
+    blank = [None] * len(dates)
+    columns = {
+        str(step): {"median": list(blank), "low": list(blank), "high": list(blank)}
+        for step in range(1, horizon + 1)
+    }
+    for row in rows:
+        for point in row["path"]:
+            position = index.get(point["date"])
+            if position is None:
+                continue
+            column = columns[str(point["step"])]
+            column["median"][position] = round(point["median"], 2)
+            column["low"][position] = round(point["low"], 2)
+            column["high"][position] = round(point["high"], 2)
+    return {
+        "horizons": list(range(1, horizon + 1)),
+        "columns": columns,
+        # 今天出发、还没结算的那一次：目标日在时间轴之外。
+        "pending": pending or [],
+        "summary": path_summary(rows),
+    }
+
+
+def path_document(rows: list[dict], horizon: int = PATH_HORIZON) -> dict:
+    """Columnar terminal step, keyed by the resolve session, for the comparison chart."""
+    resolved = [row for row in rows if row["resolve"] is not None]
+    return {
+        "horizon": horizon,
+        "time": [row["resolve"] for row in resolved],
+        "as_of": [row["as_of"] for row in resolved],
+        "anchor": [round(row["anchor"], 2) for row in resolved],
+        "median": [round(row["path"][-1]["median"], 2) for row in resolved],
+        "low": [round(row["path"][-1]["low"], 2) for row in resolved],
+        "high": [round(row["path"][-1]["high"], 2) for row in resolved],
+        "actual": [round(row["actual"][-1], 2) for row in resolved],
+        "summary": path_summary(rows, horizon),
+    }
+
+
+def timeline_document(
+    vxn: Series,
+    ndx: Series,
+    rows: dict[str, list[dict]],
+    extra=None,
+    paths: dict[str, list[dict]] | None = None,
+) -> dict:
     """Columnar series for the zoomable chart. One forecast row per session."""
 
     def closes(series: Series) -> dict:
@@ -375,8 +596,29 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], ext
         }
 
     daily = {"vxn": daily_forecasts(vxn, extra), "ndx": daily_forecasts(ndx)}
+    if paths is None:
+        paths = {
+            "vxn": rolling_paths(vxn, PATH_HORIZON, extra),
+            "ndx": rolling_paths(ndx, PATH_HORIZON),
+        }
+
+    # 下一次对比：今天出发的 7 日路径，最后一点就是还没结算的那一天。
+    forward = {
+        "vxn": forward_levels(vxn, PATH_HORIZON, None, extra),
+        "ndx": forward_levels(ndx, PATH_HORIZON),
+    }
 
     return {
+        "rolling": {
+            symbol: path_document(sample) for symbol, sample in paths.items() if sample
+        },
+        # 提前 N 天说的 vs 那天真的到的，N 从 1 到 7，对齐到目标日那根 K 线。
+        "ladder": {
+            "vxn": ladder_document(
+                paths["vxn"], [bar.date.isoformat() for bar in vxn.bars], forward["vxn"]
+            )
+        },
+        "forward": forward,
         "vxn": closes(vxn),
         "ndx": closes(ndx),
         "daily": {
@@ -423,10 +665,19 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], ext
 
 
 def run_backtest(
-    vxn: Series, ndx: Series, rows: dict[str, list[dict]] | None = None, extra=None
+    vxn: Series,
+    ndx: Series,
+    rows: dict[str, list[dict]] | None = None,
+    extra=None,
+    paths: dict[str, list[dict]] | None = None,
 ) -> dict:
     if rows is None:
         rows = forecast_rows(vxn, ndx, extra)
+    if paths is None:
+        paths = {
+            "vxn": rolling_paths(vxn, PATH_HORIZON, extra),
+            "ndx": rolling_paths(ndx, PATH_HORIZON),
+        }
     vxn_7 = rows["vxn-h7-gt-30"]
     vxn_12 = rows["vxn-h12-gt-30"]
     ndx_12 = rows["ndx-h12-gt-asof"]
@@ -458,6 +709,11 @@ def run_backtest(
         "vxn_inputs": "state + CBOE vol complex" if extra is not None else "state only",
         "ndx_span": [ndx.bars[0].date.isoformat(), ndx.bars[-1].date.isoformat()],
         "templates": templates,
+        "path": {
+            symbol: path_summary(sample)
+            for symbol, sample in paths.items()
+            if sample
+        },
     }
 
 
@@ -478,7 +734,56 @@ def render_report(report: dict) -> str:
     ]
     for template in report["templates"]:
         lines.append(_render_template(template))
+    for symbol, summary in report.get("path", {}).items():
+        lines.append(_render_path(symbol, summary))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_path(symbol: str, summary: dict) -> str:
+    if not summary.get("n"):
+        return ""
+    horizon = summary["horizon"]
+    terminal = summary["terminal"]
+    lines = [
+        f"## {symbol.upper()} 滚动 {horizon} 日区间（每一格都对过实际）",
+        (
+            f"样本 {summary['n']} 次，{summary['first_as_of']} → {summary['last_as_of']}，"
+            f"最后一次结算是 {summary['last_resolve']}"
+        ),
+        "每个交易日都发出一个区间；到这个区间对应的那一天收盘后，用实际收盘打分。",
+        "步长  平均绝对误差  猜今天不动  只好  中位百分比误差  猜今天  区间覆盖  平均带宽  同覆盖的固定带宽  方向命中",
+    ]
+    for step in summary["steps"]:
+        lines.append(
+            f"{step['step']:4d}  {step['mae']:12.2f}  {step['naive_mae']:10.2f}  "
+            f"{step['beats_naive']:+5.1%}  {step['median_abs_pct']:14.1%}  "
+            f"{step['naive_median_abs_pct']:6.1%}  {step['coverage']:7.1%}  "
+            f"{step['mean_width']:7.1%}  {step['naive_width']:14.1%}  {step['direction_hit']:7.1%}"
+        )
+    width = terminal["shock_by_width"]
+    recent = terminal["shock_by_recent_vol"]
+    lines.append(
+        f"第 {horizon} 日大动（|涨跌| > {terminal['shock_threshold']:.0%}）的基准概率 "
+        f"{terminal['shock_base_rate']:.1%}；按区间宽度分窄/中/宽："
+        + " / ".join("—" if value is None else f"{value:.1%}" for value in width)
+        + "；按过去一周已实现波动分："
+        + " / ".join("—" if value is None else f"{value:.1%}" for value in recent)
+    )
+    lines.append(
+        f"方向命中 {terminal['direction_hit']:.1%}，而「总是猜跌」是 {terminal['always_down_hit']:.1%}，"
+        f"「朝一年中位数回归」是 {terminal['direction_hit_reversion']:.1%}；"
+        f"变动相关性 {terminal['change_corr']:+.2f}"
+    )
+    lines.append("最近 8 次：发出日 → 结算日，当时的收盘，那时说的中位与区间，实际收盘，偏差")
+    for row in summary["latest"]:
+        mark = "在" if row["inside"] else "出"
+        lines.append(
+            f"{row['as_of']} → {row['resolve']}  {row['anchor']:8.2f}  "
+            f"中位 {row['median']:8.2f} 区间 {row['low']:8.2f}–{row['high']:8.2f}  "
+            f"实际 {row['actual']:8.2f}  {row['error_pct']:+6.1f}%  {mark}"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_warning(warning: dict) -> str:

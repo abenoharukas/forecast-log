@@ -95,8 +95,10 @@
     </header>
     <div class="readout">
       <span id="leg-date">—</span>
-      <span><i class="actual"></i>实际 <b id="leg-actual">—</b></span>
-      <span><i class="forecast"></i><span id="leg-label">预测</span> <b id="leg-forecast">—</b></span>
+      <span>昨收 <b id="leg-prev">—</b></span>
+      <span><i class="forecast"></i>今日预测 <b id="leg-forecast">—</b></span>
+      <span><i class="actual"></i>今日实际 <b id="leg-actual">—</b></span>
+      <span id="leg-error"></span>
       <span id="leg-skill"></span>
       <span id="build"></span>
       <span id="range-label"></span>
@@ -224,8 +226,14 @@
       if (!point) return;
       document.querySelector("#leg-date").textContent = point;
       document.querySelector("#leg-actual").textContent = priceText(closeByTime.get(point));
-      const forecast = forecastByTime.get(point);
-      document.querySelector("#leg-forecast").textContent = forecast ? priceText(forecast.median) : "—";
+      const row = forecastByTime.get(point);
+      const has = row && row.median != null;
+      document.querySelector("#leg-prev").textContent = row && row.previous != null ? priceText(row.previous) : "—";
+      document.querySelector("#leg-forecast").textContent = has ? priceText(row.median) : "—";
+      document.querySelector("#leg-error").textContent =
+        has && row.actual != null
+          ? "误差 " + (row.median - row.actual >= 0 ? "+" : "") + priceText(row.median - row.actual)
+          : "";
     }
 
     chart.subscribeCrosshairMove((param) => updateLegend(param.time || latestTime));
@@ -239,21 +247,26 @@
       document.title = label;
       closeByTime = new Map(price.time.map((time, index) => [time, price.close[index]]));
       const forward = question.forward || [];
-      forecastByTime = new Map();
-      const predicted = [];
-      // Drawn on the session the forecast was made, so the line can turn before the index does.
-      forecast.time.forEach((time, index) => {
-        forecastByTime.set(time, { median: forecast.median[index] });
-        predicted.push({ time, value: forecast.median[index] });
-      });
-      document.querySelector("#leg-label").textContent = "预测（" + question.horizon + " 日后）";
+      // 每天的虚线 = 前一天收盘后对当天的预测，画在当天，和当天的实际值比。
+      const daily = timeline.daily[question.symbol];
+      forecastByTime = new Map(
+        daily.time.map((time, index) => [
+          time,
+          {
+            median: daily.median[index],
+            actual: daily.actual[index],
+            previous: daily.previous[index],
+          },
+        ])
+      );
+      const predicted = daily.time.map((time, index) => ({ time, value: daily.median[index] }));
       document.querySelector("#build").textContent = BUILD;
-      const skill = forecast.skill || {};
+      const skill = daily.skill || {};
       document.querySelector("#leg-skill").textContent =
-        skill.change_corr == null
+        skill.median_abs_pct_error == null
           ? ""
-          : "领先性：变动相关性 " + skill.change_corr.toFixed(2) + " · 方向 " +
-            Math.round(skill.direction_hit * 100) + "%";
+          : "1 日预测：中位误差 " + (skill.median_abs_pct_error * 100).toFixed(1) + "% · 相关性 " +
+            skill.level_corr.toFixed(2) + " · 方向 " + Math.round(skill.direction_hit * 100) + "%";
       const lastTime = price.time[price.time.length - 1];
       const lastClose = price.close[price.close.length - 1];
       const ahead = [{ time: lastTime, value: lastClose }];

@@ -271,6 +271,51 @@ def skill(sample: list[dict]) -> dict:
     }
 
 
+def daily_forecasts(series: Series, extra=None) -> dict:
+    """每根 K 线都是「用前一根及以前的数据预测这一根」，画在这一根上。
+
+    这是「当天」的预测：t 日收盘前你不可能知道 t 日的收盘，所以只能用 t-1。
+    """
+    bars = series.bars
+    closes = np.array([bar.close for bar in bars], dtype=float)
+    model = AnalogModel(closes, extra)
+    start = model.first_index(1) + 1
+    rows = []
+    for t in range(start, len(bars)):
+        point = model.forecast(t - 1, 1, 1.0, with_path=True).path[0]
+        rows.append(
+            {
+                "time": bars[t].date.isoformat(),
+                "previous": closes[t - 1],
+                "median": round(point.median, 2),
+                "low": round(point.low, 2),
+                "high": round(point.high, 2),
+                "actual": closes[t],
+            }
+        )
+    error = np.array([abs(row["median"] - row["actual"]) for row in rows], dtype=float)
+    pct = np.array(
+        [abs(row["median"] - row["actual"]) / row["actual"] for row in rows], dtype=float
+    )
+    predicted = np.array([row["median"] for row in rows], dtype=float)
+    actual = np.array([row["actual"] for row in rows], dtype=float)
+    previous = np.array([row["previous"] for row in rows], dtype=float)
+    return {
+        "rows": rows,
+        "skill": {
+            "n": len(rows),
+            "mae": round(float(error.mean()), 4) if len(rows) else None,
+            "median_abs_pct_error": round(float(np.median(pct)), 4) if len(rows) else None,
+            "level_corr": round(float(np.corrcoef(predicted, actual)[0, 1]), 4) if len(rows) > 2 else None,
+            "direction_hit": round(
+                float(np.mean(np.sign(predicted - previous) == np.sign(actual - previous))), 4
+            )
+            if len(rows)
+            else None,
+        },
+    }
+
+
 def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], extra=None) -> dict:
     """Columnar series for the zoomable chart. One forecast row per session."""
 
@@ -295,9 +340,23 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], ext
             "skill": skill(sample),
         }
 
+    daily = {"vxn": daily_forecasts(vxn, extra), "ndx": daily_forecasts(ndx)}
+
     return {
         "vxn": closes(vxn),
         "ndx": closes(ndx),
+        "daily": {
+            key: {
+                "time": _column(value["rows"], "time"),
+                "median": _column(value["rows"], "median", 2),
+                "low": _column(value["rows"], "low", 2),
+                "high": _column(value["rows"], "high", 2),
+                "actual": _column(value["rows"], "actual", 2),
+                "previous": _column(value["rows"], "previous", 2),
+                "skill": value["skill"],
+            }
+            for key, value in daily.items()
+        },
         "questions": {
             "vxn-h7-gt-30": {
                 "title": "VXN，7 个交易日后高于 30",

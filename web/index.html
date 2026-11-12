@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fear index</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
+  <script src="/web/vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --paper: #e6e0d4;
+      --sheet: #f7f3ea;
+      --ink: #1c1915;
+      --muted: #5e584e;
+      --rule: #c9c0b0;
+      --blue: #1d4e79;
+      --ochre: #8a5a12;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: "Newsreader", Palatino, serif;
+      overflow: hidden;
+    }
+    main {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 18px 22px 14px;
+    }
+    header { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+    h1 { margin: 0; font-weight: 480; font-size: 32px; letter-spacing: -0.03em; }
+    .group { display: flex; flex-wrap: wrap; gap: 6px; }
+    #ranges { margin-left: auto; }
+    button {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--ink);
+      background: transparent;
+      border: 1px solid var(--ink);
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    button.active, button:hover { background: var(--ink); color: var(--sheet); }
+    .readout {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 22px;
+      align-items: baseline;
+      margin-top: 14px;
+      padding: 8px 0;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--ink);
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 13px;
+    }
+    .readout b { font-weight: 500; font-size: 18px; }
+    .readout i { display: inline-block; width: 22px; height: 0; margin-right: 8px; vertical-align: middle; }
+    .readout .actual { border-top: 2px solid var(--blue); }
+    .readout .forecast { border-top: 2px dashed var(--ochre); }
+    #range-label { margin-left: auto; color: var(--muted); }
+    #chart {
+      flex: 1;
+      min-height: 0;
+      margin-top: 10px;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+    }
+    @media (max-width: 720px) {
+      body { overflow: auto; }
+      main { height: auto; padding: 16px 12px 24px; }
+      #chart { height: 70vh; flex: none; }
+      .group { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1 id="symbol">VIX</h1>
+      <div class="group" id="questions"></div>
+      <div class="group" id="ranges">
+        <button type="button" data-span="90">3个月</button>
+        <button type="button" data-span="365" class="active">1年</button>
+        <button type="button" data-span="1825">5年</button>
+        <button type="button" data-span="0">全部</button>
+      </div>
+    </header>
+    <div class="readout">
+      <span id="leg-date">—</span>
+      <span><i class="actual"></i>实际 <b id="leg-actual">—</b></span>
+      <span><i class="forecast"></i>预测 <b id="leg-forecast">—</b></span>
+      <span id="range-label"></span>
+    </div>
+    <div id="chart"></div>
+  </main>
+  <script>
+    const LABELS = {
+      "vix-h7-gt-20": "Fear index · 7日",
+      "vix-h12-gt-20": "Fear index · 12日",
+      "ndx-h12-gt-asof": "NDX · 12日",
+    };
+
+    const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
+      autoSize: true,
+      layout: {
+        background: { type: "solid", color: "#f7f3ea" },
+        textColor: "#5e584e",
+        fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+      },
+      grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
+      rightPriceScale: { borderColor: "#c9c0b0" },
+      timeScale: { borderColor: "#c9c0b0", rightOffset: 6, minBarSpacing: 0.04 },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
+    });
+    const actualSeries = chart.addLineSeries({
+      color: "#1d4e79",
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    const forecastSeries = chart.addLineSeries({
+      color: "#8a5a12",
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+    const futureSeries = chart.addLineSeries({
+      color: "#8a5a12",
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const lowSeries = chart.addLineSeries({
+      color: "#b08968",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const highSeries = chart.addLineSeries({
+      color: "#b08968",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    let span = 365;
+    let questionId = "vix-h7-gt-20";
+    let timeline = null;
+    let closeByTime = new Map();
+    let forecastByTime = new Map();
+    let latestTime = null;
+
+    function shift(iso, days) {
+      const date = new Date(iso + "T00:00:00Z");
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function timeText(value) {
+      if (typeof value === "string") return value;
+      if (typeof value === "number") return new Date(value * 1000).toISOString().slice(0, 10);
+      if (value && value.year) {
+        return value.year + "-" + String(value.month).padStart(2, "0") + "-" + String(value.day).padStart(2, "0");
+      }
+      return "";
+    }
+
+    function barIndexOnOrAfter(times, iso) {
+      let from = 0;
+      let lo = 0;
+      let hi = times.length - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (times[mid] < iso) lo = mid + 1;
+        else { from = mid; hi = mid - 1; }
+      }
+      return from;
+    }
+
+    function applySpan() {
+      const question = timeline.questions[questionId];
+      const times = timeline[question.symbol].time;
+      const extra = (question.forward || []).length;
+      if (!span) {
+        chart.timeScale().fitContent();
+        return;
+      }
+      const from = barIndexOnOrAfter(times, shift(times[times.length - 1], -span));
+      chart.timeScale().setVisibleLogicalRange({ from, to: times.length - 1 + extra + 3 });
+    }
+
+    chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+      if (!range) return;
+      document.querySelector("#range-label").textContent = timeText(range.from) + " → " + timeText(range.to);
+    });
+
+    function priceText(value) {
+      if (value == null || Number.isNaN(value)) return "—";
+      return Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function updateLegend(time) {
+      const point = time || latestTime;
+      if (!point) return;
+      document.querySelector("#leg-date").textContent = point;
+      document.querySelector("#leg-actual").textContent = priceText(closeByTime.get(point));
+      const forecast = forecastByTime.get(point);
+      document.querySelector("#leg-forecast").textContent = forecast ? priceText(forecast.median) : "—";
+    }
+
+    chart.subscribeCrosshairMove((param) => updateLegend(param.time || latestTime));
+
+    function showQuestion() {
+      const question = timeline.questions[questionId];
+      const price = timeline[question.symbol];
+      const forecast = question.forecast;
+      const label = LABELS[questionId] || question.title;
+      document.querySelector("#symbol").textContent = question.symbol === "ndx" ? "NDX" : "Fear index";
+      document.title = label;
+      closeByTime = new Map(price.time.map((time, index) => [time, price.close[index]]));
+      const forward = question.forward || [];
+      forecastByTime = new Map();
+      const predicted = [];
+      forecast.resolve.forEach((time, index) => {
+        forecastByTime.set(time, { median: forecast.median[index] });
+        if (predicted.length && predicted[predicted.length - 1].time === time) predicted.pop();
+        predicted.push({ time, value: forecast.median[index] });
+      });
+      const lastTime = price.time[price.time.length - 1];
+      const lastClose = price.close[price.close.length - 1];
+      const ahead = [{ time: lastTime, value: lastClose }];
+      const low = [{ time: lastTime, value: lastClose }];
+      const high = [{ time: lastTime, value: lastClose }];
+      forward.forEach((point) => {
+        if (!closeByTime.has(point.time)) forecastByTime.set(point.time, point);
+        ahead.push({ time: point.time, value: point.median });
+        low.push({ time: point.time, value: point.low });
+        high.push({ time: point.time, value: point.high });
+      });
+      actualSeries.setData(price.time.map((time, index) => ({ time, value: price.close[index] })));
+      forecastSeries.setData(predicted);
+      futureSeries.setData(ahead);
+      lowSeries.setData(low);
+      highSeries.setData(high);
+      latestTime = lastTime;
+      requestAnimationFrame(applySpan);
+      updateLegend(latestTime);
+    }
+
+    document.querySelector("#ranges").addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      span = Number(button.dataset.span);
+      document.querySelectorAll("#ranges button").forEach((item) => item.classList.toggle("active", item === button));
+      applySpan();
+    });
+
+    fetch("/artifacts/timeline.json")
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((documentData) => {
+        timeline = documentData;
+        const box = document.querySelector("#questions");
+        Object.entries(timeline.questions).forEach(([id, question], index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = LABELS[id] || question.title;
+          button.classList.toggle("active", index === 0);
+          button.addEventListener("click", () => {
+            questionId = id;
+            box.querySelectorAll("button").forEach((item) => item.classList.toggle("active", item === button));
+            showQuestion();
+          });
+          box.appendChild(button);
+        });
+        questionId = Object.keys(timeline.questions)[0];
+        showQuestion();
+      })
+      .catch(() => {
+        document.querySelector("#leg-date").textContent = "timeline.json 没有加载";
+      });
+  </script>
+</body>
+</html>

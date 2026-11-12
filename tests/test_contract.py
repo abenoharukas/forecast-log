@@ -17,7 +17,7 @@ NY = ZoneInfo("America/New_York")
 def test_monthly_history_is_rejected():
     monthly = tuple(Bar(date(2000, 1, 1) + timedelta(days=31 * i), 18.0) for i in range(12))
     with pytest.raises(RuntimeError):
-        _assert_daily("^VIX", monthly)
+        _assert_daily("^VXN", monthly)
 
 
 def test_live_horizons_match_the_question_file():
@@ -35,8 +35,8 @@ def test_questions_are_strictly_greater_than():
 
     questions = load_questions(repo_root() / "questions.json")
     assert [question.id for question in questions] == [
-        "vix-2026-11-20-gt-20",
-        "vix-2026-11-30-gt-20",
+        "vxn-2026-11-20-gt-30",
+        "vxn-2026-11-30-gt-30",
         "ndx-2026-11-30-gt-baseline",
     ]
 
@@ -46,7 +46,7 @@ def test_same_day_bar_is_ignored_before_the_close():
         Bar(date(2026, 11, 11), 17.49),
         Bar(date(2026, 11, 12), 18.0),
     )
-    series = Series("^VIX", "America/New_York", "t", bars)
+    series = Series("^VXN", "America/New_York", "t", bars)
     morning = datetime(2026, 11, 12, 10, 0, tzinfo=NY)
     evening = datetime(2026, 11, 12, 16, 15, tzinfo=NY)
     assert last_completed_bar(series, morning).date == date(2026, 11, 11)
@@ -70,18 +70,19 @@ def test_lock_writes_once_and_score_waits_for_settlement(tmp_path):
     questions = {
         "questions": [
             {
-                "id": "vix-demo",
+                "id": "vxn-demo",
                 "resolve_session": "2026-11-20",
-                "symbol": "^VIX",
+                "symbol": "^VXN",
                 "comparison": "gt",
-                "threshold": 20,
-                "yes_when": "^VIX daily Close > 20",
+                "threshold": 30,
+                "yes_when": "^VXN daily Close > 20",
             }
         ]
     }
     (tmp_path / "questions.json").write_text(json.dumps(questions))
-    _write_cache(tmp_path, "^VIX", [18.0] * 40, date(2026, 9, 1))
-    _write_cache(tmp_path, "^NDX", [100.0 + (i % 5) for i in range(40)], date(2026, 9, 1))
+    # Long enough for the analogue model: a year of state history plus 30 finished analogues.
+    _write_cache(tmp_path, "^VXN", [18.0] * 400, date(2025, 9, 6))
+    _write_cache(tmp_path, "^NDX", [100.0 + (i % 5) for i in range(400)], date(2025, 9, 6))
     # Last cached session is 2026-10-10. Freeze "now" after that close and before resolution.
     now = datetime(2026, 10, 11, 12, 0, tzinfo=NY)
     written = lock_command(tmp_path, now=now)
@@ -98,12 +99,12 @@ def test_resolution_keeps_the_first_close(tmp_path, monkeypatch):
     questions = {
         "questions": [
             {
-                "id": "vix-demo",
+                "id": "vxn-demo",
                 "resolve_session": "2026-11-11",
-                "symbol": "^VIX",
+                "symbol": "^VXN",
                 "comparison": "gt",
-                "threshold": 20,
-                "yes_when": "^VIX daily Close > 20",
+                "threshold": 30,
+                "yes_when": "^VXN daily Close > 20",
             }
         ]
     }
@@ -131,11 +132,11 @@ def test_resolution_keeps_the_first_close(tmp_path, monkeypatch):
     document = json.loads((tmp_path / "resolutions.json").read_text())
     assert document["resolutions"] == [
         {
-            "question_id": "vix-demo",
+            "question_id": "vxn-demo",
             "resolve_session": "2026-11-11",
-            "symbol": "^VIX",
+            "symbol": "^VXN",
             "close": 17.49,
-            "threshold": 20.0,
+            "threshold": 30.0,
             "outcome": 0,
             "fetched_at": "fetch-1",
         }
@@ -147,11 +148,11 @@ def test_missing_session_is_not_replaced_with_another_day(tmp_path, monkeypatch)
     questions = {
         "questions": [
             {
-                "id": "vix-demo",
+                "id": "vxn-demo",
                 "resolve_session": "2026-11-11",
-                "symbol": "^VIX",
+                "symbol": "^VXN",
                 "comparison": "gt",
-                "threshold": 20,
+                "threshold": 30,
                 "yes_when": "x",
             }
         ]

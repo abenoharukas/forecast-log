@@ -3,14 +3,14 @@ from datetime import date, timedelta
 import numpy as np
 
 from forecast_log.backtest import (
-    MIN_HISTORY,
     _climatology,
-    _rows_vix,
+    _rows_vxn,
     brier,
     forward_levels,
     timeline_document,
 )
 from forecast_log.bars import Bar, Series
+from forecast_log.estimate import min_index
 
 
 def _series(closes):
@@ -19,7 +19,7 @@ def _series(closes):
     for close in closes:
         bars.append(Bar(day, float(close)))
         day += timedelta(days=1)
-    return Series("^VIX", "America/New_York", "t", tuple(bars))
+    return Series("^VXN", "America/New_York", "t", tuple(bars))
 
 
 def test_brier_of_one_half_is_a_quarter():
@@ -28,16 +28,16 @@ def test_brier_of_one_half_is_a_quarter():
 
 def test_backtest_probability_does_not_see_the_later_close():
     rng = np.random.default_rng(0)
-    closes = np.clip(18 + rng.normal(0, 0.4, size=MIN_HISTORY + 40), 12, 28)
+    closes = np.clip(18 + rng.normal(0, 0.4, size=min_index(5) + 240), 12, 28)
     series = _series(closes)
-    rows = _rows_vix(series, horizon=5, threshold=20)
+    rows = _rows_vxn(series, horizon=5, threshold=20)
     spiked = Series(
         series.symbol,
         series.timezone,
         series.fetched_at,
         series.bars + (Bar(series.bars[-1].date + timedelta(days=1), 90.0),),
     )
-    again = _rows_vix(spiked, horizon=5, threshold=20)
+    again = _rows_vxn(spiked, horizon=5, threshold=20)
     by_date = {row["as_of"]: row["probability"] for row in again}
     assert rows
     for row in rows:
@@ -51,21 +51,22 @@ def test_timeline_columns_stay_aligned():
         {
             "as_of": "2010-01-04",
             "resolve": "2010-01-08",
+            "as_of_close": 18.0,
             "probability": 0.15678,
             "outcome": 0,
             "median_close": 18.129,
             "actual_close": 17.5,
         }
     ]
-    rows = {key: sample for key in ("vix-h7-gt-20", "vix-h12-gt-20", "ndx-h12-gt-asof")}
+    rows = {key: sample for key in ("vxn-h7-gt-30", "vxn-h12-gt-30", "ndx-h12-gt-asof")}
     document = timeline_document(series, series, rows)
-    forecast = document["questions"]["vix-h7-gt-20"]["forecast"]
-    assert document["vix"]["time"] == ["2010-01-04", "2010-01-05", "2010-01-06"]
+    forecast = document["questions"]["vxn-h7-gt-30"]["forecast"]
+    assert document["vxn"]["time"] == ["2010-01-04", "2010-01-05", "2010-01-06"]
     assert len(forecast["time"]) == len(forecast["probability"]) == len(forecast["median"])
     assert forecast["probability"] == [0.1568]
     assert forecast["median"] == [18.13]
     assert document["questions"]["ndx-h12-gt-asof"]["threshold"] is None
-    assert document["questions"]["vix-h7-gt-20"]["forward"] == []
+    assert document["questions"]["vxn-h7-gt-30"]["forward"] == []
 
 
 def test_forward_path_is_only_after_the_last_close():
@@ -77,8 +78,8 @@ def test_forward_path_is_only_after_the_last_close():
             bars.append(Bar(day, level))
             level = 16.4 if level > 18.4 else level + 0.07
         day += timedelta(days=1)
-    series = Series("^VIX", "America/New_York", "t", tuple(bars))
-    forward = forward_levels(series, 12, "vix", 20.0)
+    series = Series("^VXN", "America/New_York", "t", tuple(bars))
+    forward = forward_levels(series, 12, 30.0)
     assert [point["time"] for point in forward] == [
         "2026-11-12",
         "2026-11-13",
@@ -100,8 +101,8 @@ def test_forward_path_is_only_after_the_last_close():
         series.fetched_at,
         series.bars + (Bar(date(2026, 11, 12), 40.0),),
     )
-    assert forward_levels(series, 7, "vix", 20.0)[0]["median"] != forward_levels(
-        later, 7, "vix", 20.0
+    assert forward_levels(series, 7, 30.0)[0]["median"] != forward_levels(
+        later, 7, 30.0
     )[0]["median"]
 
 

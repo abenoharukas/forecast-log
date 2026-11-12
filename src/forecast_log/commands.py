@@ -13,22 +13,14 @@ from forecast_log.backtest import (
     write_report,
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
-from forecast_log.estimate import (
-    NDX_MIN_N,
-    NDX_VOL_BAND,
-    NDX_VOL_WINDOW,
-    VIX_BAND,
-    VIX_MIN_N,
-    estimate_ndx,
-    estimate_vix,
-)
+from forecast_log.estimate import STATE_LOOKBACKS, estimate
 from forecast_log.horizon import sessions_from_as_of_through_resolve
 from forecast_log.paths import series_path
 from forecast_log.questions import load_questions, reference_closes
 from forecast_log.yahoo import fetch_daily
 
 NY = ZoneInfo("America/New_York")
-SYMBOLS = ("^VIX", "^NDX")
+SYMBOLS = ("^VXN", "^NDX")
 
 
 def fetch_command(root: Path) -> dict:
@@ -42,7 +34,7 @@ def fetch_command(root: Path) -> dict:
             f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
         )
         loaded[symbol] = series
-    report = reference_report(root, loaded["^VIX"], loaded["^NDX"])
+    report = reference_report(root, loaded["^VXN"], loaded["^NDX"])
     print(reference_text(report))
     if not report["matches"]:
         raise SystemExit(1)
@@ -50,16 +42,16 @@ def fetch_command(root: Path) -> dict:
 
 
 def backtest_command(root: Path) -> dict:
-    vix, ndx = _load_both(root)
-    ref = reference_report(root, vix, ndx)
+    vxn, ndx = _load_both(root)
+    ref = reference_report(root, vxn, ndx)
     print(reference_text(ref))
-    rows = forecast_rows(vix, ndx)
-    report = run_backtest(vix, ndx, rows)
+    rows = forecast_rows(vxn, ndx)
+    report = run_backtest(vxn, ndx, rows)
     report["reference"] = ref
     path = root / "artifacts" / "backtest_report.json"
     write_report(path, report)
     timeline_path = root / "artifacts" / "timeline.json"
-    write_report(timeline_path, timeline_document(vix, ndx, rows), indent=None)
+    write_report(timeline_path, timeline_document(vxn, ndx, rows), indent=None)
     print(render_report(report))
     print(f"完整结果写在 {path}")
     print(f"时间轴写在 {timeline_path}")
@@ -89,37 +81,24 @@ def lock_command(root: Path, now: datetime | None = None) -> list[Path]:
         loaded = series[question.symbol]
         as_of = as_of_bar[question.symbol]
         horizon = sessions_from_as_of_through_resolve(as_of.date, question.resolve_session)
-        if question.symbol == "^VIX":
-            estimate = estimate_vix(
-                loaded.bars, as_of.date, horizon, threshold=question.threshold
-            )
-            method = "empirical_band_v1"
-            parameters = {"band": VIX_BAND, "min_n": VIX_MIN_N, "threshold": question.threshold}
-        else:
-            estimate = estimate_ndx(
-                loaded.bars,
-                as_of.date,
-                horizon,
-                baseline=question.threshold,
-            )
-            method = "empirical_vol_band_v1"
-            parameters = {
-                "vol_window": NDX_VOL_WINDOW,
-                "vol_band": NDX_VOL_BAND,
-                "min_n": NDX_MIN_N,
-                "baseline": question.threshold,
-            }
+        forecast = estimate(loaded.bars, as_of.date, horizon, question.threshold)
+        parameters = {
+            "threshold": question.threshold,
+            "neighbours": forecast.sample_size,
+            "state_lookbacks": list(STATE_LOOKBACKS),
+            "matched_as": "multiple of the analogue's own start",
+        }
         payload = {
             "question_id": question.id,
             "locked_at": now.astimezone(NY).isoformat(timespec="seconds"),
             "as_of_session": as_of.date.isoformat(),
-            "probability": round(estimate.probability, 6),
+            "probability": round(forecast.probability, 6),
             "method": {
-                "name": method,
+                "name": "analog_state_v2",
                 "horizon_sessions": horizon,
-                "sample_size": estimate.sample_size,
-                "rule": estimate.rule,
-                "median_close": round(estimate.median_close, 4),
+                "sample_size": forecast.sample_size,
+                "rule": forecast.rule,
+                "median_close": round(forecast.median_close, 4),
                 "parameters": parameters,
             },
             "evidence": [
@@ -230,28 +209,28 @@ def score_command(root: Path) -> float | None:
     return mean
 
 
-def reference_report(root: Path, vix, ndx) -> dict:
+def reference_report(root: Path, vxn, ndx) -> dict:
     ref = reference_closes(root / "questions.json")
-    vix_bar = bar_on(vix, ref["session_date"])
+    vxn_bar = bar_on(vxn, ref["session_date"])
     ndx_bar = bar_on(ndx, ref["session_date"])
-    if vix_bar is None or ndx_bar is None:
+    if vxn_bar is None or ndx_bar is None:
         raise SystemExit(f"缓存里没有 {ref['session_date'].isoformat()} 的收盘")
-    vix_matches = round(vix_bar.close, 2) == round(ref["vix"], 2)
+    vxn_matches = round(vxn_bar.close, 2) == round(ref["vxn"], 2)
     ndx_matches = round(ndx_bar.close, 2) == round(ref["ndx"], 2)
     return {
         "session_date": ref["session_date"].isoformat(),
-        "vix_close": vix_bar.close,
+        "vxn_close": vxn_bar.close,
         "ndx_close": ndx_bar.close,
-        "vix_reference": ref["vix"],
+        "vxn_reference": ref["vxn"],
         "ndx_reference": ref["ndx"],
-        "matches": vix_matches and ndx_matches,
+        "matches": vxn_matches and ndx_matches,
     }
 
 
 def reference_text(report: dict) -> str:
     state = "与 questions.json 一致" if report["matches"] else "与 questions.json 不一致"
     return (
-        f"{report['session_date']} 收盘 VIX {report['vix_close']}（合同 {report['vix_reference']}），"
+        f"{report['session_date']} 收盘 VXN {report['vxn_close']}（合同 {report['vxn_reference']}），"
         f"NDX {report['ndx_close']}（合同 {report['ndx_reference']}）。{state}。"
     )
 
@@ -260,7 +239,7 @@ def _load_both(root: Path):
     missing = [symbol for symbol in SYMBOLS if not series_path(root, symbol).exists()]
     if missing:
         raise SystemExit("还没有日线缓存。先运行 forecast-log fetch")
-    return load_series(series_path(root, "^VIX")), load_series(series_path(root, "^NDX"))
+    return load_series(series_path(root, "^VXN")), load_series(series_path(root, "^NDX"))
 
 
 def _session_complete(session, now: datetime) -> bool:

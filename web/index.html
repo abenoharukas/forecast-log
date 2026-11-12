@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Fear index</title>
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <title>Nasdaq fear index</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
@@ -82,7 +84,7 @@
 <body>
   <main>
     <header>
-      <h1 id="symbol">VIX</h1>
+      <h1 id="symbol">VXN</h1>
       <div class="group" id="questions"></div>
       <div class="group" id="ranges">
         <button type="button" data-span="90">3个月</button>
@@ -94,15 +96,20 @@
     <div class="readout">
       <span id="leg-date">—</span>
       <span><i class="actual"></i>实际 <b id="leg-actual">—</b></span>
-      <span><i class="forecast"></i>预测 <b id="leg-forecast">—</b></span>
+      <span><i class="forecast"></i><span id="leg-label">预测</span> <b id="leg-forecast">—</b></span>
+      <span id="leg-skill"></span>
+      <span id="build"></span>
       <span id="range-label"></span>
     </div>
     <div id="chart"></div>
   </main>
   <script>
+    // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
+    const BUILD = "r3 · 预测挂在下单日";
+
     const LABELS = {
-      "vix-h7-gt-20": "Fear index · 7日",
-      "vix-h12-gt-20": "Fear index · 12日",
+      "vxn-h7-gt-30": "VXN · 7日",
+      "vxn-h12-gt-30": "VXN · 12日",
       "ndx-h12-gt-asof": "NDX · 12日",
     };
 
@@ -157,7 +164,7 @@
     });
 
     let span = 365;
-    let questionId = "vix-h7-gt-20";
+    let questionId = "vxn-h7-gt-30";
     let timeline = null;
     let closeByTime = new Map();
     let forecastByTime = new Map();
@@ -228,17 +235,25 @@
       const price = timeline[question.symbol];
       const forecast = question.forecast;
       const label = LABELS[questionId] || question.title;
-      document.querySelector("#symbol").textContent = question.symbol === "ndx" ? "NDX" : "Fear index";
+      document.querySelector("#symbol").textContent = question.symbol === "ndx" ? "NDX" : "VXN · Nasdaq fear index";
       document.title = label;
       closeByTime = new Map(price.time.map((time, index) => [time, price.close[index]]));
       const forward = question.forward || [];
       forecastByTime = new Map();
       const predicted = [];
-      forecast.resolve.forEach((time, index) => {
+      // Drawn on the session the forecast was made, so the line can turn before the index does.
+      forecast.time.forEach((time, index) => {
         forecastByTime.set(time, { median: forecast.median[index] });
-        if (predicted.length && predicted[predicted.length - 1].time === time) predicted.pop();
         predicted.push({ time, value: forecast.median[index] });
       });
+      document.querySelector("#leg-label").textContent = "预测（" + question.horizon + " 日后）";
+      document.querySelector("#build").textContent = BUILD;
+      const skill = forecast.skill || {};
+      document.querySelector("#leg-skill").textContent =
+        skill.change_corr == null
+          ? ""
+          : "领先性：变动相关性 " + skill.change_corr.toFixed(2) + " · 方向 " +
+            Math.round(skill.direction_hit * 100) + "%";
       const lastTime = price.time[price.time.length - 1];
       const lastClose = price.close[price.close.length - 1];
       const ahead = [{ time: lastTime, value: lastClose }];
@@ -268,7 +283,7 @@
       applySpan();
     });
 
-    fetch("/artifacts/timeline.json")
+    fetch("/artifacts/timeline.json?t=" + Date.now())
       .then((response) => {
         if (!response.ok) throw new Error(String(response.status));
         return response.json();

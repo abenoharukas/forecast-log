@@ -38,6 +38,6 @@ def reference_closes(path: Path) -> dict:
     block = payload["reference_closes"]
     return {
         "session_date": date.fromisoformat(block["session_date"]),
-        "vix": float(block["vix"]),
+        "vxn": float(block["vxn"]),
         "ndx": float(block["ndx"]),
     }

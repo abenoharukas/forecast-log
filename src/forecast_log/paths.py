@@ -11,5 +11,5 @@ def repo_root() -> Path:
 
 
 def series_path(root: Path, symbol: str) -> Path:
-    name = {"^VIX": "vix.json", "^NDX": "ndx.json"}[symbol]
+    name = {"^VXN": "vxn.json", "^NDX": "ndx.json"}[symbol]
     return root / "data" / "raw" / name

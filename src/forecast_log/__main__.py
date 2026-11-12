@@ -18,7 +18,7 @@ def main(argv: list[str] | None = None) -> None:
         description="事先锁定概率，事后用 Brier 分数打分。",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("fetch", help="下载 ^VIX 和 ^NDX 的日线收盘")
+    sub.add_parser("fetch", help="下载 ^VXN 和 ^NDX 的日线收盘")
     sub.add_parser("backtest", help="从过去每个交易日推演，再对照后来的收盘")
     sub.add_parser("lock", help="给三道题各写一次概率。写过就不能改")
     sub.add_parser("resolve", help="结算日收盘之后写入 resolutions.json")

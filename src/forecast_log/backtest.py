@@ -8,21 +8,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from forecast_log.bars import Bar, Series
-from forecast_log.estimate import (
-    NDX_MIN_N,
-    NDX_VOL_BAND,
-    NDX_VOL_WINDOW,
-    VIX_BAND,
-    VIX_MIN_N,
-    estimate_ndx_from_closes,
-    estimate_vix_from_closes,
-    ndx_path,
-    vix_path,
-)
+from forecast_log.estimate import NEIGHBOURS, AnalogModel, min_index
 from forecast_log.horizon import sessions_after
 
 NY = ZoneInfo("America/New_York")
-MIN_HISTORY = 252
 CLIM_MIN = 30
 
 
@@ -34,30 +23,28 @@ def brier(probability, outcome) -> float:
     return float(np.mean((p - y) ** 2))
 
 
-def _rows_vix(series: Series, horizon: int, threshold: float) -> list[dict]:
+def _rows(series: Series, horizon: int, threshold_at) -> list[dict]:
+    """One forecast per session. `threshold_at(i)` gives that day's threshold."""
     bars = series.bars
     closes = np.array([bar.close for bar in bars], dtype=float)
+    model = AnalogModel(closes)
     rows = []
-    last = len(bars) - horizon
-    for i in range(MIN_HISTORY, last):
-        # Prefix ends at i, so the H-session outcome is not in the array the estimator sees.
-        estimate = estimate_vix_from_closes(closes[: i + 1], horizon, threshold)
+    for i in range(min_index(horizon), len(bars) - horizon):
+        # The model only reads closes[0..i]; analogues finish at or before i.
+        threshold = float(threshold_at(i, closes))
+        estimate = model.forecast(i, horizon, threshold)
         actual = float(closes[i + horizon])
         rows.append(_row(bars[i], bars[i + horizon].date, estimate, actual, actual > threshold))
     return rows
 
 
+def _rows_vxn(series: Series, horizon: int, threshold: float) -> list[dict]:
+    return _rows(series, horizon, lambda i, closes: threshold)
+
+
 def _rows_ndx(series: Series, horizon: int) -> list[dict]:
-    bars = series.bars
-    closes = np.array([bar.close for bar in bars], dtype=float)
-    rows = []
-    last = len(bars) - horizon
-    for i in range(MIN_HISTORY, last):
-        # Locked on the baseline day, the live NDX question is "above today's close".
-        estimate = estimate_ndx_from_closes(closes[: i + 1], horizon, baseline=float(closes[i]))
-        actual = float(closes[i + horizon])
-        rows.append(_row(bars[i], bars[i + horizon].date, estimate, actual, actual > closes[i]))
-    return rows
+    # The live NDX question is measured against the baseline day's close.
+    return _rows(series, horizon, lambda i, closes: closes[i])
 
 
 def _row(as_of: Bar, resolve: date, estimate, actual: float, yes: bool) -> dict:
@@ -91,6 +78,47 @@ def _climatology(rows: list[dict]) -> list[float | None]:
         else:
             climatology.append(None)
     return climatology
+
+
+def warning_skill(rows: list[dict], top: int = 20) -> dict:
+    """Can a forecast made on the day of a move warn before the move? Measured, not assumed.
+
+    `lead` is how many sessions earlier the forecast's turning points happen than the
+    actual ones. `called_up` is, among the `top` largest jumps, how many the forecast
+    already pointed up on the session the jump started.
+    """
+    predicted = np.array([row["median_close"] for row in rows], dtype=float)
+    actual = np.array([row["actual_close"] for row in rows], dtype=float)
+    anchor = np.array([row["as_of_close"] for row in rows], dtype=float)
+
+    def extrema(values: np.ndarray, width: int = 4) -> tuple[list[int], list[int]]:
+        peaks, troughs = [], []
+        for i in range(width, len(values) - width):
+            window = values[i - width : i + width + 1]
+            if values[i] == window.max():
+                peaks.append(i)
+            if values[i] == window.min():
+                troughs.append(i)
+        return peaks, troughs
+
+    lead = []
+    for forecast_side, actual_side in zip(extrema(predicted), extrema(actual)):
+        for here in actual_side:
+            near = [p for p in forecast_side if abs(p - here) <= 6]
+            if near:
+                lead.append(min(near, key=lambda p: abs(p - here)) - here)
+
+    jump = actual / anchor - 1.0
+    biggest = np.argsort(jump)[-top:]
+    return {
+        "turn_lead_median": None if not lead else float(np.median(lead)),
+        "turn_lead_share_early": None if not lead else round(float(np.mean(np.array(lead) < 0)), 4),
+        "turn_points": len(lead),
+        "jumps_checked": int(len(biggest)),
+        "jumps_called_up": int(np.sum(predicted[biggest] > anchor[biggest])),
+        "jumps_mean_expected": round(float(np.mean(predicted[biggest] / anchor[biggest] - 1.0)), 4),
+        "jumps_mean_realized": round(float(np.mean(jump[biggest])), 4),
+    }
 
 
 def _bins(rows: list[dict]) -> list[dict]:
@@ -179,6 +207,7 @@ def summarize(template_id: str, horizon: int, rows: list[dict], detail: dict) ->
         "median_close_mae": float(np.mean(error)),
         "median_abs_pct_error": float(np.median(pct_error)),
         "rules": dict(Counter(row["rule"] for row in rows)),
+        "warning": warning_skill(rows),
         "bins": _bins(rows),
         "march_examples": _march_examples(rows),
         "latest": [_public_row(row) for row in rows[-8:]],
@@ -186,10 +215,10 @@ def summarize(template_id: str, horizon: int, rows: list[dict], detail: dict) ->
     }
 
 
-def forecast_rows(vix: Series, ndx: Series) -> dict[str, list[dict]]:
+def forecast_rows(vxn: Series, ndx: Series) -> dict[str, list[dict]]:
     return {
-        "vix-h7-gt-20": _rows_vix(vix, horizon=7, threshold=20.0),
-        "vix-h12-gt-20": _rows_vix(vix, horizon=12, threshold=20.0),
+        "vxn-h7-gt-30": _rows_vxn(vxn, horizon=7, threshold=30.0),
+        "vxn-h12-gt-30": _rows_vxn(vxn, horizon=12, threshold=30.0),
         "ndx-h12-gt-asof": _rows_ndx(ndx, horizon=12),
     }
 
@@ -201,31 +230,45 @@ def _column(rows: list[dict], key: str, digits: int | None = None) -> list:
     return [round(float(value), digits) for value in values]
 
 
-def forward_levels(series: Series, horizon: int, kind: str, threshold: float | None = None) -> list[dict]:
+def forward_levels(series: Series, horizon: int, threshold: float | None = None) -> list[dict]:
     """Point forecast on sessions that have not printed yet. Nothing is written on past dates."""
     closes = np.array([bar.close for bar in series.bars], dtype=float)
-    if kind == "vix":
-        if len(closes) <= horizon:
-            return []
-        path = vix_path(closes, horizon, 20.0 if threshold is None else threshold)
-    else:
-        if len(closes) <= horizon + NDX_VOL_WINDOW:
-            return []
-        path = ndx_path(closes, horizon)
+    if len(closes) <= min_index(horizon):
+        return []
+    estimate = AnalogModel(closes).forecast(
+        len(closes) - 1,
+        horizon,
+        float(closes[-1]) if threshold is None else float(threshold),
+        with_path=True,
+    )
     days = sessions_after(series.bars[-1].date, horizon)
     return [
         {
             "time": day.isoformat(),
-            "horizon": point["horizon"],
-            "median": round(point["median"], 2),
-            "low": round(point["low"], 2),
-            "high": round(point["high"], 2),
+            "horizon": point.horizon,
+            "median": round(point.median, 2),
+            "low": round(point.low, 2),
+            "high": round(point.high, 2),
         }
-        for point, day in zip(path, days, strict=True)
+        for point, day in zip(estimate.path, days, strict=True)
     ]
 
 
-def timeline_document(vix: Series, ndx: Series, rows: dict[str, list[dict]]) -> dict:
+def skill(sample: list[dict]) -> dict:
+    """Does the forecast follow the change it is supposed to predict, or just restate the level?"""
+    if len(sample) < 2:
+        return {"change_corr": None, "direction_hit": None, "n": 0}
+    anchor = np.array([row["as_of_close"] for row in sample], dtype=float)
+    predicted = np.log(np.array([row["median_close"] for row in sample]) / anchor)
+    realized = np.log(np.array([row["actual_close"] for row in sample]) / anchor)
+    return {
+        "change_corr": round(float(np.corrcoef(predicted, realized)[0, 1]), 4),
+        "direction_hit": round(float(np.mean(np.sign(predicted) == np.sign(realized))), 4),
+        "n": len(sample),
+    }
+
+
+def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]]) -> dict:
     """Columnar series for the zoomable chart. One forecast row per session."""
 
     def closes(series: Series) -> dict:
@@ -235,6 +278,9 @@ def timeline_document(vix: Series, ndx: Series, rows: dict[str, list[dict]]) -> 
         }
 
     def forecast(sample: list[dict]) -> dict:
+        # The level is drawn on the session the forecast was made, not on the session it is
+        # about. Drawn on the resolve session, a level forecast is the actual series shifted
+        # right by the horizon, which reads as a lag even when the forecast has skill.
         return {
             "time": _column(sample, "as_of"),
             "resolve": _column(sample, "resolve"),
@@ -242,73 +288,73 @@ def timeline_document(vix: Series, ndx: Series, rows: dict[str, list[dict]]) -> 
             "outcome": _column(sample, "outcome"),
             "median": _column(sample, "median_close", 2),
             "actual": _column(sample, "actual_close", 4),
+            "anchor": _column(sample, "as_of_close", 2),
+            "skill": skill(sample),
         }
 
     return {
-        "vix": closes(vix),
+        "vxn": closes(vxn),
         "ndx": closes(ndx),
         "questions": {
-            "vix-h7-gt-20": {
-                "title": "VIX，7 个交易日后高于 20",
-                "symbol": "vix",
-                "threshold": 20,
-                "forecast": forecast(rows["vix-h7-gt-20"]),
-                "forward": forward_levels(vix, 7, "vix", 20.0),
+            "vxn-h7-gt-30": {
+                "title": "VXN，7 个交易日后高于 30",
+                "symbol": "vxn",
+                "horizon": 7,
+                "threshold": 30,
+                "forecast": forecast(rows["vxn-h7-gt-30"]),
+                "forward": forward_levels(vxn, 7, 30.0),
             },
-            "vix-h12-gt-20": {
-                "title": "VIX，12 个交易日后高于 20",
-                "symbol": "vix",
-                "threshold": 20,
-                "forecast": forecast(rows["vix-h12-gt-20"]),
-                "forward": forward_levels(vix, 12, "vix", 20.0),
+            "vxn-h12-gt-30": {
+                "title": "VXN，12 个交易日后高于 30",
+                "symbol": "vxn",
+                "horizon": 12,
+                "threshold": 30,
+                "forecast": forecast(rows["vxn-h12-gt-30"]),
+                "forward": forward_levels(vxn, 12, 30.0),
             },
             "ndx-h12-gt-asof": {
                 "title": "纳斯达克 100，12 个交易日后高于当天",
                 "symbol": "ndx",
+                "horizon": 12,
                 "threshold": None,
                 "forecast": forecast(rows["ndx-h12-gt-asof"]),
-                "forward": forward_levels(ndx, 12, "ndx"),
+                "forward": forward_levels(ndx, 12),
             },
         },
     }
 
 
-def run_backtest(vix: Series, ndx: Series, rows: dict[str, list[dict]] | None = None) -> dict:
+def run_backtest(vxn: Series, ndx: Series, rows: dict[str, list[dict]] | None = None) -> dict:
     if rows is None:
-        rows = forecast_rows(vix, ndx)
-    vix_7 = rows["vix-h7-gt-20"]
-    vix_12 = rows["vix-h12-gt-20"]
+        rows = forecast_rows(vxn, ndx)
+    vxn_7 = rows["vxn-h7-gt-30"]
+    vxn_12 = rows["vxn-h12-gt-30"]
     ndx_12 = rows["ndx-h12-gt-asof"]
     templates = [
         summarize(
-            "vix-h7-gt-20",
+            "vxn-h7-gt-30",
             7,
-            vix_7,
-            {"symbol": "^VIX", "threshold": 20.0, "band": VIX_BAND, "min_n": VIX_MIN_N},
+            vxn_7,
+            {"symbol": "^VXN", "threshold": 30.0, "neighbours": NEIGHBOURS},
         ),
         summarize(
-            "vix-h12-gt-20",
+            "vxn-h12-gt-30",
             12,
-            vix_12,
-            {"symbol": "^VIX", "threshold": 20.0, "band": VIX_BAND, "min_n": VIX_MIN_N},
+            vxn_12,
+            {"symbol": "^VXN", "threshold": 30.0, "neighbours": NEIGHBOURS},
         ),
         summarize(
             "ndx-h12-gt-asof",
             12,
             ndx_12,
-            {
-                "symbol": "^NDX",
-                "vol_window": NDX_VOL_WINDOW,
-                "vol_band": NDX_VOL_BAND,
-                "min_n": NDX_MIN_N,
-            },
+            {"symbol": "^NDX", "neighbours": NEIGHBOURS},
         ),
     ]
     return {
         "generated_at": datetime.now(NY).isoformat(timespec="seconds"),
-        "vix_fetched_at": vix.fetched_at,
+        "vxn_fetched_at": vxn.fetched_at,
         "ndx_fetched_at": ndx.fetched_at,
-        "vix_span": [vix.bars[0].date.isoformat(), vix.bars[-1].date.isoformat()],
+        "vxn_span": [vxn.bars[0].date.isoformat(), vxn.bars[-1].date.isoformat()],
         "ndx_span": [ndx.bars[0].date.isoformat(), ndx.bars[-1].date.isoformat()],
         "templates": templates,
     }
@@ -321,16 +367,30 @@ def write_report(path, report: dict, indent: int | None = 2) -> None:
 
 def render_report(report: dict) -> str:
     lines = [
-        f"数据 VIX {report['vix_span'][0]} → {report['vix_span'][1]}，取数 {report['vix_fetched_at']}",
+        f"数据 VXN {report['vxn_span'][0]} → {report['vxn_span'][1]}，取数 {report['vxn_fetched_at']}",
         f"数据 NDX {report['ndx_span'][0]} → {report['ndx_span'][1]}，取数 {report['ndx_fetched_at']}",
         "",
         "概率对照的是发生频率，不是某一次的收盘价。说 20% 的那一组，后来大约两成越过门槛，才算对上。",
-        "中位数收盘是同一批历史样本的中心，用来看价位差多少，不拿来当提交的预测。",
+        "中位点位从当天收盘出发，由类比日之后的实际涨跌幅推出来，不是把历史价位搬过来。",
+        "类比只看 1 周、1 月、1 年的涨跌和相对 1 年中位数的偏离，从 200 个最像的已完成类比里取。",
         "",
     ]
     for template in report["templates"]:
         lines.append(_render_template(template))
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_warning(warning: dict) -> str:
+    lead = warning["turn_lead_median"]
+    lead_text = "样本不足" if lead is None else (
+        f"拐点提前中位 {lead:+.1f} 根，提前的占 {warning['turn_lead_share_early']:.0%}"
+        f"（{warning['turn_points']} 个配对）"
+    )
+    return (
+        f"预警能力：{lead_text}；{warning['jumps_checked']} 次最大暴涨里，"
+        f"起点当天预测上涨的 {warning['jumps_called_up']} 次"
+        f"（预测平均 {warning['jumps_mean_expected']:+.1%}，实际 {warning['jumps_mean_realized']:+.1%}）"
+    )
 
 
 def _render_template(template: dict) -> str:
@@ -360,6 +420,7 @@ def _render_template(template: dict) -> str:
             f"百分比误差的中位数 {template['median_abs_pct_error']:.1%}"
         ),
         f"估计规则次数 {template['rules']}",
+        _render_warning(template["warning"]),
         "概率区间  题数  平均概率  实际频率",
     ]
     for bucket in template["bins"]:

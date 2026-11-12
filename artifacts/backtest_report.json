@@ -1,9 +1,9 @@
 {
-  "generated_at":"2026-11-12T03:19:26-05:00",
-  "vix_fetched_at":"2026-11-12T02:36:33-05:00",
-  "ndx_fetched_at":"2026-11-12T02:36:45-05:00",
-  "vix_span":[
-    "1990-01-02",
+  "generated_at":"2026-11-12T05:36:32-05:00",
+  "vxn_fetched_at":"2026-11-12T04:31:35-05:00",
+  "ndx_fetched_at":"2026-11-12T04:31:47-05:00",
+  "vxn_span":[
+    "2001-01-23",
     "2026-11-11"
   ],
   "ndx_span":[
@@ -12,1197 +12,980 @@
   ],
   "templates":[
     {
-      "id":"vix-h7-gt-20",
+      "id":"vxn-h7-gt-30",
       "horizon_sessions":7,
-      "n_forecasts":9027,
-      "first_as_of":"1990-12-31",
+      "n_forecasts":6195,
+      "first_as_of":"2002-03-21",
       "last_as_of":"2026-11-02",
       "last_resolve":"2026-11-11",
-      "mean_probability":0.3535803616661542,
-      "actual_frequency":0.35925556663343305,
-      "brier":0.08685653556192223,
+      "mean_probability":0.18066182405165457,
+      "actual_frequency":0.1741727199354318,
+      "brier":0.046073599677159,
       "brier_half":0.25,
-      "brier_climatology":0.23224497710346664,
-      "n_climatology":8991,
-      "brier_nonoverlapping":0.0832582293355164,
-      "n_nonoverlapping":1290,
-      "median_close_mae":2.5506391935305195,
-      "median_abs_pct_error":0.08438818565400846,
+      "brier_climatology":0.145971594509873,
+      "n_climatology":6159,
+      "brier_nonoverlapping":0.04638864406779661,
+      "n_nonoverlapping":885,
+      "median_close_mae":2.414612897387777,
+      "median_abs_pct_error":0.07830677494653646,
       "rules":{
-        "band":8857,
-        "all_history":170
+        "all_analogues":171,
+        "analog":6024
+      },
+      "warning":{
+        "turn_lead_median":-2.0,
+        "turn_lead_share_early":0.6568,
+        "turn_points":673,
+        "jumps_checked":20,
+        "jumps_called_up":1,
+        "jumps_mean_expected":-0.0329,
+        "jumps_mean_realized":0.8972
+      },
+      "bins":[
+        {
+          "lo":0.0,
+          "hi":0.1,
+          "n":4424,
+          "mean_probability":0.0098621157323689,
+          "actual_frequency":0.01333634719710669
+        },
+        {
+          "lo":0.1,
+          "hi":0.2,
+          "n":318,
+          "mean_probability":0.14394654088050315,
+          "actual_frequency":0.16666666666666666
+        },
+        {
+          "lo":0.2,
+          "hi":0.30000000000000004,
+          "n":197,
+          "mean_probability":0.24517766497461935,
+          "actual_frequency":0.17766497461928935
+        },
+        {
+          "lo":0.3,
+          "hi":0.4,
+          "n":149,
+          "mean_probability":0.3432885906040269,
+          "actual_frequency":0.2751677852348993
+        },
+        {
+          "lo":0.4,
+          "hi":0.5,
+          "n":121,
+          "mean_probability":0.43797520661157024,
+          "actual_frequency":0.35537190082644626
+        },
+        {
+          "lo":0.5,
+          "hi":0.6,
+          "n":79,
+          "mean_probability":0.5483544303797468,
+          "actual_frequency":0.4430379746835443
+        },
+        {
+          "lo":0.6,
+          "hi":0.7,
+          "n":90,
+          "mean_probability":0.6515555555555556,
+          "actual_frequency":0.6888888888888889
+        },
+        {
+          "lo":0.7,
+          "hi":0.7999999999999999,
+          "n":94,
+          "mean_probability":0.748936170212766,
+          "actual_frequency":0.648936170212766
+        },
+        {
+          "lo":0.8,
+          "hi":0.9,
+          "n":110,
+          "mean_probability":0.8528181818181817,
+          "actual_frequency":0.7636363636363637
+        },
+        {
+          "lo":0.9,
+          "hi":1.0,
+          "n":624,
+          "mean_probability":0.9847435897435898,
+          "actual_frequency":0.9727564102564102
+        }
+      ],
+      "march_examples":[
+        {
+          "as_of":"2002-03-21",
+          "resolve":"2002-04-02",
+          "as_of_close":36.98,
+          "probability":1.0,
+          "median_close":35.8652,
+          "actual_close":39.32,
+          "outcome":1,
+          "sample_size":30,
+          "rule":"all_analogues"
+        },
+        {
+          "as_of":"2003-03-03",
+          "resolve":"2003-03-12",
+          "as_of_close":45.83,
+          "probability":1.0,
+          "median_close":45.0307,
+          "actual_close":47.5,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2004-03-01",
+          "resolve":"2004-03-10",
+          "as_of_close":22.54,
+          "probability":0.0,
+          "median_close":22.4685,
+          "actual_close":26.05,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2005-03-01",
+          "resolve":"2005-03-10",
+          "as_of_close":17.78,
+          "probability":0.0,
+          "median_close":17.6467,
+          "actual_close":17.88,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2006-03-01",
+          "resolve":"2006-03-10",
+          "as_of_close":15.49,
+          "probability":0.0,
+          "median_close":15.2951,
+          "actual_close":17.62,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2007-03-01",
+          "resolve":"2007-03-12",
+          "as_of_close":21.51,
+          "probability":0.0,
+          "median_close":20.4522,
+          "actual_close":18.52,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2008-03-03",
+          "resolve":"2008-03-12",
+          "as_of_close":29.47,
+          "probability":0.315,
+          "median_close":28.3028,
+          "actual_close":30.05,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2009-03-02",
+          "resolve":"2009-03-11",
+          "as_of_close":50.92,
+          "probability":1.0,
+          "median_close":48.9198,
+          "actual_close":42.81,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2010-03-01",
+          "resolve":"2010-03-10",
+          "as_of_close":19.59,
+          "probability":0.0,
+          "median_close":19.748,
+          "actual_close":19.08,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2011-03-01",
+          "resolve":"2011-03-10",
+          "as_of_close":22.82,
+          "probability":0.0,
+          "median_close":22.4803,
+          "actual_close":24.27,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2012-03-01",
+          "resolve":"2012-03-12",
+          "as_of_close":18.68,
+          "probability":0.0,
+          "median_close":18.9551,
+          "actual_close":16.71,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2013-03-01",
+          "resolve":"2013-03-12",
+          "as_of_close":15.64,
+          "probability":0.0,
+          "median_close":15.5382,
+          "actual_close":12.84,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2014-03-03",
+          "resolve":"2014-03-12",
+          "as_of_close":16.85,
+          "probability":0.0,
+          "median_close":16.547,
+          "actual_close":15.54,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2015-03-02",
+          "resolve":"2015-03-11",
+          "as_of_close":14.27,
+          "probability":0.0,
+          "median_close":14.3212,
+          "actual_close":18.42,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2016-03-01",
+          "resolve":"2016-03-10",
+          "as_of_close":20.77,
+          "probability":0.0,
+          "median_close":20.4429,
+          "actual_close":21.49,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2017-03-01",
+          "resolve":"2017-03-10",
+          "as_of_close":12.9,
+          "probability":0.0,
+          "median_close":13.0043,
+          "actual_close":11.9,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2018-03-01",
+          "resolve":"2018-03-12",
+          "as_of_close":24.74,
+          "probability":0.045,
+          "median_close":23.7235,
+          "actual_close":17.56,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2019-03-01",
+          "resolve":"2019-03-12",
+          "as_of_close":16.12,
+          "probability":0.0,
+          "median_close":16.7107,
+          "actual_close":15.76,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2020-03-02",
+          "resolve":"2020-03-11",
+          "as_of_close":35.1,
+          "probability":0.69,
+          "median_close":32.6893,
+          "actual_close":50.7,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2021-03-01",
+          "resolve":"2021-03-10",
+          "as_of_close":28.67,
+          "probability":0.365,
+          "median_close":28.9429,
+          "actual_close":31.52,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2022-03-01",
+          "resolve":"2022-03-10",
+          "as_of_close":35.22,
+          "probability":0.88,
+          "median_close":33.7,
+          "actual_close":34.23,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2023-03-01",
+          "resolve":"2023-03-10",
+          "as_of_close":26.48,
+          "probability":0.205,
+          "median_close":27.0546,
+          "actual_close":27.94,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2024-03-01",
+          "resolve":"2024-03-12",
+          "as_of_close":17.2,
+          "probability":0.0,
+          "median_close":17.698,
+          "actual_close":18.13,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2025-03-03",
+          "resolve":"2025-03-12",
+          "as_of_close":24.96,
+          "probability":0.105,
+          "median_close":23.7837,
+          "actual_close":26.82,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-03-02",
+          "resolve":"2026-03-11",
+          "as_of_close":25.4,
+          "probability":0.095,
+          "median_close":24.8747,
+          "actual_close":26.82,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        }
+      ],
+      "latest":[
+        {
+          "as_of":"2026-10-22",
+          "resolve":"2026-11-02",
+          "as_of_close":28.72,
+          "probability":0.27,
+          "median_close":26.1071,
+          "actual_close":30.89,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-10-23",
+          "resolve":"2026-11-03",
+          "as_of_close":28.3,
+          "probability":0.335,
+          "median_close":27.5245,
+          "actual_close":30.53,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-10-26",
+          "resolve":"2026-11-04",
+          "as_of_close":26.4,
+          "probability":0.23,
+          "median_close":26.27,
+          "actual_close":25.08,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-10-27",
+          "resolve":"2026-11-05",
+          "as_of_close":24.91,
+          "probability":0.125,
+          "median_close":25.3881,
+          "actual_close":38.26,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-10-28",
+          "resolve":"2026-11-06",
+          "as_of_close":23.78,
+          "probability":0.13,
+          "median_close":24.1121,
+          "actual_close":34.02,
+          "outcome":1,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-10-29",
+          "resolve":"2026-11-09",
+          "as_of_close":25.18,
+          "probability":0.1,
+          "median_close":24.8138,
+          "actual_close":28.97,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-10-30",
+          "resolve":"2026-11-10",
+          "as_of_close":28.5,
+          "probability":0.315,
+          "median_close":27.914,
+          "actual_close":28.57,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        },
+        {
+          "as_of":"2026-11-02",
+          "resolve":"2026-11-11",
+          "as_of_close":30.89,
+          "probability":0.375,
+          "median_close":28.3065,
+          "actual_close":26.74,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
+        }
+      ],
+      "symbol":"^VXN",
+      "threshold":30.0,
+      "neighbours":200
+    },
+    {
+      "id":"vxn-h12-gt-30",
+      "horizon_sessions":12,
+      "n_forecasts":6185,
+      "first_as_of":"2002-03-28",
+      "last_as_of":"2026-10-26",
+      "last_resolve":"2026-11-11",
+      "mean_probability":0.1824672594987874,
+      "actual_frequency":0.17283751010509296,
+      "brier":0.05787181083265966,
+      "brier_half":0.25,
+      "brier_climatology":0.14615988342188538,
+      "n_climatology":6144,
+      "brier_nonoverlapping":0.05460954457364341,
+      "n_nonoverlapping":516,
+      "median_close_mae":2.8968418062160017,
+      "median_abs_pct_error":0.09404347463131323,
+      "rules":{
+        "all_analogues":171,
+        "analog":6014
+      },
+      "warning":{
+        "turn_lead_median":0.0,
+        "turn_lead_share_early":0.452,
+        "turn_points":854,
+        "jumps_checked":20,
+        "jumps_called_up":4,
+        "jumps_mean_expected":-0.039,
+        "jumps_mean_realized":1.1862
       },
       "bins":[
         {
           "lo":0.0,
           "hi":0.1,
           "n":4249,
-          "mean_probability":0.027417693895362364,
-          "actual_frequency":0.03247823017180513
+          "mean_probability":0.013125441280301246,
+          "actual_frequency":0.018357260531889855
         },
         {
           "lo":0.1,
           "hi":0.2,
-          "n":636,
-          "mean_probability":0.14549674300008292,
-          "actual_frequency":0.16352201257861634
+          "n":407,
+          "mean_probability":0.14304668304668305,
+          "actual_frequency":0.16707616707616707
         },
         {
           "lo":0.2,
           "hi":0.30000000000000004,
-          "n":424,
-          "mean_probability":0.24825294784631619,
-          "actual_frequency":0.30660377358490565
+          "n":254,
+          "mean_probability":0.2451968503937008,
+          "actual_frequency":0.22440944881889763
         },
         {
           "lo":0.3,
           "hi":0.4,
-          "n":360,
-          "mean_probability":0.35010334357843637,
-          "actual_frequency":0.35555555555555557
+          "n":201,
+          "mean_probability":0.3497761194029851,
+          "actual_frequency":0.26865671641791045
         },
         {
           "lo":0.4,
           "hi":0.5,
-          "n":356,
-          "mean_probability":0.44354483014264207,
-          "actual_frequency":0.5056179775280899
+          "n":105,
+          "mean_probability":0.44095238095238093,
+          "actual_frequency":0.23809523809523808
         },
         {
           "lo":0.5,
           "hi":0.6,
-          "n":294,
-          "mean_probability":0.5512943634027816,
-          "actual_frequency":0.5
+          "n":116,
+          "mean_probability":0.5446982758620689,
+          "actual_frequency":0.5172413793103449
         },
         {
           "lo":0.6,
           "hi":0.7,
-          "n":309,
-          "mean_probability":0.6488070588383137,
-          "actual_frequency":0.6634304207119741
+          "n":114,
+          "mean_probability":0.6442543859649124,
+          "actual_frequency":0.5350877192982456
         },
         {
           "lo":0.7,
           "hi":0.7999999999999999,
-          "n":303,
-          "mean_probability":0.7503542904904281,
-          "actual_frequency":0.7491749174917491
+          "n":84,
+          "mean_probability":0.7462500000000001,
+          "actual_frequency":0.6071428571428571
         },
         {
           "lo":0.8,
           "hi":0.9,
-          "n":349,
-          "mean_probability":0.8497195557553009,
-          "actual_frequency":0.8681948424068768
+          "n":122,
+          "mean_probability":0.850532786885246,
+          "actual_frequency":0.7622950819672131
         },
         {
           "lo":0.9,
           "hi":1.0,
-          "n":1747,
-          "mean_probability":0.9771416157678389,
-          "actual_frequency":0.9622209502003435
+          "n":542,
+          "mean_probability":0.9876476014760148,
+          "actual_frequency":0.966789667896679
         }
       ],
       "march_examples":[
         {
-          "as_of":"1991-03-01",
-          "resolve":"1991-03-12",
-          "as_of_close":21.23,
-          "probability":0.792079,
-          "median_close":22.03,
-          "actual_close":18.82,
-          "outcome":0,
-          "sample_size":101,
-          "rule":"band"
-        },
-        {
-          "as_of":"1992-03-02",
-          "resolve":"1992-03-11",
-          "as_of_close":16.88,
-          "probability":0.07173,
-          "median_close":17.06,
-          "actual_close":19.79,
-          "outcome":0,
-          "sample_size":237,
-          "rule":"band"
-        },
-        {
-          "as_of":"1993-03-01",
-          "resolve":"1993-03-10",
-          "as_of_close":13.6,
-          "probability":0.036232,
-          "median_close":13.89,
-          "actual_close":13.91,
-          "outcome":0,
-          "sample_size":138,
-          "rule":"band"
-        },
-        {
-          "as_of":"1994-03-01",
-          "resolve":"1994-03-10",
-          "as_of_close":15.83,
-          "probability":0.04375,
-          "median_close":16.2,
-          "actual_close":16.55,
-          "outcome":0,
-          "sample_size":320,
-          "rule":"band"
-        },
-        {
-          "as_of":"1995-03-01",
-          "resolve":"1995-03-10",
-          "as_of_close":11.65,
-          "probability":0.003484,
-          "median_close":12.04,
-          "actual_close":12.38,
-          "outcome":0,
-          "sample_size":287,
-          "rule":"band"
-        },
-        {
-          "as_of":"1996-03-01",
-          "resolve":"1996-03-12",
-          "as_of_close":16.72,
-          "probability":0.0425,
-          "median_close":16.49,
-          "actual_close":19.09,
-          "outcome":0,
-          "sample_size":400,
-          "rule":"band"
-        },
-        {
-          "as_of":"1997-03-03",
-          "resolve":"1997-03-12",
-          "as_of_close":20.89,
-          "probability":0.467593,
-          "median_close":19.8,
-          "actual_close":19.61,
-          "outcome":0,
-          "sample_size":216,
-          "rule":"band"
-        },
-        {
-          "as_of":"1998-03-02",
-          "resolve":"1998-03-11",
-          "as_of_close":19.19,
-          "probability":0.290323,
-          "median_close":18.8,
-          "actual_close":18.89,
-          "outcome":0,
-          "sample_size":434,
-          "rule":"band"
-        },
-        {
-          "as_of":"1999-03-01",
-          "resolve":"1999-03-10",
-          "as_of_close":28.37,
+          "as_of":"2002-03-28",
+          "resolve":"2002-04-16",
+          "as_of_close":36.28,
           "probability":1.0,
-          "median_close":28.115,
-          "actual_close":24.79,
+          "median_close":33.4247,
+          "actual_close":39.43,
           "outcome":1,
-          "sample_size":162,
-          "rule":"band"
-        },
-        {
-          "as_of":"2000-03-01",
-          "resolve":"2000-03-10",
-          "as_of_close":21.64,
-          "probability":0.692308,
-          "median_close":21.3,
-          "actual_close":21.24,
-          "outcome":1,
-          "sample_size":546,
-          "rule":"band"
-        },
-        {
-          "as_of":"2001-03-01",
-          "resolve":"2001-03-12",
-          "as_of_close":28.08,
-          "probability":0.996633,
-          "median_close":26.19,
-          "actual_close":30.32,
-          "outcome":1,
-          "sample_size":297,
-          "rule":"band"
-        },
-        {
-          "as_of":"2002-03-01",
-          "resolve":"2002-03-12",
-          "as_of_close":19.96,
-          "probability":0.530827,
-          "median_close":20.18,
-          "actual_close":19.59,
-          "outcome":0,
-          "sample_size":665,
-          "rule":"band"
-        },
-        {
-          "as_of":"2003-03-03",
-          "resolve":"2003-03-12",
-          "as_of_close":30.43,
-          "probability":1.0,
-          "median_close":28.62,
-          "actual_close":33.51,
-          "outcome":1,
-          "sample_size":331,
-          "rule":"band"
-        },
-        {
-          "as_of":"2004-03-01",
-          "resolve":"2004-03-10",
-          "as_of_close":14.44,
-          "probability":0.020913,
-          "median_close":14.51,
-          "actual_close":18.67,
-          "outcome":0,
-          "sample_size":526,
-          "rule":"band"
-        },
-        {
-          "as_of":"2005-03-01",
-          "resolve":"2005-03-10",
-          "as_of_close":12.04,
-          "probability":0.001748,
-          "median_close":12.29,
-          "actual_close":12.49,
-          "outcome":0,
-          "sample_size":572,
-          "rule":"band"
-        },
-        {
-          "as_of":"2006-03-01",
-          "resolve":"2006-03-10",
-          "as_of_close":11.54,
-          "probability":0.001733,
-          "median_close":12.1,
-          "actual_close":11.85,
-          "outcome":0,
-          "sample_size":577,
-          "rule":"band"
-        },
-        {
-          "as_of":"2007-03-01",
-          "resolve":"2007-03-12",
-          "as_of_close":15.82,
-          "probability":0.032917,
-          "median_close":15.91,
-          "actual_close":13.99,
-          "outcome":0,
-          "sample_size":881,
-          "rule":"band"
-        },
-        {
-          "as_of":"2008-03-03",
-          "resolve":"2008-03-12",
-          "as_of_close":26.28,
-          "probability":0.982567,
-          "median_close":25.17,
-          "actual_close":27.22,
-          "outcome":1,
-          "sample_size":631,
-          "rule":"band"
-        },
-        {
-          "as_of":"2009-03-02",
-          "resolve":"2009-03-11",
-          "as_of_close":52.65,
-          "probability":0.414801,
-          "median_close":18.35,
-          "actual_close":43.61,
-          "outcome":1,
-          "sample_size":4824,
-          "rule":"all_history"
-        },
-        {
-          "as_of":"2010-03-01",
-          "resolve":"2010-03-10",
-          "as_of_close":19.26,
-          "probability":0.382294,
-          "median_close":19.4,
-          "actual_close":18.57,
-          "outcome":0,
-          "sample_size":994,
-          "rule":"band"
-        },
-        {
-          "as_of":"2011-03-01",
-          "resolve":"2011-03-10",
-          "as_of_close":21.01,
-          "probability":0.624021,
-          "median_close":20.77,
-          "actual_close":21.88,
-          "outcome":1,
-          "sample_size":1149,
-          "rule":"band"
-        },
-        {
-          "as_of":"2012-03-01",
-          "resolve":"2012-03-12",
-          "as_of_close":17.26,
-          "probability":0.134002,
-          "median_close":17.0,
-          "actual_close":15.64,
-          "outcome":0,
-          "sample_size":1097,
-          "rule":"band"
-        },
-        {
-          "as_of":"2013-03-01",
-          "resolve":"2013-03-12",
-          "as_of_close":15.36,
-          "probability":0.040778,
-          "median_close":15.68,
-          "actual_close":12.27,
-          "outcome":0,
-          "sample_size":1079,
-          "rule":"band"
-        },
-        {
-          "as_of":"2014-03-03",
-          "resolve":"2014-03-12",
-          "as_of_close":16.0,
-          "probability":0.052717,
-          "median_close":16.09,
-          "actual_close":14.47,
-          "outcome":0,
-          "sample_size":1233,
-          "rule":"band"
-        },
-        {
-          "as_of":"2015-03-02",
-          "resolve":"2015-03-11",
-          "as_of_close":13.04,
-          "probability":0.01063,
-          "median_close":13.03,
-          "actual_close":16.87,
-          "outcome":0,
-          "sample_size":1223,
-          "rule":"band"
-        },
-        {
-          "as_of":"2016-03-01",
-          "resolve":"2016-03-10",
-          "as_of_close":17.7,
-          "probability":0.156433,
-          "median_close":17.31,
-          "actual_close":18.05,
-          "outcome":0,
-          "sample_size":1368,
-          "rule":"band"
-        },
-        {
-          "as_of":"2017-03-01",
-          "resolve":"2017-03-10",
-          "as_of_close":12.54,
-          "probability":0.012117,
-          "median_close":12.7,
-          "actual_close":11.66,
-          "outcome":0,
-          "sample_size":1403,
-          "rule":"band"
-        },
-        {
-          "as_of":"2018-03-01",
-          "resolve":"2018-03-12",
-          "as_of_close":22.47,
-          "probability":0.77918,
-          "median_close":22.0,
-          "actual_close":15.78,
-          "outcome":0,
-          "sample_size":1268,
-          "rule":"band"
-        },
-        {
-          "as_of":"2019-03-01",
-          "resolve":"2019-03-12",
-          "as_of_close":13.57,
-          "probability":0.022422,
-          "median_close":13.42,
-          "actual_close":13.77,
-          "outcome":0,
-          "sample_size":1561,
-          "rule":"band"
-        },
-        {
-          "as_of":"2020-03-02",
-          "resolve":"2020-03-11",
-          "as_of_close":33.42,
-          "probability":1.0,
-          "median_close":31.045,
-          "actual_close":53.9,
-          "outcome":1,
-          "sample_size":346,
-          "rule":"band"
-        },
-        {
-          "as_of":"2021-03-01",
-          "resolve":"2021-03-10",
-          "as_of_close":23.35,
-          "probability":0.860255,
-          "median_close":22.75,
-          "actual_close":22.56,
-          "outcome":1,
-          "sample_size":1331,
-          "rule":"band"
-        },
-        {
-          "as_of":"2022-03-01",
-          "resolve":"2022-03-10",
-          "as_of_close":33.32,
-          "probability":0.997487,
-          "median_close":30.675,
-          "actual_close":30.23,
-          "outcome":1,
-          "sample_size":398,
-          "rule":"band"
-        },
-        {
-          "as_of":"2023-03-01",
-          "resolve":"2023-03-10",
-          "as_of_close":20.58,
-          "probability":0.537944,
-          "median_close":20.295,
-          "actual_close":24.8,
-          "outcome":1,
-          "sample_size":1634,
-          "rule":"band"
-        },
-        {
-          "as_of":"2024-03-01",
-          "resolve":"2024-03-12",
-          "as_of_close":13.11,
-          "probability":0.0213,
-          "median_close":13.185,
-          "actual_close":13.84,
-          "outcome":0,
-          "sample_size":1784,
-          "rule":"band"
-        },
-        {
-          "as_of":"2025-03-03",
-          "resolve":"2025-03-12",
-          "as_of_close":22.78,
-          "probability":0.783577,
-          "median_close":22.16,
-          "actual_close":24.23,
-          "outcome":1,
-          "sample_size":1571,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-03-02",
-          "resolve":"2026-03-11",
-          "as_of_close":21.44,
-          "probability":0.622029,
-          "median_close":20.89,
-          "actual_close":24.23,
-          "outcome":1,
-          "sample_size":1725,
-          "rule":"band"
-        }
-      ],
-      "latest":[
-        {
-          "as_of":"2026-10-22",
-          "resolve":"2026-11-02",
-          "as_of_close":19.03,
-          "probability":0.307858,
-          "median_close":18.605,
-          "actual_close":21.15,
-          "outcome":1,
-          "sample_size":1858,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-10-23",
-          "resolve":"2026-11-03",
-          "as_of_close":19.45,
-          "probability":0.361036,
-          "median_close":19.08,
-          "actual_close":20.83,
-          "outcome":1,
-          "sample_size":1853,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-10-26",
-          "resolve":"2026-11-04",
-          "as_of_close":18.39,
-          "probability":0.237376,
-          "median_close":17.89,
-          "actual_close":16.61,
-          "outcome":0,
-          "sample_size":1921,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-10-27",
-          "resolve":"2026-11-05",
-          "as_of_close":17.52,
-          "probability":0.152311,
-          "median_close":17.09,
-          "actual_close":28.18,
-          "outcome":1,
-          "sample_size":2055,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-10-28",
-          "resolve":"2026-11-06",
-          "as_of_close":16.91,
-          "probability":0.111538,
-          "median_close":16.66,
-          "actual_close":25.64,
-          "outcome":1,
-          "sample_size":2080,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-10-29",
-          "resolve":"2026-11-09",
-          "as_of_close":17.2,
-          "probability":0.13182,
-          "median_close":16.87,
-          "actual_close":19.92,
-          "outcome":0,
-          "sample_size":2071,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-10-30",
-          "resolve":"2026-11-10",
-          "as_of_close":19.42,
-          "probability":0.356797,
-          "median_close":19.04,
-          "actual_close":19.46,
-          "outcome":0,
-          "sample_size":1861,
-          "rule":"band"
-        },
-        {
-          "as_of":"2026-11-02",
-          "resolve":"2026-11-11",
-          "as_of_close":21.15,
-          "probability":0.586907,
-          "median_close":20.67,
-          "actual_close":17.49,
-          "outcome":0,
-          "sample_size":1772,
-          "rule":"band"
-        }
-      ],
-      "symbol":"^VIX",
-      "threshold":20.0,
-      "band":0.1,
-      "min_n":30
-    },
-    {
-      "id":"vix-h12-gt-20",
-      "horizon_sessions":12,
-      "n_forecasts":9022,
-      "first_as_of":"1990-12-31",
-      "last_as_of":"2026-10-26",
-      "last_resolve":"2026-11-11",
-      "mean_probability":0.3530687118537317,
-      "actual_frequency":0.3589004655287076,
-      "brier":0.10230743390859742,
-      "brier_half":0.25,
-      "brier_climatology":0.23283604703133418,
-      "n_climatology":8981,
-      "brier_nonoverlapping":0.11239969197216898,
-      "n_nonoverlapping":752,
-      "median_close_mae":2.910665041010863,
-      "median_abs_pct_error":0.09954091311876692,
-      "rules":{
-        "band":8839,
-        "all_history":183
-      },
-      "bins":[
-        {
-          "lo":0.0,
-          "hi":0.1,
-          "n":3961,
-          "mean_probability":0.032475121494430416,
-          "actual_frequency":0.04594799293107801
-        },
-        {
-          "lo":0.1,
-          "hi":0.2,
-          "n":812,
-          "mean_probability":0.14589246588909377,
-          "actual_frequency":0.16009852216748768
-        },
-        {
-          "lo":0.2,
-          "hi":0.30000000000000004,
-          "n":500,
-          "mean_probability":0.2492558912537121,
-          "actual_frequency":0.284
-        },
-        {
-          "lo":0.3,
-          "hi":0.4,
-          "n":403,
-          "mean_probability":0.3475441178070073,
-          "actual_frequency":0.34739454094292804
-        },
-        {
-          "lo":0.4,
-          "hi":0.5,
-          "n":395,
-          "mean_probability":0.43924124354261734,
-          "actual_frequency":0.5113924050632911
-        },
-        {
-          "lo":0.5,
-          "hi":0.6,
-          "n":343,
-          "mean_probability":0.5512492392285725,
-          "actual_frequency":0.5189504373177842
-        },
-        {
-          "lo":0.6,
-          "hi":0.7,
-          "n":341,
-          "mean_probability":0.647726087666221,
-          "actual_frequency":0.6422287390029325
-        },
-        {
-          "lo":0.7,
-          "hi":0.7999999999999999,
-          "n":334,
-          "mean_probability":0.7533361064121435,
-          "actual_frequency":0.7455089820359282
-        },
-        {
-          "lo":0.8,
-          "hi":0.9,
-          "n":366,
-          "mean_probability":0.8567693431067168,
-          "actual_frequency":0.8360655737704918
-        },
-        {
-          "lo":0.9,
-          "hi":1.0,
-          "n":1568,
-          "mean_probability":0.9727384180052772,
-          "actual_frequency":0.9502551020408163
-        }
-      ],
-      "march_examples":[
-        {
-          "as_of":"1991-03-01",
-          "resolve":"1991-03-19",
-          "as_of_close":21.23,
-          "probability":0.697917,
-          "median_close":21.895,
-          "actual_close":16.11,
-          "outcome":0,
-          "sample_size":96,
-          "rule":"band"
-        },
-        {
-          "as_of":"1992-03-02",
-          "resolve":"1992-03-18",
-          "as_of_close":16.88,
-          "probability":0.107759,
-          "median_close":17.18,
-          "actual_close":16.69,
-          "outcome":0,
-          "sample_size":232,
-          "rule":"band"
-        },
-        {
-          "as_of":"1993-03-01",
-          "resolve":"1993-03-17",
-          "as_of_close":13.6,
-          "probability":0.036765,
-          "median_close":13.86,
-          "actual_close":14.53,
-          "outcome":0,
-          "sample_size":136,
-          "rule":"band"
-        },
-        {
-          "as_of":"1994-03-01",
-          "resolve":"1994-03-17",
-          "as_of_close":15.83,
-          "probability":0.062893,
-          "median_close":16.24,
-          "actual_close":12.76,
-          "outcome":0,
-          "sample_size":318,
-          "rule":"band"
-        },
-        {
-          "as_of":"1995-03-01",
-          "resolve":"1995-03-17",
-          "as_of_close":11.65,
-          "probability":0.0,
-          "median_close":12.14,
-          "actual_close":11.8,
-          "outcome":0,
-          "sample_size":282,
-          "rule":"band"
-        },
-        {
-          "as_of":"1996-03-01",
-          "resolve":"1996-03-19",
-          "as_of_close":16.72,
-          "probability":0.060606,
-          "median_close":16.405,
-          "actual_close":18.35,
-          "outcome":0,
-          "sample_size":396,
-          "rule":"band"
-        },
-        {
-          "as_of":"1997-03-03",
-          "resolve":"1997-03-19",
-          "as_of_close":20.89,
-          "probability":0.398104,
-          "median_close":19.48,
-          "actual_close":21.74,
-          "outcome":1,
-          "sample_size":211,
-          "rule":"band"
-        },
-        {
-          "as_of":"1998-03-02",
-          "resolve":"1998-03-18",
-          "as_of_close":19.19,
-          "probability":0.284382,
-          "median_close":18.59,
-          "actual_close":18.29,
-          "outcome":0,
-          "sample_size":429,
-          "rule":"band"
-        },
-        {
-          "as_of":"1999-03-01",
-          "resolve":"1999-03-17",
-          "as_of_close":28.37,
-          "probability":0.987261,
-          "median_close":27.45,
-          "actual_close":25.57,
-          "outcome":1,
-          "sample_size":157,
-          "rule":"band"
-        },
-        {
-          "as_of":"2000-03-01",
-          "resolve":"2000-03-17",
-          "as_of_close":21.64,
-          "probability":0.661142,
-          "median_close":21.18,
-          "actual_close":22.37,
-          "outcome":1,
-          "sample_size":543,
-          "rule":"band"
-        },
-        {
-          "as_of":"2001-03-01",
-          "resolve":"2001-03-19",
-          "as_of_close":28.08,
-          "probability":0.989899,
-          "median_close":25.46,
-          "actual_close":29.78,
-          "outcome":1,
-          "sample_size":297,
-          "rule":"band"
-        },
-        {
-          "as_of":"2002-03-01",
-          "resolve":"2002-03-19",
-          "as_of_close":19.96,
-          "probability":0.523379,
-          "median_close":20.18,
-          "actual_close":18.16,
-          "outcome":0,
-          "sample_size":663,
-          "rule":"band"
+          "sample_size":30,
+          "rule":"all_analogues"
         },
         {
           "as_of":"2003-03-03",
           "resolve":"2003-03-19",
-          "as_of_close":30.43,
+          "as_of_close":45.83,
           "probability":1.0,
-          "median_close":27.92,
-          "actual_close":31.54,
+          "median_close":45.5118,
+          "actual_close":48.2,
           "outcome":1,
-          "sample_size":327,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2004-03-01",
           "resolve":"2004-03-17",
-          "as_of_close":14.44,
-          "probability":0.03071,
-          "median_close":14.43,
-          "actual_close":18.11,
+          "as_of_close":22.54,
+          "probability":0.0,
+          "median_close":22.5059,
+          "actual_close":24.75,
           "outcome":0,
-          "sample_size":521,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2005-03-01",
           "resolve":"2005-03-17",
-          "as_of_close":12.04,
+          "as_of_close":17.78,
           "probability":0.0,
-          "median_close":12.37,
-          "actual_close":13.29,
+          "median_close":17.227,
+          "actual_close":18.46,
           "outcome":0,
-          "sample_size":567,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2006-03-01",
           "resolve":"2006-03-17",
-          "as_of_close":11.54,
+          "as_of_close":15.49,
           "probability":0.0,
-          "median_close":12.25,
-          "actual_close":12.12,
+          "median_close":15.2646,
+          "actual_close":15.36,
           "outcome":0,
-          "sample_size":573,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2007-03-01",
           "resolve":"2007-03-19",
-          "as_of_close":15.82,
-          "probability":0.051078,
-          "median_close":15.96,
-          "actual_close":14.59,
+          "as_of_close":21.51,
+          "probability":0.0,
+          "median_close":20.2421,
+          "actual_close":18.38,
           "outcome":0,
-          "sample_size":881,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2008-03-03",
           "resolve":"2008-03-19",
-          "as_of_close":26.28,
-          "probability":0.969649,
-          "median_close":24.845,
-          "actual_close":29.84,
+          "as_of_close":29.47,
+          "probability":0.34,
+          "median_close":28.5616,
+          "actual_close":31.28,
           "outcome":1,
-          "sample_size":626,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2009-03-02",
           "resolve":"2009-03-18",
-          "as_of_close":52.65,
-          "probability":0.414194,
-          "median_close":18.34,
-          "actual_close":40.06,
+          "as_of_close":50.92,
+          "probability":1.0,
+          "median_close":48.5823,
+          "actual_close":39.8,
           "outcome":1,
-          "sample_size":4819,
-          "rule":"all_history"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2010-03-01",
           "resolve":"2010-03-17",
-          "as_of_close":19.26,
-          "probability":0.404834,
-          "median_close":19.44,
-          "actual_close":16.91,
+          "as_of_close":19.59,
+          "probability":0.0,
+          "median_close":19.9536,
+          "actual_close":17.56,
           "outcome":0,
-          "sample_size":993,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2011-03-01",
           "resolve":"2011-03-17",
-          "as_of_close":21.01,
-          "probability":0.603133,
-          "median_close":20.72,
-          "actual_close":26.37,
-          "outcome":1,
-          "sample_size":1149,
-          "rule":"band"
+          "as_of_close":22.82,
+          "probability":0.015,
+          "median_close":22.2163,
+          "actual_close":28.41,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2012-03-01",
           "resolve":"2012-03-19",
-          "as_of_close":17.26,
-          "probability":0.16347,
-          "median_close":16.99,
-          "actual_close":15.04,
+          "as_of_close":18.68,
+          "probability":0.0,
+          "median_close":19.1425,
+          "actual_close":16.55,
           "outcome":0,
-          "sample_size":1095,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2013-03-01",
           "resolve":"2013-03-19",
-          "as_of_close":15.36,
-          "probability":0.067718,
-          "median_close":15.885,
-          "actual_close":14.39,
+          "as_of_close":15.64,
+          "probability":0.0,
+          "median_close":15.5916,
+          "actual_close":14.45,
           "outcome":0,
-          "sample_size":1078,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2014-03-03",
           "resolve":"2014-03-19",
-          "as_of_close":16.0,
-          "probability":0.080422,
-          "median_close":16.12,
-          "actual_close":15.12,
+          "as_of_close":16.85,
+          "probability":0.0,
+          "median_close":16.325,
+          "actual_close":16.23,
           "outcome":0,
-          "sample_size":1231,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2015-03-02",
           "resolve":"2015-03-18",
-          "as_of_close":13.04,
-          "probability":0.012265,
-          "median_close":13.05,
-          "actual_close":13.97,
+          "as_of_close":14.27,
+          "probability":0.0,
+          "median_close":14.4613,
+          "actual_close":14.99,
           "outcome":0,
-          "sample_size":1223,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2016-03-01",
           "resolve":"2016-03-17",
-          "as_of_close":17.7,
-          "probability":0.187135,
-          "median_close":17.125,
-          "actual_close":14.44,
+          "as_of_close":20.77,
+          "probability":0.025,
+          "median_close":20.0807,
+          "actual_close":17.65,
           "outcome":0,
-          "sample_size":1368,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2017-03-01",
           "resolve":"2017-03-17",
-          "as_of_close":12.54,
-          "probability":0.015,
-          "median_close":12.81,
-          "actual_close":11.28,
+          "as_of_close":12.9,
+          "probability":0.0,
+          "median_close":13.521,
+          "actual_close":10.57,
           "outcome":0,
-          "sample_size":1400,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2018-03-01",
           "resolve":"2018-03-19",
-          "as_of_close":22.47,
-          "probability":0.733228,
-          "median_close":21.8,
-          "actual_close":19.02,
+          "as_of_close":24.74,
+          "probability":0.055,
+          "median_close":22.6264,
+          "actual_close":22.06,
           "outcome":0,
-          "sample_size":1267,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2019-03-01",
           "resolve":"2019-03-19",
-          "as_of_close":13.57,
-          "probability":0.032092,
-          "median_close":13.435,
-          "actual_close":13.56,
+          "as_of_close":16.12,
+          "probability":0.0,
+          "median_close":16.8835,
+          "actual_close":16.73,
           "outcome":0,
-          "sample_size":1558,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2020-03-02",
           "resolve":"2020-03-18",
-          "as_of_close":33.42,
-          "probability":0.988439,
-          "median_close":30.175,
-          "actual_close":76.45,
+          "as_of_close":35.1,
+          "probability":0.645,
+          "median_close":31.8903,
+          "actual_close":74.22,
           "outcome":1,
-          "sample_size":346,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2021-03-01",
           "resolve":"2021-03-17",
-          "as_of_close":23.35,
-          "probability":0.818387,
-          "median_close":22.64,
-          "actual_close":19.23,
+          "as_of_close":28.67,
+          "probability":0.51,
+          "median_close":30.1374,
+          "actual_close":27.98,
           "outcome":0,
-          "sample_size":1327,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2022-03-01",
           "resolve":"2022-03-17",
-          "as_of_close":33.32,
-          "probability":0.98995,
-          "median_close":29.76,
-          "actual_close":25.67,
-          "outcome":1,
-          "sample_size":398,
-          "rule":"band"
+          "as_of_close":35.22,
+          "probability":0.85,
+          "median_close":34.0303,
+          "actual_close":29.51,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2023-03-01",
           "resolve":"2023-03-17",
-          "as_of_close":20.58,
-          "probability":0.515951,
-          "median_close":20.1,
-          "actual_close":25.51,
-          "outcome":1,
-          "sample_size":1630,
-          "rule":"band"
+          "as_of_close":26.48,
+          "probability":0.295,
+          "median_close":27.508,
+          "actual_close":28.35,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2024-03-01",
           "resolve":"2024-03-19",
-          "as_of_close":13.11,
-          "probability":0.028074,
-          "median_close":13.22,
-          "actual_close":13.82,
+          "as_of_close":17.2,
+          "probability":0.0,
+          "median_close":18.0298,
+          "actual_close":18.78,
           "outcome":0,
-          "sample_size":1781,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2025-03-03",
           "resolve":"2025-03-19",
-          "as_of_close":22.78,
-          "probability":0.745385,
-          "median_close":22.06,
-          "actual_close":19.9,
+          "as_of_close":24.96,
+          "probability":0.14,
+          "median_close":23.6005,
+          "actual_close":23.62,
           "outcome":0,
-          "sample_size":1571,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-03-02",
           "resolve":"2026-03-18",
-          "as_of_close":21.44,
-          "probability":0.588953,
-          "median_close":20.73,
-          "actual_close":25.09,
-          "outcome":1,
-          "sample_size":1720,
-          "rule":"band"
+          "as_of_close":25.4,
+          "probability":0.14,
+          "median_close":24.6364,
+          "actual_close":27.72,
+          "outcome":0,
+          "sample_size":200,
+          "rule":"analog"
         }
       ],
       "latest":[
         {
           "as_of":"2026-10-15",
           "resolve":"2026-11-02",
-          "as_of_close":16.46,
-          "probability":0.112833,
-          "median_close":16.34,
-          "actual_close":21.15,
+          "as_of_close":22.89,
+          "probability":0.07,
+          "median_close":23.8884,
+          "actual_close":30.89,
           "outcome":1,
-          "sample_size":2065,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-16",
           "resolve":"2026-11-03",
-          "as_of_close":19.99,
-          "probability":0.428335,
-          "median_close":19.47,
-          "actual_close":20.83,
+          "as_of_close":27.13,
+          "probability":0.17,
+          "median_close":23.8299,
+          "actual_close":30.53,
           "outcome":1,
-          "sample_size":1814,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-19",
           "resolve":"2026-11-04",
-          "as_of_close":18.44,
-          "probability":0.251298,
-          "median_close":17.75,
-          "actual_close":16.61,
+          "as_of_close":25.56,
+          "probability":0.14,
+          "median_close":23.4165,
+          "actual_close":25.08,
           "outcome":0,
-          "sample_size":1926,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-20",
           "resolve":"2026-11-05",
-          "as_of_close":17.31,
-          "probability":0.158151,
-          "median_close":16.81,
-          "actual_close":28.18,
+          "as_of_close":25.22,
+          "probability":0.155,
+          "median_close":24.082,
+          "actual_close":38.26,
           "outcome":1,
-          "sample_size":2055,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-21",
           "resolve":"2026-11-06",
-          "as_of_close":16.68,
-          "probability":0.123234,
-          "median_close":16.48,
-          "actual_close":25.64,
+          "as_of_close":24.42,
+          "probability":0.17,
+          "median_close":24.3672,
+          "actual_close":34.02,
           "outcome":1,
-          "sample_size":2053,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-22",
           "resolve":"2026-11-09",
-          "as_of_close":19.03,
-          "probability":0.311625,
-          "median_close":18.41,
-          "actual_close":19.92,
+          "as_of_close":28.72,
+          "probability":0.185,
+          "median_close":25.2887,
+          "actual_close":28.97,
           "outcome":0,
-          "sample_size":1858,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-23",
           "resolve":"2026-11-10",
-          "as_of_close":19.45,
-          "probability":0.360496,
-          "median_close":18.88,
-          "actual_close":19.46,
+          "as_of_close":28.3,
+          "probability":0.27,
+          "median_close":26.6837,
+          "actual_close":28.57,
           "outcome":0,
-          "sample_size":1853,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-26",
           "resolve":"2026-11-11",
-          "as_of_close":18.39,
-          "probability":0.245833,
-          "median_close":17.7,
-          "actual_close":17.49,
+          "as_of_close":26.4,
+          "probability":0.23,
+          "median_close":26.0487,
+          "actual_close":26.74,
           "outcome":0,
-          "sample_size":1920,
-          "rule":"band"
+          "sample_size":200,
+          "rule":"analog"
         }
       ],
-      "symbol":"^VIX",
-      "threshold":20.0,
-      "band":0.1,
-      "min_n":30
+      "symbol":"^VXN",
+      "threshold":30.0,
+      "neighbours":200
     },
     {
       "id":"ndx-h12-gt-asof",
       "horizon_sessions":12,
-      "n_forecasts":10095,
-      "first_as_of":"1986-09-30",
+      "n_forecasts":10054,
+      "first_as_of":"1986-11-26",
       "last_as_of":"2026-10-26",
       "last_resolve":"2026-11-11",
-      "mean_probability":0.5987452178676209,
-      "actual_frequency":0.5998018821198613,
-      "brier":0.24270741138884577,
+      "mean_probability":0.590561243140938,
+      "actual_frequency":0.5988661229361448,
+      "brier":0.24648672876902242,
       "brier_half":0.25,
-      "brier_climatology":0.24172793621704736,
-      "n_climatology":10054,
-      "brier_nonoverlapping":0.23958727950508155,
-      "n_nonoverlapping":842,
-      "median_close_mae":159.24484401418377,
-      "median_abs_pct_error":0.027042964603059702,
+      "brier_climatology":0.24154784803770896,
+      "n_climatology":10013,
+      "brier_nonoverlapping":0.2476694244388948,
+      "n_nonoverlapping":838,
+      "median_close_mae":159.80621057793243,
+      "median_abs_pct_error":0.02745913402934219,
       "rules":{
-        "all_returns":359,
-        "vol_band":9736
+        "all_analogues":171,
+        "analog":9883
+      },
+      "warning":{
+        "turn_lead_median":0.0,
+        "turn_lead_share_early":0.4853,
+        "turn_points":1160,
+        "jumps_checked":20,
+        "jumps_called_up":8,
+        "jumps_mean_expected":-0.009,
+        "jumps_mean_realized":0.2307
       },
       "bins":[
         {
@@ -1229,44 +1012,44 @@
         {
           "lo":0.3,
           "hi":0.4,
-          "n":40,
-          "mean_probability":0.35853817602842886,
-          "actual_frequency":0.725
+          "n":52,
+          "mean_probability":0.3757692307692308,
+          "actual_frequency":0.6538461538461539
         },
         {
           "lo":0.4,
           "hi":0.5,
-          "n":142,
-          "mean_probability":0.45192287287109334,
-          "actual_frequency":0.5633802816901409
+          "n":585,
+          "mean_probability":0.46480341880341874,
+          "actual_frequency":0.6068376068376068
         },
         {
           "lo":0.5,
           "hi":0.6,
-          "n":5467,
-          "mean_probability":0.5789894161865142,
-          "actual_frequency":0.615877080665813
+          "n":4812,
+          "mean_probability":0.5575238985868662,
+          "actual_frequency":0.6149210307564422
         },
         {
           "lo":0.6,
           "hi":0.7,
-          "n":4244,
-          "mean_probability":0.6245875413229863,
-          "actual_frequency":0.5815268614514609
+          "n":4189,
+          "mean_probability":0.6345189696567056,
+          "actual_frequency":0.580568154690857
         },
         {
           "lo":0.7,
           "hi":0.7999999999999999,
-          "n":190,
-          "mean_probability":0.736403144805451,
-          "actual_frequency":0.5368421052631579
+          "n":379,
+          "mean_probability":0.7255807842422228,
+          "actual_frequency":0.6174142480211082
         },
         {
           "lo":0.8,
           "hi":0.9,
-          "n":12,
-          "mean_probability":0.8180948504448029,
-          "actual_frequency":0.75
+          "n":37,
+          "mean_probability":0.8176393897094264,
+          "actual_frequency":0.1891891891891892
         },
         {
           "lo":0.9,
@@ -1281,441 +1064,441 @@
           "as_of":"1987-03-02",
           "resolve":"1987-03-18",
           "as_of_close":181.065,
-          "probability":0.637584,
-          "median_close":183.889,
+          "probability":0.787234,
+          "median_close":186.25,
           "actual_close":186.045,
           "outcome":1,
-          "sample_size":149,
-          "rule":"vol_band"
+          "sample_size":94,
+          "rule":"all_analogues"
         },
         {
           "as_of":"1988-03-01",
           "resolve":"1988-03-17",
           "as_of_close":172.635,
-          "probability":0.643098,
-          "median_close":175.309,
+          "probability":0.66,
+          "median_close":175.9983,
           "actual_close":181.235,
           "outcome":1,
-          "sample_size":297,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1989-03-01",
           "resolve":"1989-03-17",
           "as_of_close":183.6,
-          "probability":0.5902,
-          "median_close":185.1371,
+          "probability":0.565,
+          "median_close":185.0498,
           "actual_close":182.01,
           "outcome":0,
-          "sample_size":449,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1990-03-01",
           "resolve":"1990-03-19",
           "as_of_close":209.105,
-          "probability":0.604575,
-          "median_close":210.9654,
+          "probability":0.575,
+          "median_close":210.1243,
           "actual_close":219.87,
           "outcome":1,
-          "sample_size":612,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1991-03-01",
           "resolve":"1991-03-19",
           "as_of_close":252.39,
-          "probability":0.606557,
-          "median_close":255.0808,
+          "probability":0.58,
+          "median_close":253.8934,
           "actual_close":253.85,
           "outcome":1,
-          "sample_size":610,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1992-03-02",
           "resolve":"1992-03-18",
           "as_of_close":346.635,
-          "probability":0.623274,
-          "median_close":351.3498,
+          "probability":0.6,
+          "median_close":349.3689,
           "actual_close":342.625,
           "outcome":0,
-          "sample_size":507,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1993-03-01",
           "resolve":"1993-03-17",
           "as_of_close":349.095,
-          "probability":0.592701,
-          "median_close":352.6619,
+          "probability":0.545,
+          "median_close":350.3963,
           "actual_close":355.655,
           "outcome":1,
-          "sample_size":685,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1994-03-01",
           "resolve":"1994-03-17",
           "as_of_close":409.69,
-          "probability":0.568109,
-          "median_close":412.7103,
+          "probability":0.57,
+          "median_close":411.3993,
           "actual_close":418.45,
           "outcome":1,
-          "sample_size":1248,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1995-03-01",
           "resolve":"1995-03-17",
           "as_of_close":429.8,
-          "probability":0.586726,
-          "median_close":433.278,
+          "probability":0.505,
+          "median_close":429.9665,
           "actual_close":443.94,
           "outcome":1,
-          "sample_size":1130,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1996-03-01",
           "resolve":"1996-03-19",
           "as_of_close":604.76,
-          "probability":0.596841,
-          "median_close":611.8351,
+          "probability":0.615,
+          "median_close":611.7453,
           "actual_close":629.39,
           "outcome":1,
-          "sample_size":1203,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1997-03-03",
           "resolve":"1997-03-19",
           "as_of_close":856.08,
-          "probability":0.597325,
-          "median_close":865.998,
+          "probability":0.6,
+          "median_close":866.0023,
           "actual_close":811.8,
           "outcome":0,
-          "sample_size":673,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1998-03-02",
           "resolve":"1998-03-18",
           "as_of_close":1177.59,
-          "probability":0.603069,
-          "median_close":1192.0361,
+          "probability":0.615,
+          "median_close":1191.4037,
           "actual_close":1177.01,
           "outcome":0,
-          "sample_size":1499,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"1999-03-01",
           "resolve":"1999-03-17",
           "as_of_close":1937.7,
-          "probability":0.731579,
-          "median_close":2022.6517,
+          "probability":0.495,
+          "median_close":1936.3025,
           "actual_close":2064.5,
           "outcome":1,
-          "sample_size":190,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2000-03-01",
           "resolve":"2000-03-17",
           "as_of_close":4309.0098,
-          "probability":0.669841,
-          "median_close":4409.0802,
+          "probability":0.66,
+          "median_close":4404.3867,
           "actual_close":4440.4502,
           "outcome":1,
-          "sample_size":630,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2001-03-01",
           "resolve":"2001-03-19",
           "as_of_close":1968.02,
-          "probability":0.583618,
-          "median_close":1997.1352,
+          "probability":0.495,
+          "median_close":1966.0069,
           "actual_close":1730.46,
           "outcome":0,
-          "sample_size":293,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2002-03-01",
           "resolve":"2002-03-19",
           "as_of_close":1435.41,
-          "probability":0.5625,
-          "median_close":1448.8372,
+          "probability":0.615,
+          "median_close":1457.422,
           "actual_close":1504.67,
           "outcome":1,
-          "sample_size":688,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2003-03-03",
           "resolve":"2003-03-19",
           "as_of_close":991.07,
-          "probability":0.600946,
-          "median_close":1004.4671,
+          "probability":0.545,
+          "median_close":997.8379,
           "actual_close":1074.97,
           "outcome":1,
-          "sample_size":1268,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2004-03-01",
           "resolve":"2004-03-17",
           "as_of_close":1489.49,
-          "probability":0.586862,
-          "median_close":1502.7508,
+          "probability":0.51,
+          "median_close":1492.2738,
           "actual_close":1428.89,
           "outcome":0,
-          "sample_size":1842,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2005-03-01",
           "resolve":"2005-03-17",
           "as_of_close":1527.25,
-          "probability":0.578235,
-          "median_close":1540.0707,
+          "probability":0.635,
+          "median_close":1550.7378,
           "actual_close":1487.63,
           "outcome":0,
-          "sample_size":1994,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2006-03-01",
           "resolve":"2006-03-17",
           "as_of_close":1694.58,
-          "probability":0.574359,
-          "median_close":1708.2704,
+          "probability":0.49,
+          "median_close":1691.3443,
           "actual_close":1685.66,
           "outcome":0,
-          "sample_size":2145,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2007-03-01",
           "resolve":"2007-03-19",
           "as_of_close":1753.45,
-          "probability":0.591767,
-          "median_close":1770.6644,
+          "probability":0.565,
+          "median_close":1766.5385,
           "actual_close":1758.23,
           "outcome":1,
-          "sample_size":2332,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2008-03-03",
           "resolve":"2008-03-19",
           "as_of_close":1733.27,
-          "probability":0.600877,
-          "median_close":1755.1715,
+          "probability":0.645,
+          "median_close":1765.0226,
           "actual_close":1715.59,
           "outcome":0,
-          "sample_size":2052,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2009-03-02",
           "resolve":"2009-03-18",
           "as_of_close":1076.67,
-          "probability":0.56619,
-          "median_close":1086.0543,
+          "probability":0.445,
+          "median_close":1054.9428,
           "actual_close":1206.96,
           "outcome":1,
-          "sample_size":1118,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2010-03-01",
           "resolve":"2010-03-17",
           "as_of_close":1846.4,
-          "probability":0.590609,
-          "median_close":1863.9794,
+          "probability":0.53,
+          "median_close":1851.616,
           "actual_close":1936.22,
           "outcome":1,
-          "sample_size":2577,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2011-03-01",
           "resolve":"2011-03-17",
           "as_of_close":2315.26,
-          "probability":0.595443,
-          "median_close":2338.3414,
+          "probability":0.655,
+          "median_close":2345.7381,
           "actual_close":2225.24,
           "outcome":0,
-          "sample_size":2677,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2012-03-01",
           "resolve":"2012-03-19",
           "as_of_close":2643.54,
-          "probability":0.592481,
-          "median_close":2666.225,
+          "probability":0.625,
+          "median_close":2674.5785,
           "actual_close":2733.26,
           "outcome":1,
-          "sample_size":665,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2013-03-01",
           "resolve":"2013-03-19",
           "as_of_close":2747.75,
-          "probability":0.573807,
-          "median_close":2768.5051,
+          "probability":0.56,
+          "median_close":2766.0088,
           "actual_close":2787.27,
           "outcome":1,
-          "sample_size":2703,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2014-03-03",
           "resolve":"2014-03-19",
           "as_of_close":3668.3701,
-          "probability":0.581248,
-          "median_close":3696.4817,
+          "probability":0.565,
+          "median_close":3710.0349,
           "actual_close":3682.74,
           "outcome":1,
-          "sample_size":2677,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2015-03-02",
           "resolve":"2015-03-18",
           "as_of_close":4483.0498,
-          "probability":0.612591,
-          "median_close":4520.5681,
+          "probability":0.59,
+          "median_close":4513.6469,
           "actual_close":4422.5,
           "outcome":0,
-          "sample_size":826,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2016-03-01",
           "resolve":"2016-03-17",
           "as_of_close":4333.6099,
-          "probability":0.607527,
-          "median_close":4390.5749,
+          "probability":0.71,
+          "median_close":4419.3903,
           "actual_close":4400.2598,
           "outcome":1,
-          "sample_size":2232,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2017-03-01",
           "resolve":"2017-03-17",
           "as_of_close":5390.9902,
-          "probability":0.587094,
-          "median_close":5440.0366,
+          "probability":0.57,
+          "median_close":5419.5509,
           "actual_close":5408.7598,
           "outcome":1,
-          "sample_size":7888,
-          "rule":"all_returns"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2018-03-01",
           "resolve":"2018-03-19",
           "as_of_close":6750.54,
-          "probability":0.598949,
-          "median_close":6846.7096,
+          "probability":0.595,
+          "median_close":6805.9353,
           "actual_close":6864.8799,
           "outcome":1,
-          "sample_size":1713,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2019-03-01",
           "resolve":"2019-03-19",
           "as_of_close":7151.5698,
-          "probability":0.571044,
-          "median_close":7195.9614,
+          "probability":0.69,
+          "median_close":7262.8201,
           "actual_close":7349.2798,
           "outcome":1,
-          "sample_size":1485,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2020-03-02",
           "resolve":"2020-03-18",
           "as_of_close":8877.9805,
-          "probability":0.572247,
-          "median_close":8960.2716,
+          "probability":0.605,
+          "median_close":8983.8736,
           "actual_close":7175.1802,
           "outcome":0,
-          "sample_size":1571,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2021-03-01",
           "resolve":"2021-03-17",
           "as_of_close":13282.9502,
-          "probability":0.63322,
-          "median_close":13489.1411,
+          "probability":0.635,
+          "median_close":13421.4828,
           "actual_close":13202.3799,
           "outcome":0,
-          "sample_size":2950,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2022-03-01",
           "resolve":"2022-03-17",
           "as_of_close":14005.9902,
-          "probability":0.594866,
-          "median_close":14192.6336,
+          "probability":0.625,
+          "median_close":14231.6988,
           "actual_close":14118.5996,
           "outcome":1,
-          "sample_size":1792,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2023-03-01",
           "resolve":"2023-03-17",
           "as_of_close":11938.5703,
-          "probability":0.615166,
-          "median_close":12116.8017,
+          "probability":0.64,
+          "median_close":12145.7185,
           "actual_close":12519.8799,
           "outcome":1,
-          "sample_size":2809,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2024-03-01",
           "resolve":"2024-03-19",
           "as_of_close":18302.9102,
-          "probability":0.618906,
-          "median_close":18518.567,
+          "probability":0.615,
+          "median_close":18467.3828,
           "actual_close":18032.1992,
           "outcome":0,
-          "sample_size":4041,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2025-03-03",
           "resolve":"2025-03-19",
           "as_of_close":20425.5801,
-          "probability":0.628032,
-          "median_close":20707.1297,
+          "probability":0.585,
+          "median_close":20772.3718,
           "actual_close":19736.6602,
           "outcome":0,
-          "sample_size":3917,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-03-02",
           "resolve":"2026-03-18",
           "as_of_close":24992.5996,
-          "probability":0.625822,
-          "median_close":25307.2797,
+          "probability":0.65,
+          "median_close":25255.6737,
           "actual_close":24425.0898,
           "outcome":0,
-          "sample_size":4260,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         }
       ],
       "latest":[
@@ -1723,102 +1506,100 @@
           "as_of":"2026-10-15",
           "resolve":"2026-11-02",
           "as_of_close":29935.5996,
-          "probability":0.609778,
-          "median_close":30255.5191,
+          "probability":0.61,
+          "median_close":30180.9673,
           "actual_close":27989.8203,
           "outcome":0,
-          "sample_size":4418,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-16",
           "resolve":"2026-11-03",
           "as_of_close":29187.5508,
-          "probability":0.624217,
-          "median_close":29555.3108,
+          "probability":0.525,
+          "median_close":29383.324,
           "actual_close":28180.2598,
           "outcome":0,
-          "sample_size":4311,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-19",
           "resolve":"2026-11-04",
           "as_of_close":29529.3496,
-          "probability":0.60595,
-          "median_close":29831.0073,
+          "probability":0.595,
+          "median_close":29850.7511,
           "actual_close":28437.1699,
           "outcome":0,
-          "sample_size":4403,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-20",
           "resolve":"2026-11-05",
           "as_of_close":29490.2793,
-          "probability":0.597903,
-          "median_close":29757.872,
+          "probability":0.58,
+          "median_close":29945.5462,
           "actual_close":26629.8105,
           "outcome":0,
-          "sample_size":4387,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-21",
           "resolve":"2026-11-06",
           "as_of_close":29822.5195,
-          "probability":0.605902,
-          "median_close":30127.2342,
+          "probability":0.59,
+          "median_close":30080.4982,
           "actual_close":26989.9902,
           "outcome":0,
-          "sample_size":4405,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-22",
           "resolve":"2026-11-09",
           "as_of_close":28958.6895,
-          "probability":0.622523,
-          "median_close":29323.6481,
+          "probability":0.595,
+          "median_close":29387.6651,
           "actual_close":27907.6309,
           "outcome":0,
-          "sample_size":4289,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-23",
           "resolve":"2026-11-10",
           "as_of_close":28957.5293,
-          "probability":0.621011,
-          "median_close":29315.5173,
+          "probability":0.695,
+          "median_close":29674.0828,
           "actual_close":27740.7891,
           "outcome":0,
-          "sample_size":4293,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         },
         {
           "as_of":"2026-10-26",
           "resolve":"2026-11-11",
           "as_of_close":29273.4004,
-          "probability":0.623328,
-          "median_close":29651.0973,
+          "probability":0.69,
+          "median_close":29995.9083,
           "actual_close":28374.25,
           "outcome":0,
-          "sample_size":4261,
-          "rule":"vol_band"
+          "sample_size":200,
+          "rule":"analog"
         }
       ],
       "symbol":"^NDX",
-      "vol_window":20,
-      "vol_band":0.25,
-      "min_n":100
+      "neighbours":200
     }
   ],
   "reference":{
     "session_date":"2026-11-11",
-    "vix_close":17.49,
+    "vxn_close":26.74,
     "ndx_close":28374.25,
-    "vix_reference":17.49,
+    "vxn_reference":26.74,
     "ndx_reference":28374.25,
     "matches":true
   }

@@ -1,18 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 
 import numpy as np
 
 from forecast_log.bars import Bar
 
-# Fixed before looking at the backtest score. Not tuned to these three questions.
-VIX_BAND = 0.10
-VIX_MIN_N = 30
-NDX_VOL_WINDOW = 20
-NDX_VOL_BAND = 0.25
-NDX_MIN_N = 100
+# The state vector is fixed before the backtest was run, not tuned to its score.
+# One week, one month, one year of change, plus the distance from the one-year midpoint.
+STATE_LOOKBACKS = (5, 21, 252)
+LONG_LOOKBACK = 252
+NEIGHBOURS = 200
+MIN_CANDIDATES = 30
+Z_CLIP = 6.0
+
+
+@dataclass(frozen=True)
+class PathPoint:
+    """One session of the forecast path, anchored at the as-of close."""
+
+    horizon: int
+    median: float
+    low: float
+    high: float
+    probability: float
 
 
 @dataclass(frozen=True)
@@ -23,187 +34,152 @@ class Estimate:
     median_close: float
     as_of_close: float
     horizon: int
+    path: tuple[PathPoint, ...] = ()
 
 
-def _prefix(bars: list[Bar] | tuple[Bar, ...], as_of: date) -> np.ndarray:
+def min_index(horizon: int) -> int:
+    """Earliest index with enough finished analogues to forecast `horizon` sessions ahead."""
+    return LONG_LOOKBACK + MIN_CANDIDATES + horizon - 1
+
+
+def _rolling_median(values: np.ndarray, window: int) -> np.ndarray:
+    out = np.full(len(values), np.nan)
+    if len(values) < window:
+        return out
+    windows = np.lib.stride_tricks.sliding_window_view(values, window)
+    out[window - 1 :] = np.median(windows, axis=1)
+    return out
+
+
+def state_matrix(closes: np.ndarray, lookbacks: tuple[int, ...] = STATE_LOOKBACKS) -> np.ndarray:
+    """Stacked state features. Row i uses closes[0..i] only."""
+    n = len(closes)
+    log_close = np.log(closes)
+    columns = []
+    for lookback in lookbacks:
+        column = np.full(n, np.nan)
+        column[lookback:] = log_close[lookback:] - log_close[:-lookback]
+        columns.append(column)
+    midpoint = _rolling_median(closes, LONG_LOOKBACK)
+    offset = np.full(n, np.nan)
+    offset[LONG_LOOKBACK:] = log_close[LONG_LOOKBACK:] - np.log(midpoint[LONG_LOOKBACK:])
+    columns.append(offset)
+    return np.column_stack(columns)
+
+
+def standardize(matrix: np.ndarray, clip: float = Z_CLIP) -> np.ndarray:
+    """Expanding z-score. Row i uses the mean and std of rows 0..i only."""
+    valid = ~np.isnan(matrix)
+    count = np.maximum(np.cumsum(valid, axis=0), 1)
+    total = np.cumsum(np.where(valid, matrix, 0.0), axis=0)
+    square = np.cumsum(np.where(valid, matrix * matrix, 0.0), axis=0)
+    mean = total / count
+    variance = np.maximum(square / count - mean * mean, 1e-12)
+    return np.nan_to_num(np.clip((matrix - mean) / np.sqrt(variance), -clip, clip))
+
+
+class AnalogModel:
+    """One price series. `forecast` only ever reads closes[0..index]."""
+
+    def __init__(self, closes: np.ndarray, lookbacks: tuple[int, ...] = STATE_LOOKBACKS):
+        self.closes = np.asarray(closes, dtype=float)
+        if self.closes.ndim != 1 or len(self.closes) < 2:
+            raise ValueError("closes must be one-dimensional")
+        if np.any(self.closes <= 0):
+            raise ValueError("closes must be positive")
+        self.lookbacks = lookbacks
+        self.state = standardize(state_matrix(self.closes, lookbacks))
+
+    def forecast(
+        self,
+        index: int,
+        horizon: int,
+        threshold: float,
+        neighbours: int = NEIGHBOURS,
+        with_path: bool = False,
+    ) -> Estimate:
+        """P(close H sessions later > threshold), and the whole path there.
+
+        Each analogue is compared as a multiple of its own start, and the as-of close is
+        the anchor, so the path has to come from today's level instead of restating the
+        level of some past analogue.
+        """
+        closes = self.closes
+        if not 0 <= index < len(closes):
+            raise ValueError(f"index {index} is outside the series")
+        if horizon < 1:
+            raise ValueError("horizon must be positive")
+        lowest = min_index(horizon)
+        if index < lowest:
+            raise ValueError(f"index {index} is below the first usable index {lowest}")
+        query = self.state[index]
+        if np.isnan(query).any():
+            raise ValueError("state vector is undefined at this index")
+
+        # The analogue's outcome must already be printed, and its window must not overlap the query's.
+        candidate = np.arange(LONG_LOOKBACK, index - horizon + 1)
+        if candidate.size < MIN_CANDIDATES:
+            raise ValueError("not enough finished analogues for this horizon")
+        distance = ((self.state[candidate] - query) ** 2).sum(axis=1)
+        take = min(neighbours, candidate.size)
+        chosen = candidate[np.argpartition(distance, take - 1)[:take]]
+        chosen.sort()
+        rule = "analog" if candidate.size > take else "all_analogues"
+
+        level = float(closes[index])
+        need = float(threshold) / level
+        path = ()
+        if with_path:
+            path = tuple(
+                PathPoint(
+                    horizon=step,
+                    median=level * float(np.median(multiple)),
+                    low=level * float(np.quantile(multiple, 0.10)),
+                    high=level * float(np.quantile(multiple, 0.90)),
+                    probability=float(np.mean(multiple > need)),
+                )
+                for step in range(1, horizon + 1)
+                for multiple in (closes[chosen + step] / closes[chosen],)
+            )
+        last = closes[chosen + horizon] / closes[chosen]
+        return Estimate(
+            probability=float(np.mean(last > need)),
+            sample_size=int(chosen.size),
+            rule=rule,
+            median_close=float(level * np.median(last)),
+            as_of_close=level,
+            horizon=horizon,
+            path=path,
+        )
+
+
+def index_of(bars: list[Bar] | tuple[Bar, ...], as_of) -> int:
+    for position, bar in enumerate(bars):
+        if bar.date == as_of:
+            return position
+    raise ValueError(f"no bar on {as_of.isoformat()}")
+
+
+def closes_of(bars: list[Bar] | tuple[Bar, ...]) -> np.ndarray:
     dates = [bar.date for bar in bars]
     if dates != sorted(dates):
         raise ValueError("bars must be sorted by date")
-    if as_of not in dates:
-        raise ValueError(f"no bar on {as_of.isoformat()}")
-    # Bars after as_of are dropped, so a later revision of the future cannot move this probability.
-    closes = np.array([bar.close for bar in bars if bar.date <= as_of], dtype=float)
+    closes = np.array([bar.close for bar in bars], dtype=float)
     if np.any(closes <= 0):
         raise ValueError("closes must be positive")
     return closes
 
 
-def _vix_sample(closes: np.ndarray, horizon: int, band: float, min_n: int) -> tuple[np.ndarray, str]:
-    # `closes` ends on the as-of session. The last start is H sessions earlier, so its outcome is known.
-    i = len(closes) - 1
-    if i < horizon:
-        raise ValueError("not enough sessions for this horizon")
-    start = closes[: i - horizon + 1]
-    end = closes[horizon:]
-    if len(start) != len(end):
-        raise RuntimeError("horizon alignment")
-    level = float(closes[i])
-    mask = (start >= level * (1 - band)) & (start <= level * (1 + band))
-    if int(mask.sum()) >= min_n:
-        return end[mask], "band"
-    return end, "all_history"
-
-
-def estimate_vix_from_closes(
-    closes: np.ndarray,
-    horizon: int,
-    threshold: float = 20.0,
-    band: float = VIX_BAND,
-    min_n: int = VIX_MIN_N,
-) -> Estimate:
-    sample, rule = _vix_sample(closes, horizon, band, min_n)
-    return Estimate(
-        probability=float(np.mean(sample > threshold)),
-        sample_size=int(sample.size),
-        rule=rule,
-        median_close=float(np.median(sample)),
-        as_of_close=float(closes[-1]),
-        horizon=horizon,
-    )
-
-
-def vix_path(
-    closes: np.ndarray,
-    horizon: int,
-    threshold: float = 20.0,
-    band: float = VIX_BAND,
-    min_n: int = VIX_MIN_N,
-) -> list[dict]:
-    """Level forecast for each session 1..horizon. Uses only closes through the as-of bar."""
-    points = []
-    for step in range(1, horizon + 1):
-        sample, rule = _vix_sample(closes, step, band, min_n)
-        points.append(_level_point(step, sample, float(np.mean(sample > threshold)), rule))
-    return points
-
-
-def estimate_vix(
+def estimate(
     bars: list[Bar] | tuple[Bar, ...],
-    as_of: date,
+    as_of,
     horizon: int,
-    threshold: float = 20.0,
-    band: float = VIX_BAND,
-    min_n: int = VIX_MIN_N,
+    threshold: float,
+    neighbours: int = NEIGHBOURS,
+    with_path: bool = True,
 ) -> Estimate:
-    """P(close H sessions later > threshold), from past starts near today's level."""
-    return estimate_vix_from_closes(_prefix(bars, as_of), horizon, threshold, band, min_n)
-
-
-def rolling_sample_std(log_returns: np.ndarray, window: int) -> np.ndarray:
-    """Sample std of `window` returns ending at each close index. Earlier slots are nan."""
-    totals = np.empty(len(log_returns) + 1)
-    squares = np.empty(len(log_returns) + 1)
-    totals[0] = 0.0
-    squares[0] = 0.0
-    totals[1:] = np.cumsum(log_returns)
-    squares[1:] = np.cumsum(log_returns * log_returns)
-    vol = np.full(len(log_returns) + 1, np.nan)
-    if len(log_returns) < window:
-        return vol
-    end = np.arange(window, len(log_returns) + 1)
-    sum_ = totals[end] - totals[end - window]
-    sumsq = squares[end] - squares[end - window]
-    var = (sumsq - (sum_ * sum_) / window) / (window - 1)
-    vol[end] = np.sqrt(np.maximum(var, 0.0))
-    return vol
-
-
-def _ndx_returns(
-    closes: np.ndarray,
-    horizon: int,
-    vol_window: int,
-    vol_band: float,
-    min_n: int,
-) -> tuple[np.ndarray, str]:
-    i = len(closes) - 1
-    if i < vol_window + horizon:
-        raise ValueError("not enough sessions for this horizon")
-    log_close = np.log(closes)
-    ahead = log_close[horizon:] - log_close[:-horizon]
-    vol = rolling_sample_std(np.diff(log_close), vol_window)
-    start = vol_window
-    stop = i - horizon + 1
-    vols = vol[start:stop]
-    rets = ahead[start:stop]
-    now = float(vol[i])
-    mask = (vols >= now * (1 - vol_band)) & (vols <= now * (1 + vol_band))
-    if int(np.count_nonzero(mask)) >= min_n:
-        return rets[mask], "vol_band"
-    return rets, "all_returns"
-
-
-def estimate_ndx_from_closes(
-    closes: np.ndarray,
-    horizon: int,
-    baseline: float | None = None,
-    vol_window: int = NDX_VOL_WINDOW,
-    vol_band: float = NDX_VOL_BAND,
-    min_n: int = NDX_MIN_N,
-) -> Estimate:
-    spot = float(closes[-1])
-    line = spot if baseline is None else float(baseline)
-    sample, rule = _ndx_returns(closes, horizon, vol_window, vol_band, min_n)
-    need = np.log(line) - np.log(spot)
-    return Estimate(
-        probability=float(np.mean(sample > need)),
-        sample_size=int(sample.size),
-        rule=rule,
-        median_close=float(spot * np.exp(np.median(sample))),
-        as_of_close=spot,
-        horizon=horizon,
-    )
-
-
-def ndx_path(
-    closes: np.ndarray,
-    horizon: int,
-    vol_window: int = NDX_VOL_WINDOW,
-    vol_band: float = NDX_VOL_BAND,
-    min_n: int = NDX_MIN_N,
-) -> list[dict]:
-    """Level forecast for each session 1..horizon. Uses only closes through the as-of bar."""
-    spot = float(closes[-1])
-    points = []
-    for step in range(1, horizon + 1):
-        sample, rule = _ndx_returns(closes, step, vol_window, vol_band, min_n)
-        levels = spot * np.exp(sample)
-        need = 0.0
-        points.append(_level_point(step, levels, float(np.mean(sample > need)), rule))
-    return points
-
-
-def _level_point(step: int, levels: np.ndarray, probability: float, rule: str) -> dict:
-    return {
-        "horizon": step,
-        "median": float(np.median(levels)),
-        "low": float(np.quantile(levels, 0.10)),
-        "high": float(np.quantile(levels, 0.90)),
-        "probability": probability,
-        "sample_size": int(levels.size),
-        "rule": rule,
-    }
-
-
-def estimate_ndx(
-    bars: list[Bar] | tuple[Bar, ...],
-    as_of: date,
-    horizon: int,
-    baseline: float | None = None,
-    vol_window: int = NDX_VOL_WINDOW,
-    vol_band: float = NDX_VOL_BAND,
-    min_n: int = NDX_MIN_N,
-) -> Estimate:
-    """P(close H sessions later > baseline). Baseline defaults to the as-of close."""
-    return estimate_ndx_from_closes(
-        _prefix(bars, as_of), horizon, baseline, vol_window, vol_band, min_n
+    """Convenience wrapper for one series and one as-of session."""
+    closes = closes_of(bars)
+    return AnalogModel(closes).forecast(
+        index_of(bars, as_of), horizon, threshold, neighbours, with_path
     )

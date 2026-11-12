@@ -45,6 +45,26 @@ def test_backtest_probability_does_not_see_the_later_close():
     assert {row["outcome"] for row in rows}.issubset({0, 1})
 
 
+def test_daily_forecast_predicts_each_session_from_the_one_before():
+    from forecast_log.backtest import daily_forecasts
+
+    series = _series(np.clip(18 + np.sin(np.arange(600) / 9.0) * 3, 10, 30))
+    daily = daily_forecasts(series)
+    rows = daily["rows"]
+    assert rows
+    first = rows[0]
+    position = [bar.date.isoformat() for bar in series.bars].index(first["time"])
+    # Each row predicts its own session from the session before it.
+    assert first["previous"] == series.bars[position - 1].close
+    assert first["actual"] == series.bars[position].close
+    assert rows[-1]["time"] == series.bars[-1].date.isoformat()
+    assert first["low"] <= first["median"] <= first["high"]
+    assert 0 <= first["risk"] <= 100
+    skill = daily["skill"]
+    assert 0.5 <= skill["band_coverage"] <= 1.0
+    assert skill["baseline_mae"] > 0
+
+
 def test_timeline_columns_stay_aligned():
     series = _series([18.0, 19.0, 17.0])
     sample = [

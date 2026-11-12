@@ -293,6 +293,27 @@ def daily_forecasts(series: Series, extra=None) -> dict:
                 "actual": closes[t],
             }
         )
+    # 风险等级 = 今天这个区间宽度，在过去一年里排第几（0-100）。
+    widths = np.array(
+        [(row["high"] - row["low"]) / row["median"] for row in rows], dtype=float
+    )
+    for k, row in enumerate(rows):
+        window = widths[max(0, k - 252) : k + 1]
+        row["risk"] = int(round(float((window < widths[k]).mean()) * 100))
+
+    tomorrow = None
+    if len(bars) >= model.first_index(1) + 1:
+        point = model.forecast(len(bars) - 1, 1, 1.0, with_path=True).path[0]
+        when = sessions_after(bars[-1].date, 1)[0]
+        width = (point.high - point.low) / point.median
+        tomorrow = {
+            "time": when.isoformat(),
+            "median": round(point.median, 2),
+            "low": round(point.low, 2),
+            "high": round(point.high, 2),
+            "risk": int(round(float((widths[-252:] < width).mean()) * 100)),
+        }
+
     error = np.array([abs(row["median"] - row["actual"]) for row in rows], dtype=float)
     pct = np.array(
         [abs(row["median"] - row["actual"]) / row["actual"] for row in rows], dtype=float
@@ -302,11 +323,24 @@ def daily_forecasts(series: Series, extra=None) -> dict:
     previous = np.array([row["previous"] for row in rows], dtype=float)
     return {
         "rows": rows,
+        "tomorrow": tomorrow,
         "skill": {
             "n": len(rows),
             "mae": round(float(error.mean()), 4) if len(rows) else None,
             "median_abs_pct_error": round(float(np.median(pct)), 4) if len(rows) else None,
             "level_corr": round(float(np.corrcoef(predicted, actual)[0, 1]), 4) if len(rows) > 2 else None,
+            "baseline_mae": round(float(np.abs(previous - actual).mean()), 4) if len(rows) else None,
+            "band_coverage": round(
+                float(
+                    np.mean(
+                        (actual >= np.array([r["low"] for r in rows]))
+                        & (actual <= np.array([r["high"] for r in rows]))
+                    )
+                ),
+                4,
+            )
+            if len(rows)
+            else None,
             "direction_hit": round(
                 float(np.mean(np.sign(predicted - previous) == np.sign(actual - previous))), 4
             )
@@ -353,6 +387,8 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], ext
                 "high": _column(value["rows"], "high", 2),
                 "actual": _column(value["rows"], "actual", 2),
                 "previous": _column(value["rows"], "previous", 2),
+                "risk": _column(value["rows"], "risk"),
+                "tomorrow": value["tomorrow"],
                 "skill": value["skill"],
             }
             for key, value in daily.items()

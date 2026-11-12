@@ -96,9 +96,10 @@
     <div class="readout">
       <span id="leg-date">—</span>
       <span>昨收 <b id="leg-prev">—</b></span>
-      <span><i class="forecast"></i>今日预测 <b id="leg-forecast">—</b></span>
+      <span><i class="forecast"></i>今日预测区间 <b id="leg-forecast">—</b></span>
       <span><i class="actual"></i>今日实际 <b id="leg-actual">—</b></span>
       <span id="leg-error"></span>
+      <span id="tomorrow"></span>
       <span id="leg-skill"></span>
       <span id="build"></span>
       <span id="range-label"></span>
@@ -107,7 +108,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "r3 · 预测挂在下单日";
+    const BUILD = "r4 · 画区间，不画点位";
 
     const LABELS = {
       "vxn-h7-gt-30": "VXN · 7日",
@@ -135,10 +136,24 @@
       priceLineVisible: false,
       lastValueVisible: false,
     });
+    const bandHighSeries = chart.addLineSeries({
+      color: "#b08968",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    const bandLowSeries = chart.addLineSeries({
+      color: "#b08968",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
     const forecastSeries = chart.addLineSeries({
-      color: "#8a5a12",
-      lineWidth: 2,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
+      color: "rgba(138,90,18,0.35)",
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -227,13 +242,13 @@
       document.querySelector("#leg-date").textContent = point;
       document.querySelector("#leg-actual").textContent = priceText(closeByTime.get(point));
       const row = forecastByTime.get(point);
-      const has = row && row.median != null;
+      const has = row && row.low != null;
       document.querySelector("#leg-prev").textContent = row && row.previous != null ? priceText(row.previous) : "—";
-      document.querySelector("#leg-forecast").textContent = has ? priceText(row.median) : "—";
+      document.querySelector("#leg-forecast").textContent = has ? priceText(row.low) + " – " + priceText(row.high) : "—";
+      const actual = row && row.actual;
+      const inside = has && actual != null && actual >= row.low && actual <= row.high;
       document.querySelector("#leg-error").textContent =
-        has && row.actual != null
-          ? "误差 " + (row.median - row.actual >= 0 ? "+" : "") + priceText(row.median - row.actual)
-          : "";
+        has && actual != null ? (inside ? "落在区间内 ✓" : "超出区间 ✗") : "";
     }
 
     chart.subscribeCrosshairMove((param) => updateLegend(param.time || latestTime));
@@ -256,17 +271,38 @@
             median: daily.median[index],
             actual: daily.actual[index],
             previous: daily.previous[index],
+            low: daily.low[index],
+            high: daily.high[index],
+            risk: daily.risk[index],
           },
         ])
       );
       const predicted = daily.time.map((time, index) => ({ time, value: daily.median[index] }));
+      const highLine = daily.time.map((time, index) => ({ time, value: daily.high[index] }));
+      const lowLine = daily.time.map((time, index) => ({ time, value: daily.low[index] }));
+      const next = daily.tomorrow;
+      if (next) {
+        predicted.push({ time: next.time, value: next.median });
+        highLine.push({ time: next.time, value: next.high });
+        lowLine.push({ time: next.time, value: next.low });
+      }
+      bandHighSeries.setData(highLine);
+      bandLowSeries.setData(lowLine);
+      document.querySelector("#tomorrow").textContent = next
+        ? "明日 " + next.time.slice(5) + " 区间 " + priceText(next.low) + " – " + priceText(next.high) +
+          " · 风险 " + next.risk + "/100"
+        : "";
       document.querySelector("#build").textContent = BUILD;
+      if (next) {
+        const level = next.risk >= 70 ? "#8a5a12" : next.risk >= 40 ? "#5e584e" : "#1d4e79";
+        document.querySelector("#tomorrow").style.color = level;
+      }
       const skill = daily.skill || {};
       document.querySelector("#leg-skill").textContent =
         skill.median_abs_pct_error == null
           ? ""
-          : "1 日预测：中位误差 " + (skill.median_abs_pct_error * 100).toFixed(1) + "% · 相关性 " +
-            skill.level_corr.toFixed(2) + " · 方向 " + Math.round(skill.direction_hit * 100) + "%";
+          : "区间覆盖 " + Math.round(skill.band_coverage * 100) + "%（名义 80%）· 点位只比猜昨天好 " +
+            Math.round((1 - skill.mae / skill.baseline_mae) * 100) + "%——所以别当点位预测用";
       const lastTime = price.time[price.time.length - 1];
       const lastClose = price.close[price.close.length - 1];
       const ahead = [{ time: lastTime, value: lastClose }];

@@ -14,13 +14,23 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
+from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
 from forecast_log.paths import series_path
 from forecast_log.questions import load_questions, reference_closes
 from forecast_log.yahoo import fetch_daily
 
 NY = ZoneInfo("America/New_York")
+# The settlement symbols. questions.json is the contract; these are what it points at.
 SYMBOLS = ("^VXN", "^NDX")
+
+
+def _features_for(root: Path, series) -> object:
+    """Forward-looking inputs aligned to this series' sessions, or None if not fetched."""
+    matrix = load_matrix(root, [bar.date for bar in series.bars])
+    if matrix is None:
+        print(f"提示：{', '.join(FEATURE_SYMBOLS)} 还没取，只用价格自身的历史")
+    return matrix
 
 
 def fetch_command(root: Path) -> dict:
@@ -34,6 +44,18 @@ def fetch_command(root: Path) -> dict:
             f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
         )
         loaded[symbol] = series
+    for symbol in FEATURE_SYMBOLS:
+        try:
+            series = fetch_daily(symbol)
+        except (RuntimeError, OSError) as error:
+            print(f"{symbol} 取数失败，跳过：{error}")
+            continue
+        save_series(series_path(root, symbol), series)
+        last = series.bars[-1]
+        print(
+            f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
+            f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
+        )
     report = reference_report(root, loaded["^VXN"], loaded["^NDX"])
     print(reference_text(report))
     if not report["matches"]:
@@ -45,13 +67,16 @@ def backtest_command(root: Path) -> dict:
     vxn, ndx = _load_both(root)
     ref = reference_report(root, vxn, ndx)
     print(reference_text(ref))
-    rows = forecast_rows(vxn, ndx)
-    report = run_backtest(vxn, ndx, rows)
+    extra = _features_for(root, vxn)
+    if extra is not None:
+        print(f"输入含前瞻数据：{describe_features()}")
+    rows = forecast_rows(vxn, ndx, extra)
+    report = run_backtest(vxn, ndx, rows, extra)
     report["reference"] = ref
     path = root / "artifacts" / "backtest_report.json"
     write_report(path, report)
     timeline_path = root / "artifacts" / "timeline.json"
-    write_report(timeline_path, timeline_document(vxn, ndx, rows), indent=None)
+    write_report(timeline_path, timeline_document(vxn, ndx, rows, extra), indent=None)
     print(render_report(report))
     print(f"完整结果写在 {path}")
     print(f"时间轴写在 {timeline_path}")
@@ -72,6 +97,8 @@ def lock_command(root: Path, now: datetime | None = None) -> list[Path]:
         names = ", ".join(path.name for path in found)
         raise SystemExit(f"已经锁定，不再改写：{names}")
     series = {symbol: load_series(series_path(root, symbol)) for symbol in SYMBOLS}
+    extra = {symbol: (_features_for(root, loaded) if symbol == "^VXN" else None)
+             for symbol, loaded in series.items()}
     as_of_bar = {
         symbol: last_completed_bar(loaded, now) for symbol, loaded in series.items()
     }
@@ -81,12 +108,15 @@ def lock_command(root: Path, now: datetime | None = None) -> list[Path]:
         loaded = series[question.symbol]
         as_of = as_of_bar[question.symbol]
         horizon = sessions_from_as_of_through_resolve(as_of.date, question.resolve_session)
-        forecast = estimate(loaded.bars, as_of.date, horizon, question.threshold)
+        forecast = estimate(
+            loaded.bars, as_of.date, horizon, question.threshold, extra=extra[question.symbol]
+        )
         parameters = {
             "threshold": question.threshold,
             "neighbours": forecast.sample_size,
             "state_lookbacks": list(STATE_LOOKBACKS),
             "matched_as": "multiple of the analogue's own start",
+            "inputs": "state + CBOE vol complex" if extra[question.symbol] is not None else "state only",
         }
         payload = {
             "question_id": question.id,

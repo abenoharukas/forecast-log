@@ -111,3 +111,34 @@ def test_unknown_as_of_is_refused():
     bars = bars_from_closes(wave(count=600))
     with pytest.raises(ValueError):
         estimate(bars, date(1999, 1, 4), 5, 30.0)
+
+
+def test_extra_columns_are_only_read_up_to_the_query_row():
+    """A forward-looking column is an input, not a licence to peek."""
+    closes = wave(count=1200, period=120.0)
+    index = len(closes) - 60
+    extra = np.linspace(0.0, 1.0, len(closes))[:, None]
+    leap = extra.copy()
+    leap[index + 1 :] += 50.0
+    assert AnalogModel(closes, extra).forecast(index, 7, 1e9) == AnalogModel(
+        closes, leap
+    ).forecast(index, 7, 1e9)
+
+
+def test_missing_extra_columns_remove_those_rows_from_the_pool():
+    closes = wave(count=1200, period=120.0)
+    extra = np.zeros((len(closes), 1))
+    extra[:800] = np.nan
+    model = AnalogModel(closes, extra)
+    assert not model.complete[:800].any()
+    assert model.first_index(7) > 800
+    with pytest.raises(ValueError):
+        model.forecast(400, 7, 1e9)
+
+
+def test_a_forward_looking_column_changes_the_answer():
+    closes = wave(count=1200, period=120.0)
+    index = len(closes) - 1
+    plain = AnalogModel(closes).forecast(index, 7, 1e9)
+    tilted = AnalogModel(closes, np.log(closes)[:, None]).forecast(index, 7, 1e9)
+    assert plain != tilted

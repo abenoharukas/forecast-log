@@ -79,16 +79,44 @@ def standardize(matrix: np.ndarray, clip: float = Z_CLIP) -> np.ndarray:
 
 
 class AnalogModel:
-    """One price series. `forecast` only ever reads closes[0..index]."""
+    """One price series, plus optional forward-looking columns.
 
-    def __init__(self, closes: np.ndarray, lookbacks: tuple[int, ...] = STATE_LOOKBACKS):
+    `forecast` only ever reads row `index` of the state and analogues that finished at or
+    before it, so a row that carries a future value cannot leak into an earlier forecast.
+    """
+
+    def __init__(
+        self,
+        closes: np.ndarray,
+        extra: np.ndarray | None = None,
+        lookbacks: tuple[int, ...] = STATE_LOOKBACKS,
+    ):
         self.closes = np.asarray(closes, dtype=float)
         if self.closes.ndim != 1 or len(self.closes) < 2:
             raise ValueError("closes must be one-dimensional")
         if np.any(self.closes <= 0):
             raise ValueError("closes must be positive")
         self.lookbacks = lookbacks
-        self.state = standardize(state_matrix(self.closes, lookbacks))
+        raw = state_matrix(self.closes, lookbacks)
+        if extra is not None:
+            extra = np.asarray(extra, dtype=float)
+            if extra.ndim != 2 or extra.shape[0] != len(self.closes):
+                raise ValueError("extra must carry one row per close")
+            raw = np.column_stack([raw, extra])
+        # Rows with a missing input are unusable as a query and as an analogue.
+        self.complete = ~np.isnan(raw).any(axis=1)
+        self.state = standardize(raw)
+
+    def first_index(self, horizon: int) -> int:
+        """Earliest index with a complete state and enough finished analogues.
+
+        Returns `len(closes)` when no index qualifies, so callers can compare ranges.
+        """
+        usable = np.flatnonzero(self.complete)
+        usable = usable[usable >= LONG_LOOKBACK]
+        if usable.size < MIN_CANDIDATES:
+            return len(self.closes)
+        return int(usable[MIN_CANDIDATES - 1]) + horizon
 
     def forecast(
         self,
@@ -109,15 +137,16 @@ class AnalogModel:
             raise ValueError(f"index {index} is outside the series")
         if horizon < 1:
             raise ValueError("horizon must be positive")
-        lowest = min_index(horizon)
+        lowest = max(min_index(horizon), self.first_index(horizon))
         if index < lowest:
             raise ValueError(f"index {index} is below the first usable index {lowest}")
-        query = self.state[index]
-        if np.isnan(query).any():
+        if not self.complete[index]:
             raise ValueError("state vector is undefined at this index")
+        query = self.state[index]
 
         # The analogue's outcome must already be printed, and its window must not overlap the query's.
         candidate = np.arange(LONG_LOOKBACK, index - horizon + 1)
+        candidate = candidate[self.complete[candidate]]
         if candidate.size < MIN_CANDIDATES:
             raise ValueError("not enough finished analogues for this horizon")
         distance = ((self.state[candidate] - query) ** 2).sum(axis=1)
@@ -177,9 +206,10 @@ def estimate(
     threshold: float,
     neighbours: int = NEIGHBOURS,
     with_path: bool = True,
+    extra: np.ndarray | None = None,
 ) -> Estimate:
     """Convenience wrapper for one series and one as-of session."""
     closes = closes_of(bars)
-    return AnalogModel(closes).forecast(
+    return AnalogModel(closes, extra).forecast(
         index_of(bars, as_of), horizon, threshold, neighbours, with_path
     )

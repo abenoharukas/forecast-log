@@ -23,13 +23,13 @@ def brier(probability, outcome) -> float:
     return float(np.mean((p - y) ** 2))
 
 
-def _rows(series: Series, horizon: int, threshold_at) -> list[dict]:
+def _rows(series: Series, horizon: int, threshold_at, extra=None) -> list[dict]:
     """One forecast per session. `threshold_at(i)` gives that day's threshold."""
     bars = series.bars
     closes = np.array([bar.close for bar in bars], dtype=float)
-    model = AnalogModel(closes)
+    model = AnalogModel(closes, extra)
     rows = []
-    for i in range(min_index(horizon), len(bars) - horizon):
+    for i in range(model.first_index(horizon), len(bars) - horizon):
         # The model only reads closes[0..i]; analogues finish at or before i.
         threshold = float(threshold_at(i, closes))
         estimate = model.forecast(i, horizon, threshold)
@@ -38,8 +38,8 @@ def _rows(series: Series, horizon: int, threshold_at) -> list[dict]:
     return rows
 
 
-def _rows_vxn(series: Series, horizon: int, threshold: float) -> list[dict]:
-    return _rows(series, horizon, lambda i, closes: threshold)
+def _rows_vxn(series: Series, horizon: int, threshold: float, extra=None) -> list[dict]:
+    return _rows(series, horizon, lambda i, closes: threshold, extra)
 
 
 def _rows_ndx(series: Series, horizon: int) -> list[dict]:
@@ -215,10 +215,10 @@ def summarize(template_id: str, horizon: int, rows: list[dict], detail: dict) ->
     }
 
 
-def forecast_rows(vxn: Series, ndx: Series) -> dict[str, list[dict]]:
+def forecast_rows(vxn: Series, ndx: Series, extra: np.ndarray | None = None) -> dict[str, list[dict]]:
     return {
-        "vxn-h7-gt-30": _rows_vxn(vxn, horizon=7, threshold=30.0),
-        "vxn-h12-gt-30": _rows_vxn(vxn, horizon=12, threshold=30.0),
+        "vxn-h7-gt-30": _rows_vxn(vxn, horizon=7, threshold=30.0, extra=extra),
+        "vxn-h12-gt-30": _rows_vxn(vxn, horizon=12, threshold=30.0, extra=extra),
         "ndx-h12-gt-asof": _rows_ndx(ndx, horizon=12),
     }
 
@@ -230,12 +230,15 @@ def _column(rows: list[dict], key: str, digits: int | None = None) -> list:
     return [round(float(value), digits) for value in values]
 
 
-def forward_levels(series: Series, horizon: int, threshold: float | None = None) -> list[dict]:
+def forward_levels(
+    series: Series, horizon: int, threshold: float | None = None, extra=None
+) -> list[dict]:
     """Point forecast on sessions that have not printed yet. Nothing is written on past dates."""
     closes = np.array([bar.close for bar in series.bars], dtype=float)
-    if len(closes) <= min_index(horizon):
+    model = AnalogModel(closes, extra)
+    if len(closes) - 1 < model.first_index(horizon):
         return []
-    estimate = AnalogModel(closes).forecast(
+    estimate = model.forecast(
         len(closes) - 1,
         horizon,
         float(closes[-1]) if threshold is None else float(threshold),
@@ -268,7 +271,7 @@ def skill(sample: list[dict]) -> dict:
     }
 
 
-def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]]) -> dict:
+def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]], extra=None) -> dict:
     """Columnar series for the zoomable chart. One forecast row per session."""
 
     def closes(series: Series) -> dict:
@@ -302,7 +305,7 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]]) -> 
                 "horizon": 7,
                 "threshold": 30,
                 "forecast": forecast(rows["vxn-h7-gt-30"]),
-                "forward": forward_levels(vxn, 7, 30.0),
+                "forward": forward_levels(vxn, 7, 30.0, extra),
             },
             "vxn-h12-gt-30": {
                 "title": "VXN，12 个交易日后高于 30",
@@ -310,7 +313,7 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]]) -> 
                 "horizon": 12,
                 "threshold": 30,
                 "forecast": forecast(rows["vxn-h12-gt-30"]),
-                "forward": forward_levels(vxn, 12, 30.0),
+                "forward": forward_levels(vxn, 12, 30.0, extra),
             },
             "ndx-h12-gt-asof": {
                 "title": "纳斯达克 100，12 个交易日后高于当天",
@@ -324,9 +327,11 @@ def timeline_document(vxn: Series, ndx: Series, rows: dict[str, list[dict]]) -> 
     }
 
 
-def run_backtest(vxn: Series, ndx: Series, rows: dict[str, list[dict]] | None = None) -> dict:
+def run_backtest(
+    vxn: Series, ndx: Series, rows: dict[str, list[dict]] | None = None, extra=None
+) -> dict:
     if rows is None:
-        rows = forecast_rows(vxn, ndx)
+        rows = forecast_rows(vxn, ndx, extra)
     vxn_7 = rows["vxn-h7-gt-30"]
     vxn_12 = rows["vxn-h12-gt-30"]
     ndx_12 = rows["ndx-h12-gt-asof"]
@@ -355,6 +360,7 @@ def run_backtest(vxn: Series, ndx: Series, rows: dict[str, list[dict]] | None = 
         "vxn_fetched_at": vxn.fetched_at,
         "ndx_fetched_at": ndx.fetched_at,
         "vxn_span": [vxn.bars[0].date.isoformat(), vxn.bars[-1].date.isoformat()],
+        "vxn_inputs": "state + CBOE vol complex" if extra is not None else "state only",
         "ndx_span": [ndx.bars[0].date.isoformat(), ndx.bars[-1].date.isoformat()],
         "templates": templates,
     }

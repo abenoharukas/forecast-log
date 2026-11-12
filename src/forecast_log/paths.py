@@ -11,5 +11,8 @@ def repo_root() -> Path:
 
 
 def series_path(root: Path, symbol: str) -> Path:
-    name = {"^VXN": "vxn.json", "^NDX": "ndx.json"}[symbol]
-    return root / "data" / "raw" / name
+    """^VIX3M -> data/raw/vix3m.json. Any symbol works; the settlement symbols are in questions.json."""
+    slug = symbol.lstrip("^").lower().replace("/", "_")
+    if not slug:
+        raise ValueError("symbol must not be empty")
+    return root / "data" / "raw" / f"{slug}.json"

@@ -39,6 +39,7 @@
     h1 { margin: 0; font-weight: 480; font-size: 32px; letter-spacing: -0.03em; }
     .group { display: flex; flex-wrap: wrap; gap: 6px; }
     #ranges { margin-left: auto; }
+    #horizons button { font-size: 11px; padding: 5px 7px; }
     button {
       font-family: "IBM Plex Mono", ui-monospace, monospace;
       font-size: 12px;
@@ -147,16 +148,16 @@
 <body>
   <main>
     <header>
-      <h1 id="symbol">VXN</h1>
+      <h1 id="symbol">Fear index</h1>
       <div class="group" id="horizons">
-        <button type="button" data-n="0" class="active">当天</button>
-        <button type="button" data-n="1">1 天后</button>
-        <button type="button" data-n="2">2 天后</button>
-        <button type="button" data-n="3">3 天后</button>
-        <button type="button" data-n="4">4 天后</button>
-        <button type="button" data-n="5">5 天后</button>
-        <button type="button" data-n="6">6 天后</button>
-        <button type="button" data-n="7">7 天后</button>
+        <button type="button" data-n="0" class="active">当天 vs 实际</button>
+        <button type="button" data-n="1">预测1天 vs 实际</button>
+        <button type="button" data-n="2">预测2天 vs 实际</button>
+        <button type="button" data-n="3">预测3天 vs 实际</button>
+        <button type="button" data-n="4">预测4天 vs 实际</button>
+        <button type="button" data-n="5">预测5天 vs 实际</button>
+        <button type="button" data-n="6">预测6天 vs 实际</button>
+        <button type="button" data-n="7">预测7天 vs 实际</button>
       </div>
       <div class="group">
         <button type="button" id="naive-toggle" class="active">「不动」对照</button>
@@ -189,20 +190,20 @@
         <div class="lad-cols">
           <div class="lad-block">
             <div class="lad-title">
-              <b id="lad-kind">当天</b><span id="lad-note"> · 最近几次，说的和实际比</span>
+              <b id="lad-kind">预测N天 vs 实际</b><span id="lad-note"> · 最近几次</span>
             </div>
             <table>
               <thead>
-                <tr><th>说的日</th><th>目标日</th><th>说的</th><th>说的区间</th><th>实际</th><th>差多少</th></tr>
+                <tr><th>哪天说的</th><th>到期日</th><th>预测值</th><th>预测区间</th><th>实际值</th><th>差多少</th></tr>
               </thead>
               <tbody id="lad-current"></tbody>
             </table>
           </div>
           <div class="lad-block" id="lad-history-block">
-            <div class="lad-title">历史准确度 · 每一天对 N 天后的预测，和实际比</div>
+            <div class="lad-title">各档位成绩 · 历史上每一次「预测N天 vs 实际」</div>
             <table>
               <thead>
-                <tr><th>N</th><th>次数</th><th>平均差</th><th>差%中位</th><th>在区间内</th><th>猜不动</th></tr>
+                <tr><th>档位</th><th>次数</th><th>平均差</th><th>差%中位</th><th>在区间内</th><th>猜不动</th></tr>
               </thead>
               <tbody id="lad-history"></tbody>
             </table>
@@ -214,7 +215,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "版本 r16 · 加了「不动」对照线";
+    const BUILD = "版本 r18 · 标题改成「预测N天 vs 实际」";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -364,13 +365,13 @@
       return Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // 只看 fear index（^VXN），别的不参与。
+    // 页面只画 fear index。
     function symbolOf() {
       return "vxn";
     }
 
     function horizonName(n) {
-      return n === 0 ? "当天" : n + " 天后";
+      return n === 0 ? "当天 vs 实际" : "预测" + n + "天 vs 实际";
     }
 
     // 某个档位的历史成绩：当天用 daily 的口径，1…7 天后用 ladder 的分步结果。
@@ -601,7 +602,7 @@
       }
       steps.forEach((step) => {
         rows.push({
-          label: step.step + " 天后",
+          label: "预测" + step.step + "天",
           n: step.n,
           mae: step.mae,
           pct: step.median_abs_pct,
@@ -742,8 +743,8 @@
           said = { median: column.median[index], low: column.low[index], high: column.high[index] };
           asOf = price.time[index - horizon];
         }
-        document.querySelector("#leg-prev-label").textContent = horizon + " 天前收盘";
-        document.querySelector("#leg-band-label").textContent = horizon + " 天前说的区间";
+        document.querySelector("#leg-prev-label").textContent = "预测" + horizon + "天时的收盘";
+        document.querySelector("#leg-band-label").textContent = "预测" + horizon + "天时说的区间";
         document.querySelector("#leg-actual-label").textContent = "实际";
       }
       document.querySelector("#leg-prev").textContent = priceText(asOf ? closeByTime.get(asOf) : null);
@@ -774,13 +775,15 @@
     function showQuestion() {
       const price = timeline[symbolOf()];
       closeByTime = new Map(price.time.map((time, index) => [time, price.close[index]]));
-      document.querySelector("#symbol").textContent = "VXN · Nasdaq fear index";
-      document.title = "VXN fear index · " + horizonName(horizon);
+      document.querySelector("#symbol").textContent = "Fear index";
+      document.title = "Fear index · " + horizonName(horizon);
       drawSeries();
       renderCard();
       renderHistory();
       document.querySelector("#tomorrow").textContent =
-        horizon === 0 ? "当天的区间用的是前一晚的收盘" : "区间画在目标日上，提前 " + horizon + " 个交易日说的";
+        horizon === 0
+          ? "当天的区间：用前一晚的收盘算，画在当天"
+          : "预测" + horizon + "天：提前 " + horizon + " 个交易日说的区间，画在到期那一天";
       document.querySelector("#tomorrow").style.color = "#5e584e";
       document.querySelector("#build").textContent = BUILD;
       latestTime = price.time[price.time.length - 1];

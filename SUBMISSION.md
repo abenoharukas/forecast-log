@@ -115,6 +115,7 @@ reason to trust anything else the bench says.
 
 ```bash
 pip install -e ".[dev]"
+cp .env.example .env && $EDITOR .env    # DEEPSEEK_API_KEY=... ; git-ignored
 forecast-log fetch
 forecast-log backtest          # 3,700 forecasts, scored against what happened
 forecast-log agent-eval --limit 96 --stride 60 --also-blind

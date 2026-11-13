@@ -392,7 +392,7 @@ submit_forecast ──► 校验 ──► 接受
 ### 跑法
 
 ```bash
-export DEEPSEEK_API_KEY=...            # 或 FORECAST_LOG_API_KEY / OPENAI_API_KEY
+cp .env.example .env                   # 填 DEEPSEEK_API_KEY 一行就行，.env 已 gitignore
 forecast-log agent-forecast --runs 3   # 三道题的影子预测，不碰 forecasts/
 forecast-log agent-eval --limit 96 --stride 60 --also-blind
 pytest tests/test_agent.py             # 19 个测试，不联网、不需要 key

@@ -322,3 +322,55 @@ def test_evaluate_scores_only_the_questions_every_predictor_answered(root: Path)
     assert report["n"] == 4
     assert report["predictors"]["always 0.5"]["brier"] == pytest.approx(0.25)
     assert report["predictors"]["always 0.9"]["brier"] == pytest.approx(0.41)
+
+
+# ------------------------------------------------------------------------- .env file
+
+
+def test_env_file_is_read_without_ceremony(tmp_path: Path) -> None:
+    from forecast_log.agent.env import merged_env, read_env_file
+
+    path = tmp_path / ".env"
+    path.write_text(
+        "# a comment\n"
+        "\n"
+        "DEEPSEEK_API_KEY=sk-plain\n"
+        'export FORECAST_LOG_MODEL="deepseek-chat"\n'
+        "FORECAST_LOG_BASE_URL=https://api.deepseek.com/v1\n"
+    )
+    values = read_env_file(path)
+    assert values["DEEPSEEK_API_KEY"] == "sk-plain"
+    assert values["FORECAST_LOG_MODEL"] == "deepseek-chat"
+    assert values["FORECAST_LOG_BASE_URL"] == "https://api.deepseek.com/v1"
+
+    merged = merged_env(tmp_path)
+    assert merged["DEEPSEEK_API_KEY"] == "sk-plain"
+    assert read_env_file(tmp_path / "missing.env") == {}
+
+
+def test_env_file_rejects_a_line_that_is_not_a_pair(tmp_path: Path) -> None:
+    from forecast_log.agent.env import read_env_file
+
+    path = tmp_path / ".env"
+    path.write_text("DEEPSEEK_API_KEY sk-nope\n")
+    with pytest.raises(ValueError, match="expected KEY=value"):
+        read_env_file(path)
+
+
+def test_the_environment_wins_over_the_file(tmp_path: Path) -> None:
+    from forecast_log.agent.env import merged_env
+
+    (tmp_path / ".env").write_text("DEEPSEEK_API_KEY=from-file\n")
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "from-shell")
+        assert merged_env(tmp_path)["DEEPSEEK_API_KEY"] == "from-shell"
+    finally:
+        monkeypatch.undo()
+
+
+def test_a_missing_key_fails_before_the_network() -> None:
+    from forecast_log.agent.llm import LLMError, OpenAICompatLLM
+
+    with pytest.raises(LLMError, match="api key is empty"):
+        OpenAICompatLLM.from_env({})

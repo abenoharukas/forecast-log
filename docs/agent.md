@@ -185,7 +185,7 @@ Said plainly, because it is the difference between a demo and a delivery:
 ## Run it
 
 ```bash
-export DEEPSEEK_API_KEY=...            # or FORECAST_LOG_API_KEY / OPENAI_API_KEY
+cp .env.example .env                   # one line: DEEPSEEK_API_KEY=... (`os.environ` still wins)
 forecast-log agent-forecast --runs 3   # shadow forecasts; never touches forecasts/
 forecast-log agent-eval --limit 96 --stride 60 --also-blind
 pytest tests/test_agent.py             # 19 tests, no network, no key

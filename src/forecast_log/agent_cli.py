@@ -13,6 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from forecast_log.agent.ensemble import pool, spread
+from forecast_log.agent.env import merged_env
 from forecast_log.agent.eval import (
     AgentPredictor,
     AnaloguePredictor,
@@ -34,8 +35,9 @@ from forecast_log.paths import series_path
 NY = ZoneInfo("America/New_York")
 
 
-def build_llm(model: str | None = None) -> LLM:
-    llm = OpenAICompatLLM.from_env()
+def build_llm(root: Path | None = None, model: str | None = None) -> LLM:
+    """Key resolution: `os.environ` first, then `.env` in the repo root."""
+    llm = OpenAICompatLLM.from_env(merged_env(root) if root is not None else None)
     if model:
         llm.model = model
         llm.name = f"{model}@{llm.base_url.split('//')[-1].split('/')[0]}"
@@ -51,7 +53,7 @@ def agent_forecast_command(
     force: bool = False,
     now: datetime | None = None,
 ) -> dict:
-    llm = build_llm(model)
+    llm = build_llm(root, model)
     out_dir = root / "artifacts" / "agent"
     trace_dir = out_dir / "traces"
     questions = settlement_questions(root)
@@ -150,7 +152,7 @@ def agent_eval_command(
     predictors = [ConstantPredictor(), BaseRatePredictor(root), AnaloguePredictor(root)]
     agents: list[AgentPredictor] = []
     if with_agent:
-        llm = build_llm(model)
+        llm = build_llm(root, model)
         agents.append(AgentPredictor(root, llm, runs=runs, blind=blind, max_steps=max_steps))
         if also_blind and not blind:
             # Same model, same questions, no tools: the ablation that says whether the

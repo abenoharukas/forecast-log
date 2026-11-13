@@ -177,43 +177,6 @@ def brier(probability, outcome) -> float:
     return float(np.mean((p - y) ** 2))
 
 
-def split_scores(
-    series: Series,
-    matrix: np.ndarray | None,
-    horizon: int = HORIZON,
-    move: float = MOVE,
-) -> list[dict]:
-    """涨、跌各单独建一次模型：这道题到底有没有方向信息，看这两行。"""
-    up, down = outcomes_split(series, horizon, move)
-    index = {bar.date: position for position, bar in enumerate(series.bars)}
-    out = []
-    for name, labels in (("只看上涨", up), ("只看下跌", down)):
-        rows = walk_forward(series, matrix, labels)
-        sample = [
-            (row.probability, labels[index[date.fromisoformat(row.date)]]) for row in rows
-        ]
-        probability = np.array([item[0] for item in sample])
-        outcome = np.array([item[1] for item in sample])
-        keep = ~np.isnan(outcome)
-        probability, outcome = probability[keep], outcome[keep]
-        if outcome.size == 0:
-            continue
-        base = float(outcome.mean())
-        model_brier = brier(probability, outcome)
-        base_brier = brier([base] * len(outcome), outcome)
-        out.append(
-            {
-                "name": name,
-                "n": int(outcome.size),
-                "base_rate": round(base, 4),
-                "brier_model": round(model_brier, 4),
-                "brier_base": round(base_brier, 4),
-                "skill": round(1.0 - model_brier / base_brier, 4),
-            }
-        )
-    return out
-
-
 def summary(rows: list[RiskRow], horizon: int = HORIZON, move: float = MOVE) -> dict:
     resolved = [row for row in rows if row.outcome is not None]
     if not resolved:
@@ -252,39 +215,48 @@ def summary(rows: list[RiskRow], horizon: int = HORIZON, move: float = MOVE) -> 
     return scored
 
 
-def shocks(series: Series, move: float = 0.25) -> list[int]:
-    """那一天自己有没有跳过 `move`。只在图上打点用，不参与概率。"""
-    closes = np.array([bar.close for bar in series.bars], dtype=float)
-    change = np.abs(np.diff(closes, prepend=closes[0]) / closes) if len(closes) else []
-    return [1 if float(value) > move else 0 for value in change]
-
-
-def document(series: Series, matrix: np.ndarray | None) -> dict:
-    rows = walk_forward(series, matrix)
-    by_date = {row.date: flag for row, flag in zip(
-        [RiskRow(bar.date.isoformat(), 0, None, bar.close) for bar in series.bars],
-        shocks(series),
-        strict=True,
-    )}
+def _direction(series: Series, matrix: np.ndarray | None, name: str, labels: np.ndarray,
+               horizon: int, move: float) -> dict:
+    rows = walk_forward(series, matrix, labels)
     last = rows[-1]
+    stats = summary(rows, horizon, move)
+    stats["skill"] = (
+        round(1.0 - stats["brier_model"] / stats["brier_base"], 4)
+        if stats.get("brier_base")
+        else None
+    )
     return {
-        "question": {
-            "horizon": HORIZON,
-            "move": MOVE,
-            "text": f"未来 {HORIZON} 个交易日内，fear index 是否出现单日 |涨跌| > {MOVE:.0%}",
-        },
-        "fetched_at": series.fetched_at,
+        "name": name,
+        "text": f"未来 {horizon} 个交易日内，是否出现单日{name}超过 {move:.0%}",
         "time": [row.date for row in rows],
         "probability": [round(row.probability, 4) for row in rows],
         "outcome": [row.outcome for row in rows],
         "anchor": [round(row.anchor, 2) for row in rows],
-        # 1 = 那天自己跳了 25% 以上，用来在图上点红点
-        "shock": [by_date.get(row.date, 0) for row in rows],
+        "shock": _shock_for(series, rows),
         "latest": {
             "date": last.date,
             "probability": round(last.probability, 4),
             "anchor": last.anchor,
         },
-        "summary": summary(rows),
-        "split": split_scores(series, matrix),
+        "summary": stats,
+    }
+
+
+def _shock_for(series: Series, rows: list[RiskRow], move: float = 0.25) -> list[int]:
+    """每一天自己有没有动过 move（涨跌都算）；图上打点用，不参与概率。"""
+    closes = np.array([bar.close for bar in series.bars], dtype=float)
+    flags = [0.0] + [abs(closes[i] / closes[i - 1] - 1.0) for i in range(1, len(closes))]
+    index = {bar.date.isoformat(): position for position, bar in enumerate(series.bars)}
+    return [1 if flags[index[row.date]] > move else 0 for row in rows]
+
+
+def document(series: Series, matrix: np.ndarray | None) -> dict:
+    """两个方向各算一次，各自有各自的概率、结算和分数。"""
+    up, down = outcomes_split(series, HORIZON, MOVE)
+    return {
+        "horizon": HORIZON,
+        "move": MOVE,
+        "fetched_at": series.fetched_at,
+        "up": _direction(series, matrix, "上涨", up, HORIZON, MOVE),
+        "down": _direction(series, matrix, "下跌", down, HORIZON, MOVE),
     }

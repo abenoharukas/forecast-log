@@ -99,15 +99,16 @@ def risk_command(root: Path) -> dict:
     document = risk_document(vxn, _features_for(root, vxn))
     path = root / "artifacts" / "risk.json"
     write_report(path, document, indent=None)
-    stats = document["summary"]
-    print(
-        f"风险预警：{document['question']['text']}\n"
-        f"样本 {stats['n']} 次，基准率 {stats['base_rate']:.1%}，"
-        f"模型 Brier {stats['brier_model']:.4f}，只看基率 {stats['brier_base']:.4f}，"
-        f"恒答 0.5 是 {stats['brier_half']:.4f}\n"
-        f"最新 {document['latest']['date']}：{document['latest']['probability']:.1%}\n"
-        f"写在 {path}"
-    )
+    for key in ("up", "down"):
+        block = document[key]
+        stats = block["summary"]
+        print(
+            f"{block['name']}：样本 {stats['n']} 次，基准率 {stats['base_rate']:.1%}，"
+            f"模型 Brier {stats['brier_model']:.4f}，只看基率 {stats['brier_base']:.4f}，"
+            f"好 {stats['skill']:+.1%}"
+        )
+        print(f"  最新 {block['latest']['date']}：{block['latest']['probability']:.1%}")
+    print(f"写在 {path}")
     return document
 
 

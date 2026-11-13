@@ -66,7 +66,7 @@
     .readout i { display: inline-block; width: 22px; height: 0; margin-right: 8px; vertical-align: middle; }
     .readout .actual { border-top: 2px solid var(--blue); }
     .readout .forecast { border-top: 2px dashed var(--ochre); }
-    .readout .point { border-top: 2px dotted var(--ochre); }
+    .readout .point { border-top: 2px solid var(--ochre); }
     .readout .naive { border-top: 2px dotted #6b6459; }
     #range-label { margin-left: auto; color: var(--muted); }
     #chart {
@@ -219,7 +219,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "版本 r20 · 预测值 / 预测区间 分开标";
+    const BUILD = "版本 r22 · 只剩预测值、实际、色带";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -255,24 +255,10 @@
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    const bandHighSeries = chart.addLineSeries({
-      color: "rgba(138,90,18,0.55)",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    const bandLowSeries = chart.addLineSeries({
-      color: "rgba(138,90,18,0.55)",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
     const forecastSeries = chart.addLineSeries({
-      color: "rgba(138,90,18,0.35)",
+      color: "#8a5a12",
       lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dotted,
+      lineStyle: LightweightCharts.LineStyle.Solid,
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -280,20 +266,6 @@
       color: "#8a5a12",
       lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Dashed,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    const lowSeries = chart.addLineSeries({
-      color: "#b08968",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    const highSeries = chart.addLineSeries({
-      color: "#b08968",
-      lineWidth: 1,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
@@ -646,9 +618,7 @@
       let predicted = [];
       let highLine = [];
       let lowLine = [];
-      let ahead = [{ time: lastTime, value: lastClose }];
-      let low = [{ time: lastTime, value: lastClose }];
-      let high = [{ time: lastTime, value: lastClose }];
+      const ahead = [{ time: lastTime, value: lastClose }];
 
       if (horizon === 0) {
         const daily = timeline.daily[symbol];
@@ -657,15 +627,11 @@
         highLine = daily.time.map((time, index) => ({ time, value: daily.high[index] }));
         lowLine = daily.time.map((time, index) => ({ time, value: daily.low[index] }));
         const next = daily.tomorrow;
-        if (next) {
-          predicted.push({ time: next.time, value: next.median });
-          highLine.push({ time: next.time, value: next.high });
-          lowLine.push({ time: next.time, value: next.low });
-        }
+        if (next) predicted.push({ time: next.time, value: next.median });
         forward.forEach((point) => {
           ahead.push({ time: point.time, value: point.median });
-          low.push({ time: point.time, value: point.low });
-          high.push({ time: point.time, value: point.high });
+          highLine.push({ time: point.time, value: point.high });
+          lowLine.push({ time: point.time, value: point.low });
         });
       } else {
         const lad = timeline.ladder && timeline.ladder[symbol];
@@ -685,8 +651,6 @@
           highLine.push({ time: pending.time, value: pending.high });
           lowLine.push({ time: pending.time, value: pending.low });
           ahead.push({ time: pending.time, value: pending.median });
-          low.push({ time: pending.time, value: pending.low });
-          high.push({ time: pending.time, value: pending.high });
         }
       }
       const naive = [];
@@ -707,15 +671,11 @@
         });
       }
       naiveSeries.setData(naive);
-      bandHighSeries.setData(highLine);
-      bandLowSeries.setData(lowLine);
       bandFillSeries.setData(highLine);
       bandMaskSeries.setData(lowLine);
       actualSeries.setData(price.time.map((time, index) => ({ time, value: price.close[index] })));
       forecastSeries.setData(predicted);
       futureSeries.setData(ahead);
-      lowSeries.setData(low);
-      highSeries.setData(high);
     }
 
     function updateLegend(time) {

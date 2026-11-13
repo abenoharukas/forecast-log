@@ -336,9 +336,13 @@ def daily_forecasts(series: Series, extra=None) -> dict:
             "n": len(rows),
             "mae": round(float(error.mean()), 4) if len(rows) else None,
             "median_abs_pct_error": round(float(np.median(pct)), 4) if len(rows) else None,
+            "mean_abs_pct_error": round(float(np.mean(pct)), 4) if len(rows) else None,
             "level_corr": round(float(np.corrcoef(predicted, actual)[0, 1]), 4) if len(rows) > 2 else None,
             "baseline_mae": round(float(np.abs(previous - actual).mean()), 4) if len(rows) else None,
             "median_abs_move": round(float(np.median(np.abs(actual / previous - 1.0))), 4)
+            if len(rows)
+            else None,
+            "mean_abs_move": round(float(np.mean(np.abs(actual / previous - 1.0))), 4)
             if len(rows)
             else None,
             "mean_width": round(float(np.mean((hi - lo) / predicted)), 4) if len(rows) else None,
@@ -438,6 +442,7 @@ def path_summary(rows: list[dict], horizon: int = PATH_HORIZON) -> dict:
                 "naive_mae": round(float(naive.mean()), 4),
                 "beats_naive": round(float(1.0 - error.mean() / naive.mean()), 4),
                 "median_abs_pct": round(float(np.median(error / actual)), 4),
+                "mean_abs_pct": round(float(np.mean(error / actual)), 4),
                 "naive_median_abs_pct": round(float(np.median(naive / actual)), 4),
                 "coverage": round(coverage, 4),
                 "mean_width": round(float(np.mean((high - low) / median)), 4),
@@ -445,6 +450,7 @@ def path_summary(rows: list[dict], horizon: int = PATH_HORIZON) -> dict:
                 "median_abs_move": round(
                     float(np.median(np.abs(actual / step_anchor - 1.0))), 4
                 ),
+                "mean_abs_move": round(float(np.mean(np.abs(actual / step_anchor - 1.0))), 4),
                 # The constant "today's close +/- x%" band that would cover just as often.
                 "naive_width": round(2.0 * float(np.quantile(relative, coverage)), 4),
                 "direction_hit": round(

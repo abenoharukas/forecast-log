@@ -66,6 +66,7 @@
     .readout i { display: inline-block; width: 22px; height: 0; margin-right: 8px; vertical-align: middle; }
     .readout .actual { border-top: 2px solid var(--blue); }
     .readout .forecast { border-top: 2px dashed var(--ochre); }
+    .readout .point { border-top: 2px dotted var(--ochre); }
     .readout .naive { border-top: 2px dotted #6b6459; }
     #range-label { margin-left: auto; color: var(--muted); }
     #chart {
@@ -174,6 +175,7 @@
     <div class="readout">
       <span id="leg-date">—</span>
       <span><span id="leg-prev-label">昨收</span> <b id="leg-prev">—</b></span>
+      <span><i class="point"></i>预测值</span>
       <span><i class="forecast"></i><span id="leg-band-label">今日预测区间</span> <b id="leg-forecast">—</b></span>
       <span><i class="actual"></i><span id="leg-actual-label">今日实际</span> <b id="leg-actual">—</b></span>
       <span id="leg-naive"><i class="naive"></i>「不动」对照</span>
@@ -205,7 +207,7 @@
             <div class="lad-title">各档位成绩 · 历史上每一次「预测N天 vs 实际」</div>
             <table>
               <thead>
-                <tr><th>档位</th><th>次数</th><th>平均差</th><th>差%中位</th><th>在区间内</th><th>猜不动</th></tr>
+                <tr><th>档位</th><th>次数</th><th>平均差</th><th>差%（平均）</th><th>在区间内</th><th>猜不动</th></tr>
               </thead>
               <tbody id="lad-history"></tbody>
             </table>
@@ -217,7 +219,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "版本 r19 · 两条虚线的图例";
+    const BUILD = "版本 r20 · 预测值 / 预测区间 分开标";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -385,12 +387,12 @@
         return {
           n: skill.n,
           mae: skill.mae,
-          pct: skill.median_abs_pct_error,
+          pct: skill.mean_abs_pct_error,
           coverage: skill.band_coverage,
           naive: skill.baseline_mae,
           naivePct: null,
           width: skill.mean_width,
-          move: skill.median_abs_move,
+          move: skill.mean_abs_move,
         };
       }
       const lad = timeline.ladder && timeline.ladder[symbol];
@@ -399,12 +401,12 @@
       return {
         n: step.n,
         mae: step.mae,
-        pct: step.median_abs_pct,
+        pct: step.mean_abs_pct,
         coverage: step.coverage,
         naive: step.naive_mae,
         naivePct: step.naive_median_abs_pct,
         width: step.mean_width,
-        move: step.median_abs_move,
+        move: step.mean_abs_move,
       };
     }
 
@@ -567,10 +569,10 @@
       });
       const stats = horizonStats();
       document.querySelector("#lad-foot").textContent = stats
-        ? stats.n + " 次 · 平均差 " + stats.mae.toFixed(2) + " 点 · 差% 中位 " +
+        ? stats.n + " 次 · 平均差 " + stats.mae.toFixed(2) + " 点 · 差% " +
           (stats.pct * 100).toFixed(1) + "%（照「不动」猜是 " + stats.naive.toFixed(2) + " 点" +
           (stats.naivePct == null ? "" : " / " + (stats.naivePct * 100).toFixed(1) + "%") + "）\n" +
-          "色带宽 " + (stats.width * 100).toFixed(1) + "%，这档实际涨跌中位只有 " +
+          "色带宽 " + (stats.width * 100).toFixed(1) + "%，这档实际涨跌平均只有 " +
           (stats.move * 100).toFixed(1) + "%——宽了 " + (stats.width / stats.move).toFixed(1) +
           " 倍，所以 " + Math.round(stats.coverage * 100) + "% 落在里面是带宽的功劳，不是点位的。" +
           (function () {
@@ -597,7 +599,7 @@
           label: "当天",
           n: skill.n,
           mae: skill.mae,
-          pct: skill.median_abs_pct_error,
+          pct: skill.mean_abs_pct_error,
           coverage: skill.band_coverage,
           naive: skill.baseline_mae,
         });
@@ -607,7 +609,7 @@
           label: "预测" + step.step + "天",
           n: step.n,
           mae: step.mae,
-          pct: step.median_abs_pct,
+          pct: step.mean_abs_pct,
           coverage: step.coverage,
           naive: step.naive_mae,
         });
@@ -767,7 +769,7 @@
       const stats = horizonStats();
       document.querySelector("#leg-skill").textContent = stats
         ? horizonName(horizon) + "：" + stats.n + " 次，平均差 " + stats.mae.toFixed(2) +
-          " 点，差% 中位 " + (stats.pct * 100).toFixed(1) + "%，" +
+          " 点，差% " + (stats.pct * 100).toFixed(1) + "%，" +
           Math.round(stats.coverage * 100) + "% 在区间内"
         : "";
     }

@@ -33,7 +33,7 @@
     .pane-head .down { color: var(--red); }
     .chart { flex: 1; min-height: 0; }
     aside {
-      width: 330px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
+      width: 340px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
       padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace;
       font-size: 11.5px; line-height: 1.6; overflow: auto;
     }
@@ -61,27 +61,19 @@
       <div class="panes">
         <div class="pane">
           <div class="pane-head">
-            <span class="name up">预测上涨</span>
-            <span class="sub" id="up-rule">—</span>
-            <span class="sub">绿色箭头 = 命中，灰色 = 落空</span>
+            <span class="name">全部涨跌预测</span>
+            <span class="sub" id="rule">—</span>
+            <span class="sub">▲ 说涨（绿=命中，灰=落空）　▼ 说跌（红=命中，灰=落空）</span>
           </div>
-          <div class="chart" id="up-chart"></div>
-        </div>
-        <div class="pane">
-          <div class="pane-head">
-            <span class="name down">预测下跌</span>
-            <span class="sub" id="down-rule">—</span>
-            <span class="sub">红色箭头 = 命中，灰色 = 落空</span>
-          </div>
-          <div class="chart" id="down-chart"></div>
+          <div class="chart" id="chart"></div>
         </div>
       </div>
       <aside>
         <div class="block">
           <h2>图和点</h2>
           <div class="note">
-            纵轴 = 指数收盘。上块标「预测 5 天后更高」的点，下块标「预测 5 天后更低」的点，
-            点都画在到期那一天（发出日 + 5 个交易日）。概率落在历史最高 / 最低的 10% 才打点，阈值固定。
+            纵轴 = 指数收盘。▲ 在下方是「预测 5 天后更高」的点，▼ 在上方是「预测 5 天后更低」的点，
+            都画在到期那一天（发出日 + 5 个交易日）。概率落在历史最高 / 最低的 10% 才打点，阈值固定。
             命中的口径是「第 5 个交易日收盘 vs 发出日收盘」，不是 5 天内任意一天。
           </div>
         </div>
@@ -94,7 +86,7 @@
     </div>
   </main>
   <script>
-    const BUILD = "r2 · 命中点标色，写明 5 天口径";
+    const BUILD = "r5 · 一张图，整体命中率，纵轴取对数";
     document.querySelector("#build").textContent = BUILD;
 
     function makeChart(id) {
@@ -103,39 +95,47 @@
         layout: { background: { type: "solid", color: "#f7f3ea" }, textColor: "#5e584e",
           fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
         grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
-        rightPriceScale: { borderColor: "#c9c0b0", scaleMargins: { top: 0.14, bottom: 0.14 } },
+        // 指数从 200 点长到 3 万点，线性轴会把前二十年压成一条直线，而且留白会掉到负值。
+        rightPriceScale: {
+          borderColor: "#c9c0b0",
+          mode: LightweightCharts.PriceScaleMode.Logarithmic,
+          scaleMargins: { top: 0.08, bottom: 0.08 },
+        },
         timeScale: { borderColor: "#c9c0b0", rightOffset: 4, minBarSpacing: 0.04 },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
       });
     }
-    const upChart = makeChart("#up-chart");
-    const downChart = makeChart("#down-chart");
-    const upLine = upChart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-    const downLine = downChart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    const chart = makeChart("#chart");
+    const line = chart.addLineSeries({
+      color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+    });
 
     function percent(value) { return value == null ? "—" : Math.round(value * 100) + "%"; }
 
-    // 命中 = 亮色实心，落空 = 灰色。目标日那根 K 线不一定存在（周末），跳过。
-    function draw(data, chart, line, flags, hitColor, shape, wantUp) {
+    // 一张图：▲ 在下方 = 说涨，▼ 在上方 = 说跌。命中亮色，落空灰色。
+    function draw(data) {
       line.setData(data.time.map((time, index) => ({ time, value: data.close[index] })));
       const known = new Set(data.time);
       const markers = [];
-      flags.forEach((flag, index) => {
+      data.flag_up.forEach((flag, index) => {
         if (!flag) return;
         const target = data.target[index];
         if (!target || !known.has(target)) return;
-        const outcome = data.outcome[index];
-        const hit = outcome != null && (wantUp ? outcome === 1 : outcome === 0);
-        markers.push({
-          time: target,
-          position: shape === "arrowUp" ? "belowBar" : "aboveBar",
-          color: hit ? hitColor : "#b3aa9c",
-          shape,
-          size: hit ? 1 : 0.7,
-        });
+        const hit = data.outcome[index] === 1;
+        markers.push({ time: target, position: "belowBar", shape: "arrowUp", size: hit ? 1 : 0.7,
+          color: hit ? "#2f6b3a" : "#b3aa9c" });
       });
+      data.flag_down.forEach((flag, index) => {
+        if (!flag) return;
+        const target = data.target[index];
+        if (!target || !known.has(target)) return;
+        const hit = data.outcome[index] === 0;
+        markers.push({ time: target, position: "aboveBar", shape: "arrowDown", size: hit ? 1 : 0.7,
+          color: hit ? "#9b2c1f" : "#b3aa9c" });
+      });
+      markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
       line.setMarkers(markers);
       chart.timeScale().fitContent();
     }
@@ -144,24 +144,31 @@
       .then((response) => { if (!response.ok) throw new Error(String(response.status)); return response.json(); })
       .then((data) => {
         document.querySelector("#question").textContent = data.question.text;
-        draw(data, upChart, upLine, data.flag_up, "#2f6b3a", "arrowUp", true);
-        draw(data, downChart, downLine, data.flag_down, "#9b2c1f", "arrowDown", false);
+        draw(data);
 
         const s = data.summary;
-        document.querySelector("#up-rule").textContent =
-          "概率 ≥ " + percent(s.threshold_high) + " 才打点，共 " + s.up_flags.n + " 个；后来真涨的 " + percent(s.up_flags.hit);
-        document.querySelector("#down-rule").textContent =
-          "概率 ≤ " + percent(s.threshold_low) + " 才打点，共 " + s.down_flags.n + " 个；后来真跌的 " + percent(1 - s.down_flags.hit);
+        const up = s.up_flags, down = s.down_flags;
+        const total = up.n + down.n;
+        const hits = Math.round(up.hit * up.n) + Math.round((1 - down.hit) * down.n);
+        const all = hits / total;
+        // 只按基率猜时，同样这些点该命中多少
+        const expect = (s.base_rate * up.n + (1 - s.base_rate) * down.n) / total;
+        document.querySelector("#rule").textContent =
+          "共 " + total + " 次预测（说涨 " + up.n + " + 说跌 " + down.n + "），整体命中 " +
+          (all * 100).toFixed(1) + "%";
 
         const stats = document.querySelector("#stats");
         stats.textContent = "";
         [
-          ["", "上涨点", "下跌点"],
-          ["点数", String(s.up_flags.n), String(s.down_flags.n)],
-          ["真发生", percent(s.up_flags.hit), percent(1 - s.down_flags.hit)],
-          ["瞎猜的基率", percent(s.base_rate), percent(1 - s.base_rate)],
-          ["模型 Brier", s.brier_model.toFixed(4), s.brier_model.toFixed(4)],
-          ["只看基率", s.brier_base.toFixed(4), s.brier_base.toFixed(4)],
+          ["", "说涨的点", "说跌的点", "全部"],
+          ["点数", String(up.n), String(down.n), String(total)],
+          ["命中", percent(up.hit), percent(1 - down.hit), (all * 100).toFixed(1) + "%"],
+          ["只按基率猜", percent(s.base_rate), percent(1 - s.base_rate), (expect * 100).toFixed(1) + "%"],
+          ["差值", ((up.hit - s.base_rate) * 100).toFixed(1) + " 点",
+            ((1 - down.hit - (1 - s.base_rate)) * 100).toFixed(1) + " 点",
+            ((all - expect) * 100).toFixed(1) + " 点"],
+          ["模型 Brier", s.brier_model.toFixed(4), s.brier_model.toFixed(4), s.brier_model.toFixed(4)],
+          ["只看基率", s.brier_base.toFixed(4), s.brier_base.toFixed(4), s.brier_base.toFixed(4)],
         ].forEach((row) => {
           const tr = document.createElement("tr");
           row.forEach((value) => {
@@ -173,10 +180,11 @@
         });
 
         document.querySelector("#note").textContent =
-          "直说：上涨点 " + percent(s.up_flags.hit) + "，瞎猜是 " + percent(s.base_rate) +
-          "；下跌点 " + percent(1 - s.down_flags.hit) + "，瞎猜是 " + percent(1 - s.base_rate) +
-          "。两边的 Brier 都比只按基率猜更差（" + s.brier_model.toFixed(4) + " vs " + s.brier_base.toFixed(4) +
-          "），所以这些点目前没有预测力，只是把模型说的话画出来了。";
+          "整体命中 " + (all * 100).toFixed(1) + "%，误差 ±" + ((100 * Math.sqrt(all * (1 - all) / total))).toFixed(1) +
+          " 点。只按基率猜（60% 说涨、40% 说跌）期望 " + (expect * 100).toFixed(1) +
+          "%，所以合起来几乎正好是抛硬币。分开看也是这样：说涨的点 " + percent(up.hit) +
+          " 对基率 " + percent(s.base_rate) + "，说跌的点 " + percent(1 - down.hit) +
+          " 对基率 " + percent(1 - s.base_rate) + "，两边都贴着基率走。";
       })
       .catch(() => { document.querySelector("#question").textContent = "direction.json 没有加载"; });
   </script>

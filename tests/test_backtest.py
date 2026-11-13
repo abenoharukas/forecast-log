@@ -185,11 +185,11 @@ def test_rolling_path_scores_against_the_close_that_printed():
     assert 0.0 <= document["summary"]["terminal"]["coverage"] <= 1.0
 
 
-def test_risk_probability_never_reads_ahead():
-    from forecast_log.risk import features, walk_forward
+def test_direction_probability_never_reads_ahead():
+    from forecast_log.direction import walk_forward
 
     rng = np.random.default_rng(7)
-    closes = np.clip(19 + rng.normal(0, 0.6, size=700), 12, 32)
+    closes = np.clip(3000 * np.cumprod(1 + rng.normal(0.0004, 0.012, size=900)), 500, 12000)
     series = _series(closes)
     matrix = np.column_stack(
         [np.log(np.clip(14 + rng.normal(0, 1, size=len(closes)), 8, 30)),
@@ -198,13 +198,12 @@ def test_risk_probability_never_reads_ahead():
     rows = walk_forward(series, matrix)
     assert rows
     cut = len(series.bars) // 2
-    # 把中点之后的收盘全部改掉，之前的概率不许动。
     shattered = Series(
         series.symbol,
         series.timezone,
         series.fetched_at,
         tuple(
-            Bar(bar.date, 40.0 if position > cut else bar.close)
+            Bar(bar.date, 9000.0 if position > cut else bar.close)
             for position, bar in enumerate(series.bars)
         ),
     )
@@ -214,16 +213,19 @@ def test_risk_probability_never_reads_ahead():
             assert again[row.date] == row.probability
 
 
-def test_risk_event_matches_the_next_sessions():
-    from forecast_log.risk import HORIZON, MOVE, outcomes
+def test_direction_outcome_is_five_sessions_later():
+    from forecast_log.direction import HORIZON, walk_forward
 
-    closes = [20.0] * 10 + [20.0 * (1 + MOVE * 1.2)] + [20.0] * 10
+    closes = [100.0] * 400 + [100.0 + position for position in range(1, 400)]
     series = _series(closes)
-    labels = outcomes(series)
-    # 第 11 根（下标 10）是那天自己跳的；它前面 HORIZON 天都该记 1。
-    assert labels[10] == 1
-    for position in range(10 - HORIZON, 10):
-        assert labels[position] == 1
-    assert labels[0] == 0
-    assert all(not np.isnan(value) for value in labels[: len(closes) - HORIZON])
-    assert len(labels) == len(closes)
+    rows = walk_forward(series, None)
+    assert rows
+    first = rows[0]
+    dates = [bar.date.isoformat() for bar in series.bars]
+    position = dates.index(first.date)
+    assert first.target == dates[position + HORIZON]
+    for row in rows:
+        if row.outcome is not None:
+            spot = dates.index(row.date)
+            expected = 1 if series.bars[spot + HORIZON].close > series.bars[spot].close else 0
+            assert row.outcome == expected

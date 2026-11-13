@@ -19,13 +19,47 @@ from datetime import date
 import numpy as np
 
 from forecast_log.bars import Series
-from forecast_log.risk import _expanding_z, _logistic_fit, _sigmoid
 
 HORIZON = 5
 RETRAIN_EVERY = 21
 MIN_TRAIN = 250
 CLIP = (0.02, 0.98)
 FLAG_QUANTILE = (0.10, 0.90)
+
+
+def _logistic_fit(x: np.ndarray, y: np.ndarray, rounds: int = 25) -> np.ndarray:
+    """Newton / IRLS with a small ridge so a quiet stretch cannot blow the weights up."""
+    a = np.column_stack([np.ones(len(x)), x])
+    w = np.zeros(a.shape[1])
+    ridge = 1e-3 * np.eye(a.shape[1])
+    ridge[0, 0] = 0.0
+    for _ in range(rounds):
+        p = 1.0 / (1.0 + np.exp(-(a @ w)))
+        weight = np.clip(p * (1 - p), 1e-6, None)
+        step = np.linalg.solve(a.T @ (a * weight[:, None]) + ridge, a.T @ (y - p))
+        w = w + step
+        if np.max(np.abs(step)) < 1e-6:
+            break
+    return w
+
+
+def _sigmoid(z: float) -> float:
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def _expanding_z(values: np.ndarray) -> np.ndarray:
+    """Row i uses only rows 0..i, so later data cannot leak backwards."""
+    out = np.full(len(values), np.nan)
+    for i in range(len(values)):
+        window = values[: i + 1]
+        window = window[~np.isnan(window)]
+        if len(window) < 30 or np.isnan(values[i]):
+            continue
+        sd = window.std()
+        if sd <= 0:
+            continue
+        out[i] = (values[i] - window.mean()) / sd
+    return out
 
 
 @dataclass(frozen=True)
@@ -53,16 +87,16 @@ def _features(series: Series, matrix: np.ndarray | None) -> np.ndarray:
     vol = np.full(n, np.nan)
     for i in range(20, n):
         vol[i] = float(np.std(np.diff(log_close[i - 20 : i + 1])))
-    if matrix is None:
-        matrix = np.full((n, 1), np.nan)
     columns = [
         _returns(log_close, 5),
         _returns(log_close, 20),
         _returns(log_close, 200),
         log_close - np.log(middle),
         vol,
-        matrix[:, 0],
     ]
+    # 没有期限结构数据时就不放这一列，而不是塞一列 NaN 把整行作废。
+    if matrix is not None:
+        columns.append(matrix[:, 0])
     return np.column_stack(columns)
 
 

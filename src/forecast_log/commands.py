@@ -16,6 +16,7 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
+from forecast_log.direction import document as direction_document
 from forecast_log.risk import document as risk_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
@@ -91,6 +92,25 @@ def backtest_command(root: Path) -> dict:
     if not ref["matches"]:
         raise SystemExit(1)
     return report
+
+
+def direction_command(root: Path) -> dict:
+    """指数本身 5 天后的涨跌点（新题，写在 artifacts/direction.json）。"""
+    ndx = load_series(series_path(root, "^NDX"))
+    document = direction_document(ndx, _features_for(root, ndx))
+    path = root / "artifacts" / "direction.json"
+    write_report(path, document, indent=None)
+    stats = document["summary"]
+    print(
+        f"{document['question']['text']}\n"
+        f"样本 {stats['n']} 次，基率 {stats['base_rate']:.1%}，"
+        f"模型 Brier {stats['brier_model']:.4f}，只看基率 {stats['brier_base']:.4f}\n"
+        f"上涨点 {stats['up_flags']['n']} 个，命中 {stats['up_flags']['hit']:.1%}；"
+        f"下跌点 {stats['down_flags']['n']} 个，命中（按上涨算）{stats['down_flags']['hit']:.1%}\n"
+        f"最新 {document['latest']['date']}：{document['latest']['probability']:.1%}\n"
+        f"写在 {path}"
+    )
+    return document
 
 
 def risk_command(root: Path) -> dict:

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Nasdaq-100 · 5 天涨跌点</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
+  <script src="/web/vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --paper: #e6e0d4; --sheet: #f7f3ea; --ink: #1c1915; --muted: #5e584e;
+      --rule: #c9c0b0; --blue: #1d4e79; --red: #9b2c1f; --green: #2f6b3a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; overflow: hidden; }
+    main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; }
+    header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    h1 { margin: 0; font-weight: 480; font-size: 28px; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
+    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
+    .panes { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+    .pane { flex: 1; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; }
+    .pane-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 7px 12px;
+      border-bottom: 1px solid var(--rule); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+    }
+    .pane-head .name { font-size: 15px; font-weight: 500; }
+    .pane-head .up { color: var(--green); }
+    .pane-head .down { color: var(--red); }
+    .chart { flex: 1; min-height: 0; }
+    aside {
+      width: 330px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
+      padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px; line-height: 1.6; overflow: auto;
+    }
+    aside h2 { margin: 0 0 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+    table { border-collapse: collapse; width: 100%; }
+    th { font-weight: 500; font-size: 10.5px; color: var(--muted); text-align: right; padding: 0 5px 3px; }
+    th:first-child, td:first-child { text-align: left; }
+    td { padding: 0 5px; text-align: right; white-space: nowrap; }
+    .block + .block { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
+    .note { color: var(--muted); font-size: 11px; line-height: 1.55; }
+    @media (max-width: 900px) {
+      body { overflow: auto; } main { height: auto; }
+      .board { flex-direction: column; } .pane { min-height: 320px; } aside { width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Nasdaq-100 · 5 天涨跌点</h1>
+      <span class="sub" id="question">—</span>
+      <span class="sub" id="build"></span>
+    </header>
+    <div class="board">
+      <div class="panes">
+        <div class="pane">
+          <div class="pane-head">
+            <span class="name up">预测上涨</span>
+            <span class="sub" id="up-rule">—</span>
+          </div>
+          <div class="chart" id="up-chart"></div>
+        </div>
+        <div class="pane">
+          <div class="pane-head">
+            <span class="name down">预测下跌</span>
+            <span class="sub" id="down-rule">—</span>
+          </div>
+          <div class="chart" id="down-chart"></div>
+        </div>
+      </div>
+      <aside>
+        <div class="block">
+          <h2>图和点</h2>
+          <div class="note">
+            纵轴 = 指数收盘。上块标「预测 5 天后更高」的点，下块标「预测 5 天后更低」的点，
+            点都画在到期那一天（发出日 + 5）。概率落在历史最高 / 最低的 10% 才打点，阈值固定。
+          </div>
+        </div>
+        <div class="block">
+          <h2>这些点准不准</h2>
+          <table id="stats"></table>
+        </div>
+        <div class="block note" id="note"></div>
+      </aside>
+    </div>
+  </main>
+  <script>
+    const BUILD = "r1 · 新页：指数 5 天涨跌点";
+    document.querySelector("#build").textContent = BUILD;
+
+    function makeChart(id) {
+      return LightweightCharts.createChart(document.querySelector(id), {
+        autoSize: true,
+        layout: { background: { type: "solid", color: "#f7f3ea" }, textColor: "#5e584e",
+          fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+        grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
+        rightPriceScale: { borderColor: "#c9c0b0", scaleMargins: { top: 0.14, bottom: 0.14 } },
+        timeScale: { borderColor: "#c9c0b0", rightOffset: 4, minBarSpacing: 0.04 },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+        handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
+      });
+    }
+    const upChart = makeChart("#up-chart");
+    const downChart = makeChart("#down-chart");
+    const upLine = upChart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    const downLine = downChart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+
+    function percent(value) { return value == null ? "—" : Math.round(value * 100) + "%"; }
+
+    function draw(data, chart, line, flags, color, shape) {
+      line.setData(data.time.map((time, index) => ({ time, value: data.close[index] })));
+      const known = new Set(data.time);
+      const markers = [];
+      flags.forEach((flag, index) => {
+        if (!flag) return;
+        const target = data.target[index];
+        if (!target || !known.has(target)) return;
+        markers.push({ time: target, position: shape === "arrowUp" ? "belowBar" : "aboveBar", color, shape, size: 0.8 });
+      });
+      line.setMarkers(markers);
+      chart.timeScale().fitContent();
+    }
+
+    fetch("/artifacts/direction.json?t=" + Date.now())
+      .then((response) => { if (!response.ok) throw new Error(String(response.status)); return response.json(); })
+      .then((data) => {
+        document.querySelector("#question").textContent = data.question.text;
+        draw(data, upChart, upLine, data.flag_up, "#2f6b3a", "arrowUp");
+        draw(data, downChart, downLine, data.flag_down, "#9b2c1f", "arrowDown");
+
+        const s = data.summary;
+        document.querySelector("#up-rule").textContent =
+          "概率 ≥ " + percent(s.threshold_high) + " 才打点，共 " + s.up_flags.n + " 个；后来真涨的 " + percent(s.up_flags.hit);
+        document.querySelector("#down-rule").textContent =
+          "概率 ≤ " + percent(s.threshold_low) + " 才打点，共 " + s.down_flags.n + " 个；后来真跌的 " + percent(1 - s.down_flags.hit);
+
+        const stats = document.querySelector("#stats");
+        stats.textContent = "";
+        [
+          ["", "上涨点", "下跌点"],
+          ["点数", String(s.up_flags.n), String(s.down_flags.n)],
+          ["真发生", percent(s.up_flags.hit), percent(1 - s.down_flags.hit)],
+          ["瞎猜的基率", percent(s.base_rate), percent(1 - s.base_rate)],
+          ["模型 Brier", s.brier_model.toFixed(4), s.brier_model.toFixed(4)],
+          ["只看基率", s.brier_base.toFixed(4), s.brier_base.toFixed(4)],
+        ].forEach((row) => {
+          const tr = document.createElement("tr");
+          row.forEach((value) => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+          });
+          stats.appendChild(tr);
+        });
+
+        document.querySelector("#note").textContent =
+          "直说：上涨点 " + percent(s.up_flags.hit) + "，瞎猜是 " + percent(s.base_rate) +
+          "；下跌点 " + percent(1 - s.down_flags.hit) + "，瞎猜是 " + percent(1 - s.base_rate) +
+          "。两边的 Brier 都比只按基率猜更差（" + s.brier_model.toFixed(4) + " vs " + s.brier_base.toFixed(4) +
+          "），所以这些点目前没有预测力，只是把模型说的话画出来了。";
+      })
+      .catch(() => { document.querySelector("#question").textContent = "direction.json 没有加载"; });
+  </script>
+</body>
+</html>

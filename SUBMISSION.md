@@ -66,17 +66,17 @@ Three things this table says, none of which I picked in advance:
 1. **The tools are the forecast.** Same model, same questions, tools removed: Brier 0.1631 →
    0.2293, direction 72.9% → 55.2%. The LLM has no prior about `^VXN`; what it does is decide
    which tool to ask, how many times, and which answer to believe.
-2. **It ties the analogue model and beats it on calibration** (ECE 0.036 vs 0.053) — it
-   inherits the model's judgement and then un-hedges the overconfidence around round levels.
-   Which is why the table has a `$` column: for a purely numeric question, the agent is the
-   explanation, not the estimator.
+2. **It ties the analogue model and is better calibrated** (ECE 0.036 vs 0.053; mean 0.442
+   against an observed 0.427). It inherits the model's judgement rather than adding any of
+   its own. Which is why the table has a `$` column: on a purely numeric question the agent
+   is the explanation, not the estimator.
 3. **The base rate is worse than a coin flip** (0.2647 vs 0.25). A historical hit rate on an
    *absolute* price level is carried away by drift: `VXN > 46` meant something different in
    2003. The agent caught this on the real NDX question and said so in its rationale — the
    historical rate there was 1.15% and the threshold was today's close.
 
 The gate never fired in 96 runs, which is the right amount of drama: it is cheap enough to
-keep for the case where it does, and three tests prove it would.
+keep for the case where it does, and the tests prove it would.
 
 Locked versus shadow on the three live questions:
 
@@ -107,9 +107,9 @@ probability shrinkage towards the base rate, twelve cross-asset factors each ind
 inside the base rate's confidence interval, and a sell signal that cannot be built from
 direction at all. Numbers I could have quietly dropped.
 
-The same discipline is why the table above includes a predictor that is cheaper than the
-agent and, on most questions, better. That is not a failure of the agent; it is the reason
-to trust the numbers that come out of the bench.
+The same discipline is why the table above keeps a predictor that is free, 200x faster, and
+better on one of the two question shapes. That is not a failure of the agent; it is the
+reason to trust anything else the bench says.
 
 ## Run it
 

@@ -162,7 +162,6 @@
         <button type="button" data-n="7">预测7天 vs 实际</button>
       </div>
       <div class="group">
-        <button type="button" id="naive-toggle" class="active">「不动」对照</button>
         <button type="button" id="lad-open">对账表</button>
       </div>
       <div class="group" id="ranges">
@@ -175,10 +174,8 @@
     <div class="readout">
       <span id="leg-date">—</span>
       <span><span id="leg-prev-label">昨收</span> <b id="leg-prev">—</b></span>
-      <span><i class="point"></i>预测值</span>
-      <span><i class="forecast"></i><span id="leg-band-label">今日预测区间</span> <b id="leg-forecast">—</b></span>
+      <span><i class="forecast"></i>预测值 <b id="leg-forecast">—</b></span>
       <span><i class="actual"></i><span id="leg-actual-label">今日实际</span> <b id="leg-actual">—</b></span>
-      <span id="leg-naive"><i class="naive"></i>「不动」对照</span>
       <span id="leg-error"></span>
       <span id="tomorrow"></span>
       <span id="leg-skill"></span>
@@ -198,7 +195,7 @@
             </div>
             <table>
               <thead>
-                <tr><th>哪天说的</th><th>到期日</th><th>预测值</th><th>预测区间</th><th>实际值</th><th>差多少</th></tr>
+                <tr><th>哪天说的</th><th>到期日</th><th>预测值</th><th>实际值</th><th>差多少</th></tr>
               </thead>
               <tbody id="lad-current"></tbody>
             </table>
@@ -219,7 +216,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "版本 r22 · 只剩预测值、实际、色带";
+    const BUILD = "版本 r24 · 预测值虚线、实际实线";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -235,51 +232,16 @@
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
     });
-    // 色带靠两层填充叠出来：先铺满到上沿，再用背景色盖掉下沿以下的部分。
-    // 遮罩必须画在实际线之前，否则会把跌破下沿的实际值一起盖掉。
-    const bandFillSeries = chart.addAreaSeries({
-      lineColor: "rgba(0,0,0,0)",
-      lineWidth: 1,
-      topColor: "rgba(176,137,104,0.30)",
-      bottomColor: "rgba(176,137,104,0.30)",
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    const bandMaskSeries = chart.addAreaSeries({
-      lineColor: "rgba(0,0,0,0)",
-      lineWidth: 1,
-      topColor: "#f7f3ea",
-      bottomColor: "#f7f3ea",
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
+    // 预测值：赭色虚线，画在到期日上。
     const forecastSeries = chart.addLineSeries({
       color: "#8a5a12",
       lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Solid,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-    const futureSeries = chart.addLineSeries({
-      color: "#8a5a12",
-      lineWidth: 2,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    // 「不动」对照：把发出日的收盘直接搬到目标日，看它是不是也贴着实际。
-    const naiveSeries = chart.addLineSeries({
-      color: "rgba(94,88,78,0.75)",
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.LargeDashed,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    // 实际值最后建，永远压在色带和遮罩之上。
+    // 实际值：蓝色实线。
     const actualSeries = chart.addLineSeries({
       color: "#1d4e79",
       lineWidth: 2,
@@ -382,68 +344,6 @@
       };
     }
 
-    function correlation(a, b) {
-      const n = a.length;
-      if (n < 3) return null;
-      let ma = 0;
-      let mb = 0;
-      for (let i = 0; i < n; i += 1) { ma += a[i]; mb += b[i]; }
-      ma /= n; mb /= n;
-      let cov = 0;
-      let va = 0;
-      let vb = 0;
-      for (let i = 0; i < n; i += 1) {
-        const da = a[i] - ma;
-        const db = b[i] - mb;
-        cov += da * db;
-        va += da * da;
-        vb += db * db;
-      }
-      return va > 0 && vb > 0 ? cov / Math.sqrt(va * vb) : null;
-    }
-
-    // 模型的中位线 vs 「把发出日收盘直接搬过去」，两条线和实际的相关有多像。
-    function lineCompare() {
-      const symbol = symbolOf();
-      const price = timeline[symbol];
-      const model = [];
-      const flat = [];
-      const actual = [];
-      if (horizon === 0) {
-        const daily = timeline.daily[symbol];
-        daily.time.forEach((time, index) => {
-          model.push(daily.median[index]);
-          flat.push(daily.previous[index]);
-          actual.push(daily.actual[index]);
-        });
-      } else {
-        const column = timeline.ladder && timeline.ladder[symbol] &&
-          timeline.ladder[symbol].columns[String(horizon)];
-        if (!column) return null;
-        price.time.forEach((time, index) => {
-          if (index - horizon < 0 || column.median[index] == null) return;
-          model.push(column.median[index]);
-          flat.push(price.close[index - horizon]);
-          actual.push(price.close[index]);
-        });
-      }
-      const modelCorr = correlation(model, actual);
-      const flatCorr = correlation(flat, actual);
-      let modelGap = 0;
-      let flatGap = 0;
-      for (let i = 0; i < actual.length; i += 1) {
-        modelGap += Math.abs(model[i] - actual[i]);
-        flatGap += Math.abs(flat[i] - actual[i]);
-      }
-      if (!actual.length) return null;
-      return {
-        modelCorr,
-        flatCorr,
-        modelGap: modelGap / actual.length,
-        flatGap: flatGap / actual.length,
-      };
-    }
-
     // 卡片左边那张表：这个档位最近几次「说的 vs 实际」，最后一行是还没到期的那次。
     function cardRows() {
       const symbol = symbolOf();
@@ -515,13 +415,11 @@
       body.textContent = "";
       cardRows().forEach((item) => {
         const gap = item.actual != null ? item.said - item.actual : null;
-        const inside = item.actual != null ? item.actual >= item.low && item.actual <= item.high : null;
         const tr = document.createElement("tr");
         const cells = [
           [item.asOf.slice(5), ""],
           [item.target.slice(5), ""],
           [priceText(item.said), ""],
-          [priceText(item.low) + "–" + priceText(item.high), inside === false ? "out" : ""],
           [priceText(item.actual), ""],
           [
             gap == null
@@ -546,14 +444,7 @@
           (stats.naivePct == null ? "" : " / " + (stats.naivePct * 100).toFixed(1) + "%") + "）\n" +
           "色带宽 " + (stats.width * 100).toFixed(1) + "%，这档实际涨跌平均只有 " +
           (stats.move * 100).toFixed(1) + "%——宽了 " + (stats.width / stats.move).toFixed(1) +
-          " 倍，所以 " + Math.round(stats.coverage * 100) + "% 落在里面是带宽的功劳，不是点位的。" +
-          (function () {
-            const pair = lineCompare();
-            if (!pair) return "";
-            return "\n把发出日的收盘直接搬过去（灰色长虚线）：平均差 " + pair.flatGap.toFixed(2) +
-              " 点、和实际相关 " + pair.flatCorr.toFixed(3) + "；模型 " + pair.modelGap.toFixed(2) +
-              " 点、相关 " + pair.modelCorr.toFixed(3) + "。趋势是序列自己的，不是模型给的。";
-          })()
+          " 倍，所以 " + Math.round(stats.coverage * 100) + "% 落在里面是带宽的功劳，不是点位的。"
         : "";
     }
 
@@ -608,31 +499,18 @@
       });
     }
 
-    // 图上画什么：当天画每一根的当日区间，1…7 天后画那一天出发、落在目标日上的区间。
+    // 图上只有两条线：预测值（虚线）和实际值（实线）。
     function drawSeries() {
       const symbol = symbolOf();
       const price = timeline[symbol];
-      const last = price.time.length - 1;
-      const lastTime = price.time[last];
-      const lastClose = price.close[last];
-      let predicted = [];
-      let highLine = [];
-      let lowLine = [];
-      const ahead = [{ time: lastTime, value: lastClose }];
-
+      const predicted = [];
       if (horizon === 0) {
         const daily = timeline.daily[symbol];
-        const forward = (timeline.forward || {})[symbolOf()] || [];
-        predicted = daily.time.map((time, index) => ({ time, value: daily.median[index] }));
-        highLine = daily.time.map((time, index) => ({ time, value: daily.high[index] }));
-        lowLine = daily.time.map((time, index) => ({ time, value: daily.low[index] }));
+        daily.time.forEach((time, index) => {
+          predicted.push({ time, value: daily.median[index] });
+        });
         const next = daily.tomorrow;
         if (next) predicted.push({ time: next.time, value: next.median });
-        forward.forEach((point) => {
-          ahead.push({ time: point.time, value: point.median });
-          highLine.push({ time: point.time, value: point.high });
-          lowLine.push({ time: point.time, value: point.low });
-        });
       } else {
         const lad = timeline.ladder && timeline.ladder[symbol];
         const column = lad && lad.columns[String(horizon)];
@@ -640,42 +518,14 @@
           price.time.forEach((time, index) => {
             if (column.median[index] == null) return;
             predicted.push({ time, value: column.median[index] });
-            highLine.push({ time, value: column.high[index] });
-            lowLine.push({ time, value: column.low[index] });
           });
         }
         const fan = (timeline.forward || {})[symbol] || [];
         const pending = fan[horizon - 1];
-        if (pending) {
-          predicted.push({ time: pending.time, value: pending.median });
-          highLine.push({ time: pending.time, value: pending.high });
-          lowLine.push({ time: pending.time, value: pending.low });
-          ahead.push({ time: pending.time, value: pending.median });
-        }
+        if (pending) predicted.push({ time: pending.time, value: pending.median });
       }
-      const naive = [];
-      if (horizon === 0) {
-        const daily = timeline.daily[symbol];
-        daily.time.forEach((time, index) => {
-          naive.push({ time, value: daily.previous[index] });
-        });
-      } else {
-        price.time.forEach((time, index) => {
-          if (index - horizon < 0) return;
-          if (horizon >= 1) {
-            const column = timeline.ladder && timeline.ladder[symbol] &&
-              timeline.ladder[symbol].columns[String(horizon)];
-            if (!column || column.median[index] == null) return;
-          }
-          naive.push({ time, value: price.close[index - horizon] });
-        });
-      }
-      naiveSeries.setData(naive);
-      bandFillSeries.setData(highLine);
-      bandMaskSeries.setData(lowLine);
       actualSeries.setData(price.time.map((time, index) => ({ time, value: price.close[index] })));
       forecastSeries.setData(predicted);
-      futureSeries.setData(ahead);
     }
 
     function updateLegend(time) {
@@ -698,7 +548,6 @@
           asOf = row > 0 ? daily.time[row - 1] : null;
         }
         document.querySelector("#leg-prev-label").textContent = "昨收";
-        document.querySelector("#leg-band-label").textContent = "当天预测区间";
         document.querySelector("#leg-actual-label").textContent = "当天实际";
       } else {
         const lad = timeline.ladder && timeline.ladder[symbol];
@@ -708,13 +557,10 @@
           asOf = price.time[index - horizon];
         }
         document.querySelector("#leg-prev-label").textContent = "预测" + horizon + "天时的收盘";
-        document.querySelector("#leg-band-label").textContent = "预测" + horizon + "天时说的区间";
         document.querySelector("#leg-actual-label").textContent = "实际";
       }
       document.querySelector("#leg-prev").textContent = priceText(asOf ? closeByTime.get(asOf) : null);
-      document.querySelector("#leg-forecast").textContent = said
-        ? priceText(said.low) + " – " + priceText(said.high)
-        : "—";
+      document.querySelector("#leg-forecast").textContent = said ? priceText(said.median) : "—";
       if (!said || actual == null || asOf == null) {
         document.querySelector("#leg-error").textContent = "";
       } else {
@@ -754,14 +600,6 @@
       requestAnimationFrame(applySpan);
       updateLegend(latestTime);
     }
-
-    let showNaive = true;
-    document.querySelector("#naive-toggle").addEventListener("click", (event) => {
-      showNaive = !showNaive;
-      event.currentTarget.classList.toggle("active", showNaive);
-      naiveSeries.applyOptions({ visible: showNaive });
-      document.querySelector("#leg-naive").style.display = showNaive ? "" : "none";
-    });
 
     document.querySelector("#lad-close").addEventListener("click", () => {
       document.body.classList.add("panel-hidden");

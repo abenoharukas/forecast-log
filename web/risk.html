@@ -86,7 +86,7 @@
     </header>
     <div class="answer">
       <span>最新收盘 <b id="latest-date">—</b></span>
-      <span>未来几天出事概率 <b id="probability">—</b></span>
+      <span>未来 5 天内剧烈波动概率（涨跌都算） <b id="probability">—</b></span>
       <span id="verdict">—</span>
       <span class="sub" id="build"></span>
     </div>
@@ -103,6 +103,10 @@
         <div class="block">
           <h2>成绩</h2>
           <table id="scores"></table>
+        </div>
+        <div class="block">
+          <h2>拆开看：这个概率有没有方向信息</h2>
+          <table id="split"></table>
         </div>
         <div class="block note" id="note"></div>
       </aside>
@@ -150,11 +154,11 @@
           p >= 0.5 ? "最近不平静" : p >= 0.3 ? "有一点风险" : "近期平静";
 
         line.setData(data.time.map((time, index) => ({ time, value: data.probability[index] })));
-        // 红点只标「那天自己跳过 25% 以上」的日子，看概率有没有提前抬起来。
+        // 小圆点只标「那天自己动了 25% 以上」的日子（涨跌都算），不是买卖信号。
         const markers = [];
         data.time.forEach((time, index) => {
           if (data.shock[index] === 1) {
-            markers.push({ time, position: "aboveBar", color: "#9b2c1f", shape: "arrowDown", size: 0.7 });
+            markers.push({ time, position: "belowBar", color: "#9b2c1f", shape: "circle", size: 0.5 });
           }
         });
         line.setMarkers(markers);
@@ -199,8 +203,26 @@
           scores.appendChild(tr);
         });
 
+        const split = document.querySelector("#split");
+        split.textContent = "";
+        (data.split || []).forEach((item) => {
+          const tr = document.createElement("tr");
+          const cells = [
+            item.name,
+            "基准 " + percent(item.base_rate),
+            "模型 " + item.brier_model.toFixed(4),
+            (item.skill >= 0 ? "好 " : "差 ") + Math.abs(item.skill * 100).toFixed(1) + "%",
+          ];
+          cells.forEach((value) => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            tr.appendChild(td);
+          });
+          split.appendChild(tr);
+        });
+
         document.querySelector("#note").textContent =
-          "蓝线是「未来 5 个交易日内出现单日 |涨跌| > 15%」的概率，红箭头是那天自己跳过 25% 以上的日子。" +
+          "蓝线是「未来 5 个交易日内出现单日 |涨跌| > 15%」的概率；红点是那天自己动了 25% 以上的日子（涨跌都算），不是买卖信号。" +
           "这道题只报风险，不报点位。报的概率高低是否带动实际发生率：" +
           s.bands.map((band) => percent(band.mean_probability) + "→" + percent(band.actual)).join("，") + "。";
       })

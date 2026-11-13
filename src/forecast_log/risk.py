@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import numpy as np
 
@@ -109,10 +110,34 @@ def outcomes(series: Series, horizon: int = HORIZON, move: float = MOVE) -> np.n
     return np.array([np.nan if v is None else v for v in labels], dtype=float)
 
 
-def walk_forward(series: Series, matrix: np.ndarray | None) -> list[RiskRow]:
+def outcomes_split(
+    series: Series, horizon: int = HORIZON, move: float = MOVE
+) -> tuple[np.ndarray, np.ndarray]:
+    """两个方向分开数：未来 `horizon` 天内有没有涨过 move、有没有跌过 move。"""
+    closes = np.array([bar.close for bar in series.bars], dtype=float)
+    n = len(closes)
+    up: list[float] = []
+    down: list[float] = []
+    for i in range(n):
+        window = closes[i + 1 : i + 1 + horizon] / closes[i] - 1.0
+        if len(window) < horizon:
+            up.append(np.nan)
+            down.append(np.nan)
+            continue
+        up.append(1.0 if float(window.max()) > move else 0.0)
+        down.append(1.0 if float(-window.min()) > move else 0.0)
+    return np.array(up), np.array(down)
+
+
+def walk_forward(
+    series: Series,
+    matrix: np.ndarray | None,
+    labels: np.ndarray | None = None,
+) -> list[RiskRow]:
     """One probability per session, refitting only on what had already printed."""
     raw = features(series, matrix)
-    labels = outcomes(series)
+    if labels is None:
+        labels = outcomes(series)
     z = np.column_stack([_expanding_z(raw[:, j]) for j in range(raw.shape[1])])
     usable = ~np.isnan(z).any(axis=1) & ~np.isnan(labels)
     closes = np.array([bar.close for bar in series.bars], dtype=float)
@@ -150,6 +175,43 @@ def brier(probability, outcome) -> float:
     p = np.asarray(probability, dtype=float)
     y = np.asarray(outcome, dtype=float)
     return float(np.mean((p - y) ** 2))
+
+
+def split_scores(
+    series: Series,
+    matrix: np.ndarray | None,
+    horizon: int = HORIZON,
+    move: float = MOVE,
+) -> list[dict]:
+    """涨、跌各单独建一次模型：这道题到底有没有方向信息，看这两行。"""
+    up, down = outcomes_split(series, horizon, move)
+    index = {bar.date: position for position, bar in enumerate(series.bars)}
+    out = []
+    for name, labels in (("只看上涨", up), ("只看下跌", down)):
+        rows = walk_forward(series, matrix, labels)
+        sample = [
+            (row.probability, labels[index[date.fromisoformat(row.date)]]) for row in rows
+        ]
+        probability = np.array([item[0] for item in sample])
+        outcome = np.array([item[1] for item in sample])
+        keep = ~np.isnan(outcome)
+        probability, outcome = probability[keep], outcome[keep]
+        if outcome.size == 0:
+            continue
+        base = float(outcome.mean())
+        model_brier = brier(probability, outcome)
+        base_brier = brier([base] * len(outcome), outcome)
+        out.append(
+            {
+                "name": name,
+                "n": int(outcome.size),
+                "base_rate": round(base, 4),
+                "brier_model": round(model_brier, 4),
+                "brier_base": round(base_brier, 4),
+                "skill": round(1.0 - model_brier / base_brier, 4),
+            }
+        )
+    return out
 
 
 def summary(rows: list[RiskRow], horizon: int = HORIZON, move: float = MOVE) -> dict:
@@ -224,4 +286,5 @@ def document(series: Series, matrix: np.ndarray | None) -> dict:
             "anchor": last.anchor,
         },
         "summary": summary(rows),
+        "split": split_scores(series, matrix),
     }

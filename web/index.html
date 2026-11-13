@@ -152,33 +152,33 @@
     <header>
       <h1 id="symbol">Fear index</h1>
       <div class="group" id="horizons">
-        <button type="button" data-n="0" class="active">当天 vs 实际</button>
-        <button type="button" data-n="1">预测1天 vs 实际</button>
-        <button type="button" data-n="2">预测2天 vs 实际</button>
-        <button type="button" data-n="3">预测3天 vs 实际</button>
-        <button type="button" data-n="4">预测4天 vs 实际</button>
-        <button type="button" data-n="5">预测5天 vs 实际</button>
-        <button type="button" data-n="6">预测6天 vs 实际</button>
-        <button type="button" data-n="7">预测7天 vs 实际</button>
+        <button type="button" data-n="0" class="active">h = 0 vs realised</button>
+        <button type="button" data-n="1">h = 1 vs realised</button>
+        <button type="button" data-n="2">h = 2 vs realised</button>
+        <button type="button" data-n="3">h = 3 vs realised</button>
+        <button type="button" data-n="4">h = 4 vs realised</button>
+        <button type="button" data-n="5">h = 5 vs realised</button>
+        <button type="button" data-n="6">h = 6 vs realised</button>
+        <button type="button" data-n="7">h = 7 vs realised</button>
       </div>
       <div class="group">
-        <button type="button" id="lad-open">对账表</button>
+        <button type="button" id="lad-open">Error ledger</button>
       </div>
       <div class="group">
-        <a href="/web/agent.html" style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:var(--ink);border:1px solid var(--ink);padding:6px 10px;text-decoration:none;">agent 评测台</a>
+        <a href="/web/agent.html" style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:var(--ink);border:1px solid var(--ink);padding:6px 10px;text-decoration:none;">Agent scoreboard</a>
       </div>
       <div class="group" id="ranges">
-        <button type="button" data-span="90">3个月</button>
-        <button type="button" data-span="365" class="active">1年</button>
-        <button type="button" data-span="1825">5年</button>
-        <button type="button" data-span="0">全部</button>
+        <button type="button" data-span="90">3M</button>
+        <button type="button" data-span="365" class="active">1Y</button>
+        <button type="button" data-span="1825">5Y</button>
+        <button type="button" data-span="0">All</button>
       </div>
     </header>
     <div class="readout">
       <span id="leg-date">—</span>
-      <span><span id="leg-prev-label">昨收</span> <b id="leg-prev">—</b></span>
-      <span><i class="forecast"></i>预测值 <b id="leg-forecast">—</b></span>
-      <span><i class="actual"></i><span id="leg-actual-label">今日实际</span> <b id="leg-actual">—</b></span>
+      <span><span id="leg-prev-label">prior close</span> <b id="leg-prev">—</b></span>
+      <span><i class="forecast"></i>forecast <b id="leg-forecast">—</b></span>
+      <span><i class="actual"></i><span id="leg-actual-label">realised</span> <b id="leg-actual">—</b></span>
       <span id="leg-error"></span>
       <span id="tomorrow"></span>
       <span id="leg-skill"></span>
@@ -190,24 +190,24 @@
         <div id="chart"></div>
       </div>
       <aside id="ladder">
-        <button type="button" id="lad-close">收起 ×</button>
+        <button type="button" id="lad-close">close ×</button>
         <div class="lad-cols">
           <div class="lad-block">
             <div class="lad-title">
-              <b id="lad-kind">预测N天 vs 实际</b><span id="lad-note"> · 最近几次</span>
+              <b id="lad-kind">h-session forecast vs realised</b><span id="lad-note"> · latest</span>
             </div>
             <table>
               <thead>
-                <tr><th>哪天说的</th><th>到期日</th><th>预测值</th><th>实际值</th><th>差多少</th></tr>
+                <tr><th>Originated</th><th>Resolves</th><th>Forecast</th><th>Realised</th><th>Error</th></tr>
               </thead>
               <tbody id="lad-current"></tbody>
             </table>
           </div>
           <div class="lad-block" id="lad-history-block">
-            <div class="lad-title">各档位成绩 · 历史上每一次「预测N天 vs 实际」</div>
+            <div class="lad-title">Forecast error by horizon · full history</div>
             <table>
               <thead>
-                <tr><th>档位</th><th>次数</th><th>平均差</th><th>差%（平均）</th><th>在区间内</th><th>猜不动</th></tr>
+                <tr><th>Horizon</th><th>n</th><th>MAE (pts)</th><th>MAPE</th><th>Band coverage</th><th>Random walk</th></tr>
               </thead>
               <tbody id="lad-history"></tbody>
             </table>
@@ -219,7 +219,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "版本 r24 · 预测值虚线、实际实线";
+    const BUILD = "build r24 · forecast (dashed) vs realised (solid)";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -235,7 +235,7 @@
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
     });
-    // 预测值：赭色虚线，画在到期日上。
+      // Forecast: ochre dashed, drawn on the resolution date.
     const forecastSeries = chart.addLineSeries({
       color: "#8a5a12",
       lineWidth: 1,
@@ -244,7 +244,7 @@
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    // 实际值：蓝色实线。
+      // Actual: blue solid.
     const actualSeries = chart.addLineSeries({
       color: "#1d4e79",
       lineWidth: 2,
@@ -253,7 +253,7 @@
     });
 
     let span = 365;
-    let horizon = 0; // 0 = 当天（前一晚说的），1…7 = 提前 N 个交易日
+    let horizon = 0; // 0 = same day (said the night before), 1…7 = N sessions ahead
     let timeline = null;
     let closeByTime = new Map();
     let latestTime = null;
@@ -306,16 +306,16 @@
       return Number(value).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
-    // 页面只画 fear index。
+      // The page only draws the fear index.
     function symbolOf() {
       return "vxn";
     }
 
     function horizonName(n) {
-      return n === 0 ? "当天 vs 实际" : "预测" + n + "天 vs 实际";
+      return n === 0 ? "h = 0 vs realised" : "h = " + n + " vs realised";
     }
 
-    // 某个档位的历史成绩：当天用 daily 的口径，1…7 天后用 ladder 的分步结果。
+    // Per-horizon record: same day uses the daily band, 1…7 days uses the ladder steps.
     function horizonStats() {
       const symbol = symbolOf();
       if (horizon === 0) {
@@ -347,7 +347,7 @@
       };
     }
 
-    // 卡片左边那张表：这个档位最近几次「说的 vs 实际」，最后一行是还没到期的那次。
+    // Left table: the latest "said vs actual" rows for this horizon; the last row has not resolved yet.
     function cardRows() {
       const symbol = symbolOf();
       const price = timeline[symbol];
@@ -426,7 +426,7 @@
           [priceText(item.actual), ""],
           [
             gap == null
-              ? "还没到"
+              ? "unresolved"
               : (gap >= 0 ? "+" : "−") + Math.abs(gap).toFixed(2) + " (" +
                 (gap >= 0 ? "+" : "−") + Math.abs((gap / item.actual) * 100).toFixed(1) + "%)",
             gap == null ? "" : Math.abs(gap / item.actual) > 0.1 ? "bad" : "",
@@ -442,12 +442,12 @@
       });
       const stats = horizonStats();
       document.querySelector("#lad-foot").textContent = stats
-        ? stats.n + " 次 · 平均差 " + stats.mae.toFixed(2) + " 点 · 差% " +
-          (stats.pct * 100).toFixed(1) + "%（照「不动」猜是 " + stats.naive.toFixed(2) + " 点" +
-          (stats.naivePct == null ? "" : " / " + (stats.naivePct * 100).toFixed(1) + "%") + "）\n" +
-          "色带宽 " + (stats.width * 100).toFixed(1) + "%，这档实际涨跌平均只有 " +
-          (stats.move * 100).toFixed(1) + "%——宽了 " + (stats.width / stats.move).toFixed(1) +
-          " 倍，所以 " + Math.round(stats.coverage * 100) + "% 落在里面是带宽的功劳，不是点位的。"
+        ? stats.n + " obs · MAE " + stats.mae.toFixed(2) + " pts · MAPE " +
+          (stats.pct * 100).toFixed(1) + "% (random walk: " + stats.naive.toFixed(2) + " pts" +
+          (stats.naivePct == null ? "" : " / " + (stats.naivePct * 100).toFixed(1) + "%") + "\n" +
+          "band width " + (stats.width * 100).toFixed(1) + "% against an average absolute move of " +
+          (stats.move * 100).toFixed(1) + "% — " + (stats.width / stats.move).toFixed(1) +
+          "× wider, so the " + Math.round(stats.coverage * 100) + "% coverage is attributable to the band width, not to point accuracy."
         : "";
     }
 
@@ -462,7 +462,7 @@
       const rows = [];
       if (skill.n != null) {
         rows.push({
-          label: "当天",
+          label: "h = 0",
           n: skill.n,
           mae: skill.mae,
           pct: skill.mean_abs_pct_error,
@@ -472,7 +472,7 @@
       }
       steps.forEach((step) => {
         rows.push({
-          label: "预测" + step.step + "天",
+          label: "h = " + step.step,
           n: step.n,
           mae: step.mae,
           pct: step.mean_abs_pct,
@@ -502,7 +502,7 @@
       });
     }
 
-    // 图上只有两条线：预测值（虚线）和实际值（实线）。
+    // Only two lines: forecast (dashed) and actual (solid).
     function drawSeries() {
       const symbol = symbolOf();
       const price = timeline[symbol];
@@ -550,8 +550,8 @@
           said = { median: daily.median[row], low: daily.low[row], high: daily.high[row] };
           asOf = row > 0 ? daily.time[row - 1] : null;
         }
-        document.querySelector("#leg-prev-label").textContent = "昨收";
-        document.querySelector("#leg-actual-label").textContent = "当天实际";
+        document.querySelector("#leg-prev-label").textContent = "prior close";
+        document.querySelector("#leg-actual-label").textContent = "realised";
       } else {
         const lad = timeline.ladder && timeline.ladder[symbol];
         const column = lad && lad.columns[String(horizon)];
@@ -559,8 +559,8 @@
           said = { median: column.median[index], low: column.low[index], high: column.high[index] };
           asOf = price.time[index - horizon];
         }
-        document.querySelector("#leg-prev-label").textContent = "预测" + horizon + "天时的收盘";
-        document.querySelector("#leg-actual-label").textContent = "实际";
+        document.querySelector("#leg-prev-label").textContent = "close at origination (h = " + horizon + ")";
+        document.querySelector("#leg-actual-label").textContent = "realised";
       }
       document.querySelector("#leg-prev").textContent = priceText(asOf ? closeByTime.get(asOf) : null);
       document.querySelector("#leg-forecast").textContent = said ? priceText(said.median) : "—";
@@ -570,16 +570,16 @@
         const gap = said.median - actual;
         const inside = actual >= said.low && actual <= said.high;
         document.querySelector("#leg-error").textContent =
-          (asOf.slice(5) + " 说的，差 ") +
+          (asOf.slice(5) + ", error ") +
           (gap >= 0 ? "+" : "−") + Math.abs(gap).toFixed(2) +
-          "（" + (gap >= 0 ? "+" : "−") + Math.abs((gap / actual) * 100).toFixed(1) + "%）" +
+          " (" + (gap >= 0 ? "+" : "−") + Math.abs((gap / actual) * 100).toFixed(1) + "%)" +
           (inside ? " ✓" : " ✗");
       }
       const stats = horizonStats();
       document.querySelector("#leg-skill").textContent = stats
-        ? horizonName(horizon) + "：" + stats.n + " 次，平均差 " + stats.mae.toFixed(2) +
-          " 点，差% " + (stats.pct * 100).toFixed(1) + "%，" +
-          Math.round(stats.coverage * 100) + "% 在区间内"
+        ? horizonName(horizon) + ": " + stats.n + " cases, mean abs error " + stats.mae.toFixed(2) +
+          " pts, error% " + (stats.pct * 100).toFixed(1) + "%, " +
+          Math.round(stats.coverage * 100) + "% inside the band"
         : "";
     }
 
@@ -595,8 +595,8 @@
       renderHistory();
       document.querySelector("#tomorrow").textContent =
         horizon === 0
-          ? "当天的区间：用前一晚的收盘算，画在当天"
-          : "预测" + horizon + "天：提前 " + horizon + " 个交易日说的区间，画在到期那一天";
+          ? "h = 0 band: conditional 10-90% interval from the prior close, evaluated on the same session"
+          : "h = " + horizon + " band: interval formed " + horizon + " sessions earlier, drawn on the resolution date";
       document.querySelector("#tomorrow").style.color = "#5e584e";
       document.querySelector("#build").textContent = BUILD;
       latestTime = price.time[price.time.length - 1];
@@ -640,7 +640,7 @@
         showQuestion();
       })
       .catch(() => {
-        document.querySelector("#leg-date").textContent = "timeline.json 没有加载";
+        document.querySelector("#leg-date").textContent = "timeline.json not available";
       });
   </script>
 </body>

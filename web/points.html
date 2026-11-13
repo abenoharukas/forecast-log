@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Nasdaq-100 · 5 天后偏涨的点</title>
+  <title>Nasdaq-100 — 5-day risk-on signals</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
@@ -52,33 +52,38 @@
 <body>
   <main>
     <header>
-      <h1>Nasdaq-100 · 5 天后偏涨的点</h1>
+      <h1>Nasdaq-100 — 5-day risk-on signals</h1>
       <span class="sub" id="question">—</span>
       <span class="sub" id="build"></span>
     </header>
     <div class="board">
       <div class="pane">
         <div class="pane-head">
-          <span class="name">跨资产偏多 → 5 天后更高</span>
+          <span class="name">Risk-on composite → NDX up after 5 sessions</span>
           <span class="sub" id="rule">—</span>
-          <span class="sub">绿色 = 命中，灰色 = 落空</span>
+          <span class="sub">green = signal realised, grey = signal failed</span>
         </div>
         <div class="chart" id="chart"></div>
       </div>
       <aside>
         <div class="block">
-          <h2>打点规则（事先定死，不看结果）</h2>
+          <h2>Signal construction (fixed ex ante)</h2>
           <div class="note">
-            四条腿各自做扩张 z 分数再取平均，分数落在当天之前所有历史的 90 分位以上就打点：
+            Four cross-asset factors. Each is standardised to a z-score on an expanding window (mean and standard
+            deviation computed from all history up to that session; no look-ahead). The composite is the equal-weighted
+            average of the four. A signal is triggered when the composite exceeds its 90th percentile on that same
+            expanding window. Two conditional triggers are added: within 3 calendar days of a CPI release, or 3-7
+            days of an NFP release, with the composite at or above its expanding median. No signal on the FOMC
+            decision day. Factors:
             <ul id="legs"></ul>
           </div>
         </div>
         <div class="block">
-          <h2>这些点准不准</h2>
+          <h2>Out-of-sample performance</h2>
           <table id="stats"></table>
         </div>
         <div class="block">
-          <h2>今天</h2>
+          <h2>Latest observation</h2>
           <div class="note" id="latest"></div>
         </div>
         <div class="block note" id="note"></div>
@@ -86,7 +91,7 @@
     </div>
   </main>
   <script>
-    document.querySelector("#build").textContent = "r1 · 跨资产风险偏好";
+    document.querySelector("#build").textContent = "r1 · cross-asset risk-on composite";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -128,7 +133,7 @@
         const s = data.summary;
         document.querySelector("#question").textContent = data.question.text;
         document.querySelector("#rule").textContent =
-          "共打 " + s.flagged + " 个点，命中 " + percent(s.hit);
+          s.flagged + " signals · precision " + percent(s.hit) + " · 5-day horizon";
         document.querySelector("#legs").textContent = "";
         (data.question.legs || []).forEach((text) => {
           const li = document.createElement("li");
@@ -140,12 +145,12 @@
         const stats = document.querySelector("#stats");
         stats.textContent = "";
         [
-          ["", "全部", "2015 年起"],
-          ["天数", String(s.n), String(s.holdout_n)],
-          ["打点", String(s.flagged), String(s.holdout_flagged)],
-          ["命中", percent(s.hit), percent(s.holdout_hit)],
-          ["基率（瞎猜）", percent(s.base_rate), percent(s.holdout_base_rate)],
-          ["差", ((s.hit - s.base_rate) * 100).toFixed(1) + " 点", ((s.holdout_hit - s.holdout_base_rate) * 100).toFixed(1) + " 点"],
+          ["", "Full sample", "Out-of-sample 2015+"],
+          ["Observations", String(s.n), String(s.holdout_n)],
+          ["Signals", String(s.flagged), String(s.holdout_flagged)],
+          ["Precision", percent(s.hit), percent(s.holdout_hit)],
+          ["Base rate (unconditional)", percent(s.base_rate), percent(s.holdout_base_rate)],
+          ["Lift vs base", ((s.hit - s.base_rate) * 100).toFixed(1) + " pp", ((s.holdout_hit - s.holdout_base_rate) * 100).toFixed(1) + " pp"],
         ].forEach((row) => {
           const tr = document.createElement("tr");
           row.forEach((value) => {
@@ -157,16 +162,16 @@
         });
 
         document.querySelector("#latest").textContent =
-          data.latest.date + "　分数 " + data.latest.score.toFixed(3) +
-          "，阈值 " + data.latest.threshold.toFixed(3) +
-          " → " + (data.latest.flag ? "打点（偏多）" : "不打点");
+          data.latest.date + " · composite " + data.latest.score.toFixed(3) +
+          ", trigger " + data.latest.threshold.toFixed(3) +
+          " → " + (data.latest.flag ? "signal (risk-on)" : "no signal");
 
         document.querySelector("#note").textContent =
-          "留出期（阈值只用 2015 年之前的数据定）打点 " + s.holdout_flagged + " 次，命中 " +
-          percent(s.holdout_hit) + "，同期基率 " + percent(s.holdout_base_rate) + "。" +
-          "样本只有约 " + Math.round(s.holdout_flagged / 5) + " 个独立的 5 天窗口，勉强过线，不是稳赚。";
+          "Out-of-sample (thresholds calibrated on pre-2015 data only): " + s.holdout_flagged + " signals, precision " +
+          percent(s.holdout_hit) + " against an unconditional base rate of " + percent(s.holdout_base_rate) + ". " +
+          "That is roughly " + Math.round(s.holdout_flagged / 5) + " non-overlapping 5-day windows, so the edge is marginal rather than robust.";
       })
-      .catch(() => { document.querySelector("#question").textContent = "cross.json 没有加载"; });
+      .catch(() => { document.querySelector("#question").textContent = "cross.json not available"; });
   </script>
 </body>
 </html>

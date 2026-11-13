@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>forecast-log · agent 评测台</title>
+  <title>forecast-log · agent evaluation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
@@ -48,18 +48,18 @@
 <body>
   <main>
     <header>
-      <h1>agent 评测台</h1>
-      <span class="sub" id="config">加载 artifacts/agent_eval_summary.json…</span>
+      <h1>Agent evaluation</h1>
+      <span class="sub" id="config">loading artifacts/agent_eval_summary.json…</span>
       <span class="sub" id="stamp"></span>
     </header>
     <div class="board">
       <div class="pane">
-        <div class="pane-head">同一批已结算的历史题，所有预测者都必须作答</div>
+        <div class="pane-head">Identical resolved questions; every forecaster answers all of them</div>
         <table>
           <thead>
             <tr>
-              <th>预测者</th><th>Brier</th><th>LogLoss</th><th>ECE</th>
-              <th>方向</th><th>$/条</th><th>p50 秒</th><th>工具</th><th>闸门</th>
+              <th>Forecaster</th><th>Brier</th><th>LogLoss</th><th>ECE</th>
+              <th>Directional hit</th><th>$/forecast</th><th>p50 (s)</th><th>Tool calls</th><th>Gate hits</th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -68,11 +68,11 @@
       </div>
       <aside>
         <div class="block">
-          <h2 id="picked">在左边点一行</h2>
+          <h2 id="picked">Pick a row on the left</h2>
           <table id="rel" class="fam"></table>
         </div>
         <div class="block">
-          <h2>按题型拆开（Brier，越低越好）</h2>
+          <h2>By question family · Brier, lower is better</h2>
           <table id="fams" class="fam"></table>
         </div>
         <div class="block note" id="notes"></div>
@@ -81,7 +81,7 @@
   </main>
   <script>
     const FAMILY = {
-      level: "高于今天", quantile: "高过 60 分位",
+      level: "spot level", quantile: "60th percentile",
       band_up: "+5%", band_down: "−5%",
     };
     let report = null, picked = null;
@@ -91,8 +91,8 @@
       if (name.includes("blind")) return "agent blind";
       if (name.startsWith("agent")) return "agent";
       if (name.startsWith("analogue")) return "analogue";
-      if (name.startsWith("base rate")) return "基率";
-      if (name.startsWith("constant")) return "常数 0.5";
+      if (name.startsWith("base rate")) return "base rate";
+      if (name.startsWith("constant")) return "constant (0.5)";
       return name;
     };
     const fmt = (value, digits = 4) => (value === undefined || value === null ? "—" : Number(value).toFixed(digits));
@@ -127,16 +127,16 @@
       const when = report.generated_at ? new Date(report.generated_at).toLocaleString("zh-CN") : "";
       document.querySelector("#stamp").textContent = when;
       document.querySelector("#foot").textContent =
-        `${report.n} 道题；实际发生率 ${pct(reference.observed_rate)}；` +
-        `始终答 0.5 的对照 Brier ${fmt((reference["constant_0.5"] || {}).brier)}`;
+        `${report.n} questions; realised resolution rate ${pct(reference.observed_rate)}; ` +
+        `constant-0.5 Brier ${fmt((reference["constant_0.5"] || {}).brier)}`;
     }
 
     function drawReliability() {
       if (!picked) return;
       const row = report.predictors[picked];
-      document.querySelector("#picked").textContent = `校准：${picked}`;
+      document.querySelector("#picked").textContent = `Reliability: ${picked}`;
       const table = document.querySelector("#rel");
-      let html = "<thead><tr><th>区间</th><th>n</th><th>说的</th><th>实际</th><th>偏差</th></tr></thead><tbody>";
+      let html = "<thead><tr><th>Probability bin</th><th>n</th><th>Mean forecast</th><th>Realised</th><th>Bias</th></tr></thead><tbody>";
       (row.reliability || []).forEach((bin) => {
         const gap = Math.abs(bin.mean_predicted - bin.observed);
         const width = Math.max(1, Math.round(gap * 260));
@@ -159,7 +159,7 @@
       const names = Object.keys(report.predictors).sort(
         (a, b) => report.predictors[a].brier - report.predictors[b].brier
       );
-      let html = "<thead><tr><th>预测者</th>" +
+      let html = "<thead><tr><th>Forecaster</th>" +
         families.map((family) => `<th>${FAMILY[family] || family}</th>`).join("") +
         "</tr></thead><tbody>";
       names.forEach((name) => {
@@ -175,14 +175,14 @@
 
     function drawNotes() {
       const rows = Object.entries(report.predictors);
-      const failures = rows.filter(([, row]) => row.failures).map(([name, row]) => `${name} 失败 ${row.failures} 次`);
-      const gates = rows.filter(([, row]) => row.gate_hits).map(([name, row]) => `${name} 被闸门拦 ${row.gate_hits} 次`);
+      const failures = rows.filter(([, row]) => row.failures).map(([name, row]) => `${name}: ${row.failures} failures`);
+      const gates = rows.filter(([, row]) => row.gate_hits).map(([name, row]) => `${name}: ${row.gate_hits} gate hits`);
       document.querySelector("#notes").innerHTML = [
-        "常数 0.5 是不带信息的对照；基率是只用「这道门槛历史上多久越过去一次」的对照；",
-        "类比模型是仓库原来那套状态类比；agent 是带工具的 LLM。",
-        "blind 那一行是同一个模型、同一批题，但把工具全部拿掉。",
-        failures.join("；"), gates.join("；"),
-        "题由价格历史自己生成，答案都已经揭晓，所以没有任何一道题需要等。",
+        "Constant 0.5 is the no-information control. Base rate is the unconditional hit rate of the same threshold.",
+        "Analogue model is the repo's state-analogue estimator; agent is an LLM with tool access.",
+        "Blind is the same model on the same questions with all tools removed: the ablation for tool value.",
+        failures.join("; "), gates.join("; "),
+        "Questions are generated from price history, so every outcome is already known: no waiting, no selection.",
       ].filter(Boolean).map((line) => `<div>${line}</div>`).join("");
     }
 
@@ -194,14 +194,14 @@
         picked = names.sort((a, b) => report.predictors[a].brier - report.predictors[b].brier)[0];
         const config = report.config || {};
         document.querySelector("#config").textContent =
-          `${config.symbol} · ${report.n} 道题 · ${config.model || "无模型"}`;
+          `${config.symbol} · ${report.n} questions · ${config.model || "no model"} · ${config.modes.join("/")}`;
         drawRows();
         drawReliability();
         drawFamilies();
         drawNotes();
       })
       .catch(() => {
-        document.querySelector("#config").textContent = "agent_eval_summary.json 没有加载：先跑 forecast-log agent-eval";
+        document.querySelector("#config").textContent = "agent_eval_summary.json not available: run forecast-log agent-eval";
       });
   </script>
 </body>

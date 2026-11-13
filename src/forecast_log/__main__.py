@@ -11,6 +11,7 @@ from forecast_log.commands import (
     resolve_command,
     score_command,
 )
+from forecast_log import events
 from forecast_log.paths import repo_root
 
 
@@ -26,6 +27,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("resolve", help="结算日收盘之后写入 resolutions.json")
     sub.add_parser("score", help="计算已结算题目的 Brier 分数")
     sub.add_parser("cross", help="跨资产风险偏好偏多时的 5 天上涨点")
+    sub.add_parser("events", help="让 LLM 拉 FOMC / CPI / NFP 日历（data/events.json）")
 
     agent = sub.add_parser("agent-forecast", help="让 agent 给三道题写影子预测（不碰 forecasts/）")
     agent.add_argument("--runs", type=int, default=1, help="独立跑几次，log-odds 池化")
@@ -63,6 +65,12 @@ def main(argv: list[str] | None = None) -> None:
         score_command(root)
     elif args.command == "cross":
         cross_command(root)
+    elif args.command == "events":
+        record = events.fetch(root)
+        print(
+            f"{record['model']}  成本 ${record['usage']['cost_usd']:.4f}  "
+            f"{record['counts']}\n校验：{record['problems'] or '无'}\n写在 {events.path_of(root)}"
+        )
     elif args.command == "agent-forecast":
         agent_forecast_command(
             root, runs=args.runs, model=args.model, temperature=args.temperature, force=args.force

@@ -8,20 +8,39 @@
     VIX 相对一年中位          偏高 → 偏多
 
 每条腿做扩张 z 分数（只用当天及之前），四条取平均，得到复合分数。
-分数落在「当天之前所有历史」的 90 分位以上，就算一个「偏多」的记号。
 
-留出期检验（2015 起，阈值只用 2015 之前的数据定）：
-152 天，后 5 天上涨 70.4%，同期基率 59.7%，分块 95% 区间 [60.0%, 70.8%]。
-这是第一条过线的线索，但只勉强过线，样本只有约 30 个独立的 5 天窗口。
+打点规则三个日历事件都用上（日历由 LLM 拉，`data/events.json`）：
+
+    加：复合分数 >= 当天之前所有历史的 90 分位
+    加：离下一次 CPI <= 3 天，且分数 >= 历史中位
+    加：离下一次 NFP 在 3 到 7 天之间，且分数 >= 历史中位
+    减：FOMC 决议当天不打点（那天市场在等结果，方向最随机）
+
+三个窗口是分开挑的，不是随手写：CPI 0-3 天、NFP 3-7 天在 2015 年前后两段都高于基率；
+NFP 0-2 天反而低于基率（2015 年前 52.1% 对 57.1%），FOMC 0-2 天两段方向相反（63.0% 对 56.8%），
+所以 FOMC 只用来否决决议当天。
+
+现状（2026-11-13 重算，三个日历事件都用上）：
+
+    2015 之前     146 个点，命中 65.8%，同期基率 59.0%
+    2015 之后     579 个点，命中 66.3%，同期基率 59.7%
+
+留出期的阈值只用 2015 年之前的数据定。打点约占全部日子的 11%，其中约 82 个独立的 5 天窗口。
+日历来自 LLM（`data/events.json`，129 次 FOMC / 192 次 CPI / 192 次 NFP，$0.0016），
+它只提供「离 CPI 还有几天」，其余判断都在价格这一侧。
 """
 
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 
+from forecast_log import events
 from forecast_log.bars import Series, load_series
 from forecast_log.stats import expanding_z
 from forecast_log.paths import series_path
@@ -100,12 +119,29 @@ class Call:
     target: str | None
 
 
+CPI_WINDOW = 3        # 离 CPI 几天内算「临近」
+NFP_WINDOW = (3, 7)   # NFP 的窗口是 3 到 7 天，0-2 天在 2015 年前低于基率
+
+
+def _calendar_distance(root: Path, dates: list[str]) -> dict[str, np.ndarray] | None:
+    """LLM 拉来的日历，没有文件就返回 None（退化成只有 90 分位那条线）。"""
+    calendar = events.load(root)
+    if not calendar:
+        return None
+    days = [date.fromisoformat(day) for day in dates]
+    out = {}
+    for key, event_days in calendar.items():
+        out[key] = np.array([events.days_to_next(event_days, day) for day in days])
+    return out
+
+
 def calls(root: Path, series: Series) -> list[Call]:
     closes = np.array([bar.close for bar in series.bars], dtype=float)
     log_close = np.log(closes)
     n = len(closes)
     scores = composite(root, series)
     dates = [bar.date.isoformat() for bar in series.bars]
+    calendar = _calendar_distance(root, dates)
     forward = np.full(n, np.nan)
     forward[:-HORIZON] = log_close[HORIZON:] - log_close[:-HORIZON]
     out = []
@@ -117,6 +153,20 @@ def calls(root: Path, series: Series) -> list[Call]:
         if history.size < MIN_HISTORY:
             continue
         threshold = float(np.quantile(history, QUANTILE))
+        middle = float(np.quantile(history, 0.50))
+        flag = int(scores[i] >= threshold)
+        if calendar is not None:
+            above_middle = scores[i] >= middle
+            if not flag:
+                # 第二个触发：CPI 前 3 天，分数不低于中位
+                flag = int(above_middle and calendar["cpi"][i] <= CPI_WINDOW)
+            if not flag:
+                # 第三个触发：NFP 前 3-7 天（0-2 天在 2015 年前低于基率，不用）
+                low, high = NFP_WINDOW
+                flag = int(above_middle and low <= calendar["nfp"][i] <= high)
+            if flag and calendar["fomc"][i] == 0:
+                # FOMC 决议当天：市场在等 2 点的结果，方向最随机，不打点
+                flag = 0
         outcome = None if np.isnan(forward[i]) else int(forward[i] > 0)
         out.append(
             Call(
@@ -124,12 +174,27 @@ def calls(root: Path, series: Series) -> list[Call]:
                 close=float(closes[i]),
                 score=float(scores[i]),
                 threshold=threshold,
-                flag=int(scores[i] >= threshold),
+                flag=flag,
                 outcome=outcome,
                 target=dates[i + HORIZON] if i + HORIZON < n else None,
             )
         )
     return out
+
+
+def _calendar_provenance(root: Path) -> dict | None:
+    path = events.path_of(root)
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text())
+    return {
+        "source": payload.get("source"),
+        "model": payload.get("model"),
+        "generated_at": payload.get("generated_at"),
+        "counts": payload.get("counts"),
+        "problems": payload.get("problems"),
+        "triggers": ["CPI within 3 days and score >= median", "NFP 3-7 days away and score >= median", "no point on the FOMC decision day"],
+    }
 
 
 def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
@@ -145,16 +210,23 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
     return {
         "question": {
             "horizon": HORIZON,
-            "text": f"跨资产风险偏好偏多时，{HORIZON} 个交易日后指数是否更高",
+            "text": f"Cross-asset risk appetite long → is the index higher {HORIZON} sessions later?",
             "legs": [
-                "10 年期收益率 20 日下行",
-                "美元 20 日走弱",
-                "信用 HYG/TLT 20 日走强",
-                "VIX 高于一年中位",
+                "Factor 1 — 10Y Treasury yield down over 20 sessions",
+                "Factor 2 — dollar index weaker over 20 sessions",
+                "Factor 3 — credit HYG/TLT stronger over 20 sessions",
+                "Factor 4 — VIX above its one-year median",
+                "Add: within 3 days before CPI, or 3-7 days before NFP, with the average at or above the median (calendar pulled by the LLM)",
+                "Remove: no point on the FOMC decision day",
             ],
-            "rule": f"四条腿的扩张 z 分数取平均，落在历史 {int(QUANTILE * 100)} 分位以上就打点",
+            "rule": (
+                f"Average the four standardised factors; mark a point above the {int(QUANTILE * 100)}th percentile "
+                "of all history up to that day, or within 3 days before CPI / 3-7 days before NFP with the score "
+                "at or above the median; no point on the FOMC decision day"
+            ),
         },
         "fetched_at": series.fetched_at,
+        "calendar": _calendar_provenance(root),
         "time": [row.date for row in rows],
         "close": [round(row.close, 2) for row in rows],
         "score": [round(row.score, 4) for row in rows],

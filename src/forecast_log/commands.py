@@ -16,6 +16,7 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
+from forecast_log.cross import document as cross_document
 from forecast_log.direction import document as direction_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
@@ -91,6 +92,25 @@ def backtest_command(root: Path) -> dict:
     if not ref["matches"]:
         raise SystemExit(1)
     return report
+
+
+def cross_command(root: Path) -> dict:
+    """跨资产风险偏好偏多时的 5 天上涨点（artifacts/cross.json）。"""
+    ndx = load_series(series_path(root, "^NDX"))
+    document = cross_document(root, ndx)
+    path = root / "artifacts" / "cross.json"
+    write_report(path, document, indent=None)
+    stats = document["summary"]
+    print(
+        f"{document['question']['text']}\n"
+        f"全部 {stats['n']} 天：打点 {stats['flagged']} 个，命中 {stats['hit']:.1%}，基率 {stats['base_rate']:.1%}\n"
+        f"留出期（{stats['holdout_from']} 起）{stats['holdout_n']} 天：打点 {stats['holdout_flagged']} 个，"
+        f"命中 {stats['holdout_hit']:.1%}，基率 {stats['holdout_base_rate']:.1%}\n"
+        f"最新 {document['latest']['date']}：分数 {document['latest']['score']:.3f}，"
+        f"阈值 {document['latest']['threshold']:.3f}，{'打点' if document['latest']['flag'] else '不打点'}\n"
+        f"写在 {path}"
+    )
+    return document
 
 
 def direction_command(root: Path) -> dict:

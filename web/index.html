@@ -66,6 +66,7 @@
     .readout i { display: inline-block; width: 22px; height: 0; margin-right: 8px; vertical-align: middle; }
     .readout .actual { border-top: 2px solid var(--blue); }
     .readout .forecast { border-top: 2px dashed var(--ochre); }
+    .readout .naive { border-top: 2px dotted #6b6459; }
     #range-label { margin-left: auto; color: var(--muted); }
     #chart {
       flex: 1;
@@ -175,6 +176,7 @@
       <span><span id="leg-prev-label">昨收</span> <b id="leg-prev">—</b></span>
       <span><i class="forecast"></i><span id="leg-band-label">今日预测区间</span> <b id="leg-forecast">—</b></span>
       <span><i class="actual"></i><span id="leg-actual-label">今日实际</span> <b id="leg-actual">—</b></span>
+      <span id="leg-naive"><i class="naive"></i>「不动」对照</span>
       <span id="leg-error"></span>
       <span id="tomorrow"></span>
       <span id="leg-skill"></span>
@@ -215,7 +217,7 @@
   </main>
   <script>
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "版本 r18 · 标题改成「预测N天 vs 实际」";
+    const BUILD = "版本 r19 · 两条虚线的图例";
 
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
@@ -296,9 +298,9 @@
     });
     // 「不动」对照：把发出日的收盘直接搬到目标日，看它是不是也贴着实际。
     const naiveSeries = chart.addLineSeries({
-      color: "rgba(94,88,78,0.55)",
+      color: "rgba(94,88,78,0.75)",
       lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dotted,
+      lineStyle: LightweightCharts.LineStyle.LargeDashed,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
@@ -574,7 +576,7 @@
           (function () {
             const pair = lineCompare();
             if (!pair) return "";
-            return "\n把发出日的收盘直接搬过去（灰虚线）：平均差 " + pair.flatGap.toFixed(2) +
+            return "\n把发出日的收盘直接搬过去（灰色长虚线）：平均差 " + pair.flatGap.toFixed(2) +
               " 点、和实际相关 " + pair.flatCorr.toFixed(3) + "；模型 " + pair.modelGap.toFixed(2) +
               " 点、相关 " + pair.modelCorr.toFixed(3) + "。趋势是序列自己的，不是模型给的。";
           })()
@@ -796,6 +798,7 @@
       showNaive = !showNaive;
       event.currentTarget.classList.toggle("active", showNaive);
       naiveSeries.applyOptions({ visible: showNaive });
+      document.querySelector("#leg-naive").style.display = showNaive ? "" : "none";
     });
 
     document.querySelector("#lad-close").addEventListener("click", () => {

@@ -1,0 +1,75 @@
+"""An auditable forecasting agent: gated tools, a locked answer, a trace, a Brier score."""
+
+from forecast_log.agent.ensemble import logit, pool, run_ensemble, sigmoid, spread
+from forecast_log.agent.eval import (
+    AgentPredictor,
+    AnaloguePredictor,
+    BaseRatePredictor,
+    ConstantPredictor,
+    LabeledQuestion,
+    Prediction,
+    build_questions,
+    evaluate,
+    render,
+    settlement_questions,
+    write_report,
+)
+from forecast_log.agent.gate import AsOf, LookAheadError
+from forecast_log.agent.llm import (
+    LLM,
+    LLMError,
+    OpenAICompatLLM,
+    Price,
+    Reply,
+    ScriptedLLM,
+    ToolCall,
+    Usage,
+)
+from forecast_log.agent.loop import (
+    Agent,
+    AgentError,
+    AnswerRejected,
+    Evidence,
+    ForecastAnswer,
+    QuestionView,
+    Trace,
+)
+from forecast_log.agent.tools import Toolbox, ToolOutcome
+
+__all__ = [
+    "Agent",
+    "AgentError",
+    "AgentPredictor",
+    "AnaloguePredictor",
+    "AnswerRejected",
+    "AsOf",
+    "BaseRatePredictor",
+    "ConstantPredictor",
+    "Evidence",
+    "ForecastAnswer",
+    "LLM",
+    "LLMError",
+    "LabeledQuestion",
+    "LookAheadError",
+    "OpenAICompatLLM",
+    "Prediction",
+    "Price",
+    "QuestionView",
+    "Reply",
+    "ScriptedLLM",
+    "ToolCall",
+    "ToolOutcome",
+    "Toolbox",
+    "Trace",
+    "Usage",
+    "build_questions",
+    "evaluate",
+    "logit",
+    "pool",
+    "render",
+    "run_ensemble",
+    "settlement_questions",
+    "sigmoid",
+    "spread",
+    "write_report",
+]

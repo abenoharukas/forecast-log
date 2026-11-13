@@ -1,0 +1,723 @@
+[
+  {
+    "question_id": "vxn-2026-11-20-gt-30",
+    "question": "^VXN daily Close > 30",
+    "as_of": {
+      "session": "2026-11-11",
+      "at": "2026-11-11T16:15:00-05:00"
+    },
+    "model": "deepseek-chat@api.deepseek.com",
+    "answer": {
+      "probability": 0.32,
+      "rationale": "Unconditional base rate for ^VXN closing above 30 seven sessions later is 21%; the state-analogue model gives 27% with a flat median path (~26.7). I move above both because the current regime is unusually jumpy: VXN closed above 30 four times in the last eight sessions (peaking at 38.26 on 2026-11-05) and needs only a ~12% rise from 26.74 to clear the threshold, while 21-session realized vol is elevated. I stop at 0.32 rather than higher because the last two closes fell back to 28.6/26.7, the analogue median path shows no drift upward, and a 7-session window is short. No news corpus or prediction-market quote was available, so this rests on price data alone.",
+      "anchored_on": "analogue",
+      "evidence": [
+        {
+          "date": "2026-11-11",
+          "source": "series_stats",
+          "note": "last 26.74, z=+0.67 vs 252d, 21d realized vol 2.13 annualized; p90 of window is 29.02"
+        },
+        {
+          "date": "2026-11-02",
+          "source": "base_rate",
+          "note": "unconditional 7-session hit rate for >30 is 0.2109 over 6483 sessions"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "analogue_forecast",
+          "note": "analogue probability 0.27, median path flat near 26.7 through 7 sessions"
+        },
+        {
+          "date": "2026-11-05",
+          "source": "price_history",
+          "note": "recent closes: 30.89, 30.53, 25.08, 38.26, 34.02, 28.97, 28.57, 26.74 — high two-way volatility near threshold"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "market_implied",
+          "note": "no prediction-market quote recorded (available=false)"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "search_news",
+          "note": "news corpus absent; empty result, no documentary evidence"
+        }
+      ]
+    },
+    "rejections": [],
+    "error": null,
+    "usage": {
+      "prompt_tokens": 13196,
+      "completion_tokens": 1065,
+      "cached_tokens": 11392,
+      "cost_usd": 0.001271,
+      "latency_s": 8.031
+    },
+    "tool_calls": 7,
+    "gate_hits": 0,
+    "turns": [
+      {
+        "index": 0,
+        "content": "I'll start by checking the current state of the series.",
+        "tool_calls": [
+          {
+            "name": "series_stats",
+            "arguments": {
+              "symbol": "^VXN",
+              "window": 252
+            },
+            "parse_error": ""
+          },
+          {
+            "name": "base_rate",
+            "arguments": {
+              "symbol": "^VXN",
+              "threshold": 30,
+              "horizon": 7
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "series_stats",
+            "error": null,
+            "gate_hit": false
+          },
+          {
+            "name": "base_rate",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1696,
+          "completion_tokens": 129,
+          "cached_tokens": 1408,
+          "cost_usd": 0.000174,
+          "latency_s": 0.833
+        }
+      },
+      {
+        "index": 1,
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "analogue_forecast",
+            "arguments": {
+              "horizon": 7,
+              "symbol": "^VXN",
+              "threshold": 30
+            },
+            "parse_error": ""
+          },
+          {
+            "name": "price_history",
+            "arguments": {
+              "symbol": "^VXN",
+              "sessions": 30
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "analogue_forecast",
+            "error": null,
+            "gate_hit": false
+          },
+          {
+            "name": "price_history",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2056,
+          "completion_tokens": 122,
+          "cached_tokens": 1792,
+          "cost_usd": 0.000175,
+          "latency_s": 1.004
+        }
+      },
+      {
+        "index": 2,
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "search_news",
+            "arguments": {
+              "query": "VIX volatility Nasdaq market outlook",
+              "limit": 10
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_news",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 3034,
+          "completion_tokens": 59,
+          "cached_tokens": 2176,
+          "cost_usd": 0.000326,
+          "latency_s": 1.01
+        }
+      },
+      {
+        "index": 3,
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "market_implied",
+            "arguments": {
+              "question_id": "vxn-2026-11-20-gt-30"
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "market_implied",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 3154,
+          "completion_tokens": 52,
+          "cached_tokens": 2944,
+          "cost_usd": 0.000163,
+          "latency_s": 0.919
+        }
+      },
+      {
+        "index": 4,
+        "content": "No news corpus, no market quote — price data only.\n\nCurrent: 26.74, z=+0.67, 21d realized vol elevated (2.13 annualized in vol-of-vol terms), and the last two weeks show violent swings (25.08 → 38.26 → 34.02 → 28.97 → 26.74). VXN crossed 30 on 4 of the last 8 sessions. Base rate 21%, analogue 27%. Given the recent regime's fat tails (a 38 print five sessions ago, and it needs only ~+12% in 7 sessions), I lean above both, but not extreme for a 7-session horizon.",
+        "tool_calls": [
+          {
+            "name": "submit_forecast",
+            "arguments": {
+              "probability": 0.32,
+              "rationale": "Unconditional base rate for ^VXN closing above 30 seven sessions later is 21%; the state-analogue model gives 27% with a flat median path (~26.7). I move above both because the current regime is unusually jumpy: VXN closed above 30 four times in the last eight sessions (peaking at 38.26 on 2026-11-05) and needs only a ~12% rise from 26.74 to clear the threshold, while 21-session realized vol is elevated. I stop at 0.32 rather than higher because the last two closes fell back to 28.6/26.7, the analogue median path shows no drift upward, and a 7-session window is short. No news corpus or prediction-market quote was available, so this rests on price data alone.",
+              "anchored_on": "analogue",
+              "evidence": [
+                {
+                  "date": "2026-11-11",
+                  "source": "series_stats",
+                  "note": "last 26.74, z=+0.67 vs 252d, 21d realized vol 2.13 annualized; p90 of window is 29.02"
+                },
+                {
+                  "date": "2026-11-02",
+                  "source": "base_rate",
+                  "note": "unconditional 7-session hit rate for >30 is 0.2109 over 6483 sessions"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "analogue_forecast",
+                  "note": "analogue probability 0.27, median path flat near 26.7 through 7 sessions"
+                },
+                {
+                  "date": "2026-11-05",
+                  "source": "price_history",
+                  "note": "recent closes: 30.89, 30.53, 25.08, 38.26, 34.02, 28.97, 28.57, 26.74 — high two-way volatility near threshold"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "market_implied",
+                  "note": "no prediction-market quote recorded (available=false)"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "search_news",
+                  "note": "news corpus absent; empty result, no documentary evidence"
+                }
+              ]
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [],
+        "usage": {
+          "prompt_tokens": 3256,
+          "completion_tokens": 703,
+          "cached_tokens": 3072,
+          "cost_usd": 0.000433,
+          "latency_s": 4.267
+        }
+      }
+    ]
+  },
+  {
+    "question_id": "vxn-2026-11-20-gt-30",
+    "question": "^VXN daily Close > 30",
+    "as_of": {
+      "session": "2026-11-11",
+      "at": "2026-11-11T16:15:00-05:00"
+    },
+    "model": "deepseek-chat@api.deepseek.com",
+    "answer": {
+      "probability": 0.27,
+      "rationale": "Unconditional 7-session base rate for VXN closing above 30 is 21.1%. The state-analogue model, which conditions on today's elevated-and-rising vol state (26.74, z=+0.67, +26% over 21 sessions, p90 of the year at 29.0), gives 27% with a flat median path that stays below 30. I trust the analogue number here because the current state is clearly not average, but I don't go higher: 7 sessions is short, the median path never clears 30, and no prediction-market quote or news corpus exists to confirm a shift.",
+      "anchored_on": "analogue",
+      "evidence": [
+        {
+          "date": "2026-11-11",
+          "source": "series_stats",
+          "note": "VXN last 26.74, 1y mean 24.30, p90 29.02, z=+0.67, +26.5% over 21 sessions"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "base_rate",
+          "note": "unconditional 7-session rate above 30 = 0.2109 over 6483 sessions"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "analogue_forecast",
+          "note": "200-analogue probability 0.27; median 7-session path ~26.7, never above 30"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "market_implied",
+          "note": "no prediction-market quote recorded (available=false)"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "search_news",
+          "note": "no news corpus configured; returned zero documents"
+        }
+      ]
+    },
+    "rejections": [],
+    "error": null,
+    "usage": {
+      "prompt_tokens": 8800,
+      "completion_tokens": 895,
+      "cached_tokens": 7808,
+      "cost_usd": 0.000872,
+      "latency_s": 6.48
+    },
+    "tool_calls": 6,
+    "gate_hits": 0,
+    "turns": [
+      {
+        "index": 0,
+        "content": "I'll start by gathering the key statistics and base rate.",
+        "tool_calls": [
+          {
+            "name": "series_stats",
+            "arguments": {
+              "symbol": "^VXN",
+              "window": 252
+            },
+            "parse_error": ""
+          },
+          {
+            "name": "base_rate",
+            "arguments": {
+              "symbol": "^VXN",
+              "threshold": 30,
+              "horizon": 7
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "series_stats",
+            "error": null,
+            "gate_hit": false
+          },
+          {
+            "name": "base_rate",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1696,
+          "completion_tokens": 129,
+          "cached_tokens": 1536,
+          "cost_usd": 0.000142,
+          "latency_s": 1.16
+        }
+      },
+      {
+        "index": 1,
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "analogue_forecast",
+            "arguments": {
+              "symbol": "^VXN",
+              "threshold": 30,
+              "horizon": 7
+            },
+            "parse_error": ""
+          },
+          {
+            "name": "market_implied",
+            "arguments": {
+              "question_id": "vxn-2026-11-20-gt-30"
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "analogue_forecast",
+            "error": null,
+            "gate_hit": false
+          },
+          {
+            "name": "market_implied",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2056,
+          "completion_tokens": 118,
+          "cached_tokens": 1792,
+          "cost_usd": 0.000174,
+          "latency_s": 1.054
+        }
+      },
+      {
+        "index": 2,
+        "content": "",
+        "tool_calls": [
+          {
+            "name": "search_news",
+            "arguments": {
+              "query": "VIX volatility Nasdaq market outlook November 2026",
+              "limit": 6
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_news",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2460,
+          "completion_tokens": 63,
+          "cached_tokens": 2048,
+          "cost_usd": 0.000199,
+          "latency_s": 0.914
+        }
+      },
+      {
+        "index": 3,
+        "content": "No news corpus and no market quote; price data only.\n\nVXN last 26.74, z=+0.67 vs 1y mean, 21-session change +26% (vol elevated and rising), p90 of the year 29.0. Base rate 21.1%; analogue model 27% with a flat median path (~26.7). The analogue model conditions on the current elevated/rising state, which is more informative than the unconditional rate here, but VXN sitting just below 30 with high recent realized vol means a modest upward drift could cross it — yet 7 sessions is short and the median path stays below 30.",
+        "tool_calls": [
+          {
+            "name": "submit_forecast",
+            "arguments": {
+              "probability": 0.27,
+              "rationale": "Unconditional 7-session base rate for VXN closing above 30 is 21.1%. The state-analogue model, which conditions on today's elevated-and-rising vol state (26.74, z=+0.67, +26% over 21 sessions, p90 of the year at 29.0), gives 27% with a flat median path that stays below 30. I trust the analogue number here because the current state is clearly not average, but I don't go higher: 7 sessions is short, the median path never clears 30, and no prediction-market quote or news corpus exists to confirm a shift.",
+              "anchored_on": "analogue",
+              "evidence": [
+                {
+                  "date": "2026-11-11",
+                  "source": "series_stats",
+                  "note": "VXN last 26.74, 1y mean 24.30, p90 29.02, z=+0.67, +26.5% over 21 sessions"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "base_rate",
+                  "note": "unconditional 7-session rate above 30 = 0.2109 over 6483 sessions"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "analogue_forecast",
+                  "note": "200-analogue probability 0.27; median 7-session path ~26.7, never above 30"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "market_implied",
+                  "note": "no prediction-market quote recorded (available=false)"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "search_news",
+                  "note": "no news corpus configured; returned zero documents"
+                }
+              ]
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [],
+        "usage": {
+          "prompt_tokens": 2588,
+          "completion_tokens": 585,
+          "cached_tokens": 2432,
+          "cost_usd": 0.000357,
+          "latency_s": 3.352
+        }
+      }
+    ]
+  },
+  {
+    "question_id": "vxn-2026-11-20-gt-30",
+    "question": "^VXN daily Close > 30",
+    "as_of": {
+      "session": "2026-11-11",
+      "at": "2026-11-11T16:15:00-05:00"
+    },
+    "model": "deepseek-chat@api.deepseek.com",
+    "answer": {
+      "probability": 0.31,
+      "rationale": "Unconditional base rate for a 7-session close above 30 is 21.1% (6483 sessions since 2001); the state-analogue model gives 27% with a flat-to-slightly-down median path from 26.74. The recent regime is materially more volatile than the long-run norm — 4 of the last 8 closes were above 30 (peaks 38.26 on 2026-11-05 and 30.89 on 2026-11-02), and the 21-session realized vol is elevated — so I trust the analogue over the unconditional rate here. I move only modestly above 27% because the index has now fallen three consecutive sessions (34.02 → 28.97 → 28.57 → 26.74) and the median path implies mean reversion, so a +12% move in seven sessions is plausible but not likely. No news corpus and no market quote were available, so this rests on price data alone.",
+      "anchored_on": "analogue",
+      "evidence": [
+        {
+          "date": "2026-11-11",
+          "source": "series_stats",
+          "note": "last close 26.74, 252d mean 24.30, p90 29.02, z=0.67, 21d realized vol elevated"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "price_history",
+          "note": "30 sessions: 4 of last 8 closes above 30 (30.89, 30.53, 38.26, 34.02); three straight declines into 26.74"
+        },
+        {
+          "date": "2026-11-02",
+          "source": "base_rate",
+          "note": "unconditional 7-session hit rate for >30 is 0.2109 over 6483 sessions"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "analogue_forecast",
+          "note": "state-analogue probability 0.27, n=200, median path stays near 26.7"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "search_news",
+          "note": "empty: no news corpus configured; price data only"
+        },
+        {
+          "date": "2026-11-11",
+          "source": "market_implied",
+          "note": "available=false, no prediction-market quote recorded"
+        }
+      ]
+    },
+    "rejections": [],
+    "error": null,
+    "usage": {
+      "prompt_tokens": 13771,
+      "completion_tokens": 1130,
+      "cached_tokens": 12032,
+      "cost_usd": 0.001298,
+      "latency_s": 8.174
+    },
+    "tool_calls": 7,
+    "gate_hits": 0,
+    "turns": [
+      {
+        "index": 0,
+        "content": "I'll start by getting the current state of the series.",
+        "tool_calls": [
+          {
+            "name": "series_stats",
+            "arguments": {
+              "symbol": "^VXN",
+              "window": 252
+            },
+            "parse_error": ""
+          },
+          {
+            "name": "price_history",
+            "arguments": {
+              "symbol": "^VXN",
+              "sessions": 30
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "series_stats",
+            "error": null,
+            "gate_hit": false
+          },
+          {
+            "name": "price_history",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 1696,
+          "completion_tokens": 113,
+          "cached_tokens": 1536,
+          "cost_usd": 0.000135,
+          "latency_s": 0.974
+        }
+      },
+      {
+        "index": 1,
+        "content": "Now the base rate and analogue model.",
+        "tool_calls": [
+          {
+            "name": "base_rate",
+            "arguments": {
+              "symbol": "^VXN",
+              "threshold": 30.0,
+              "horizon": 7
+            },
+            "parse_error": ""
+          },
+          {
+            "name": "analogue_forecast",
+            "arguments": {
+              "symbol": "^VXN",
+              "threshold": 30.0,
+              "horizon": 7
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "base_rate",
+            "error": null,
+            "gate_hit": false
+          },
+          {
+            "name": "analogue_forecast",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 2566,
+          "completion_tokens": 149,
+          "cached_tokens": 1792,
+          "cost_usd": 0.000329,
+          "latency_s": 1.314
+        }
+      },
+      {
+        "index": 2,
+        "content": "Let me check news for any recent volatility catalysts.",
+        "tool_calls": [
+          {
+            "name": "search_news",
+            "arguments": {
+              "query": "VXN Nasdaq volatility index spike",
+              "limit": 10
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "search_news",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 3045,
+          "completion_tokens": 68,
+          "cached_tokens": 2688,
+          "cost_usd": 0.000204,
+          "latency_s": 0.858
+        }
+      },
+      {
+        "index": 3,
+        "content": "No news corpus available. Let me check the market-implied price.",
+        "tool_calls": [
+          {
+            "name": "market_implied",
+            "arguments": {
+              "question_id": "vxn-2026-11-20-gt-30"
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [
+          {
+            "name": "market_implied",
+            "error": null,
+            "gate_hit": false
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 3174,
+          "completion_tokens": 66,
+          "cached_tokens": 2944,
+          "cost_usd": 0.000175,
+          "latency_s": 1.15
+        }
+      },
+      {
+        "index": 4,
+        "content": "No market quote, no news. Evidence is price-only.\n\nCurrent VXN 26.74, needs >30 (+12.2%) in 7 sessions. Recent realized volatility is high — the index has swung 25→38→27 within a week, with 4 of the last 8 sessions above 30. Base rate 21%, analogue 27%. The recent regime is clearly more volatile than the long-run average (mean 24.3, p90 29.0), and the index has repeatedly crossed 30 in the past month, so the unconditional base rate understates the current chance. But the median path suggests mean reversion down, and VXN has fallen three straight sessions. I'll sit modestly above the analogue.",
+        "tool_calls": [
+          {
+            "name": "submit_forecast",
+            "arguments": {
+              "probability": 0.31,
+              "rationale": "Unconditional base rate for a 7-session close above 30 is 21.1% (6483 sessions since 2001); the state-analogue model gives 27% with a flat-to-slightly-down median path from 26.74. The recent regime is materially more volatile than the long-run norm — 4 of the last 8 closes were above 30 (peaks 38.26 on 2026-11-05 and 30.89 on 2026-11-02), and the 21-session realized vol is elevated — so I trust the analogue over the unconditional rate here. I move only modestly above 27% because the index has now fallen three consecutive sessions (34.02 → 28.97 → 28.57 → 26.74) and the median path implies mean reversion, so a +12% move in seven sessions is plausible but not likely. No news corpus and no market quote were available, so this rests on price data alone.",
+              "anchored_on": "analogue",
+              "evidence": [
+                {
+                  "date": "2026-11-11",
+                  "source": "series_stats",
+                  "note": "last close 26.74, 252d mean 24.30, p90 29.02, z=0.67, 21d realized vol elevated"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "price_history",
+                  "note": "30 sessions: 4 of last 8 closes above 30 (30.89, 30.53, 38.26, 34.02); three straight declines into 26.74"
+                },
+                {
+                  "date": "2026-11-02",
+                  "source": "base_rate",
+                  "note": "unconditional 7-session hit rate for >30 is 0.2109 over 6483 sessions"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "analogue_forecast",
+                  "note": "state-analogue probability 0.27, n=200, median path stays near 26.7"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "search_news",
+                  "note": "empty: no news corpus configured; price data only"
+                },
+                {
+                  "date": "2026-11-11",
+                  "source": "market_implied",
+                  "note": "available=false, no prediction-market quote recorded"
+                }
+              ]
+            },
+            "parse_error": ""
+          }
+        ],
+        "tool_results": [],
+        "usage": {
+          "prompt_tokens": 3290,
+          "completion_tokens": 734,
+          "cached_tokens": 3072,
+          "cost_usd": 0.000455,
+          "latency_s": 3.877
+        }
+      }
+    ]
+  }
+]

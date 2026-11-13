@@ -1,0 +1,71 @@
+{
+  "question_id": "vxn-2026-11-20-gt-30",
+  "kind": "shadow forecast; the locked record is forecasts/<id>.json",
+  "recorded_at": "2026-11-13T03:37:16-05:00",
+  "as_of": {
+    "session": "2026-11-11",
+    "at": "2026-11-11T16:15:00-05:00"
+  },
+  "probability": 0.299537,
+  "method": {
+    "name": "agent_ensemble",
+    "model": "deepseek-chat@api.deepseek.com",
+    "runs": 3,
+    "run_probabilities": [
+      0.32,
+      0.27,
+      0.31
+    ],
+    "pooling": "mean log-odds",
+    "spread_logit": 0.1043,
+    "max_steps": 8,
+    "temperature": 0.7
+  },
+  "answer": {
+    "probability": 0.32,
+    "rationale": "Unconditional base rate for ^VXN closing above 30 seven sessions later is 21%; the state-analogue model gives 27% with a flat median path (~26.7). I move above both because the current regime is unusually jumpy: VXN closed above 30 four times in the last eight sessions (peaking at 38.26 on 2026-11-05) and needs only a ~12% rise from 26.74 to clear the threshold, while 21-session realized vol is elevated. I stop at 0.32 rather than higher because the last two closes fell back to 28.6/26.7, the analogue median path shows no drift upward, and a 7-session window is short. No news corpus or prediction-market quote was available, so this rests on price data alone.",
+    "anchored_on": "analogue",
+    "evidence": [
+      {
+        "date": "2026-11-11",
+        "source": "series_stats",
+        "note": "last 26.74, z=+0.67 vs 252d, 21d realized vol 2.13 annualized; p90 of window is 29.02"
+      },
+      {
+        "date": "2026-11-02",
+        "source": "base_rate",
+        "note": "unconditional 7-session hit rate for >30 is 0.2109 over 6483 sessions"
+      },
+      {
+        "date": "2026-11-11",
+        "source": "analogue_forecast",
+        "note": "analogue probability 0.27, median path flat near 26.7 through 7 sessions"
+      },
+      {
+        "date": "2026-11-05",
+        "source": "price_history",
+        "note": "recent closes: 30.89, 30.53, 25.08, 38.26, 34.02, 28.97, 28.57, 26.74 — high two-way volatility near threshold"
+      },
+      {
+        "date": "2026-11-11",
+        "source": "market_implied",
+        "note": "no prediction-market quote recorded (available=false)"
+      },
+      {
+        "date": "2026-11-11",
+        "source": "search_news",
+        "note": "news corpus absent; empty result, no documentary evidence"
+      }
+    ]
+  },
+  "locked_probability": 0.315,
+  "usage": {
+    "prompt_tokens": 35767,
+    "completion_tokens": 3090,
+    "cost_usd": 0.003442,
+    "latency_s": 22.68492
+  },
+  "tool_calls": 20,
+  "gate_hits": 0,
+  "trace_ref": "artifacts/agent/traces/vxn-2026-11-20-gt-30.json"
+}

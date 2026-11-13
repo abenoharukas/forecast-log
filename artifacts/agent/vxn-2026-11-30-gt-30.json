@@ -1,0 +1,66 @@
+{
+  "question_id": "vxn-2026-11-30-gt-30",
+  "kind": "shadow forecast; the locked record is forecasts/<id>.json",
+  "recorded_at": "2026-11-13T03:37:40-05:00",
+  "as_of": {
+    "session": "2026-11-11",
+    "at": "2026-11-11T16:15:00-05:00"
+  },
+  "probability": 0.255736,
+  "method": {
+    "name": "agent_ensemble",
+    "model": "deepseek-chat@api.deepseek.com",
+    "runs": 3,
+    "run_probabilities": [
+      0.28,
+      0.22,
+      0.27
+    ],
+    "pooling": "mean log-odds",
+    "spread_logit": 0.1411,
+    "max_steps": 8,
+    "temperature": 0.7
+  },
+  "answer": {
+    "probability": 0.28,
+    "rationale": "Unconditional base rate for close >30 twelve sessions out is 21%, and the state-analogue model gives 23% with a flat-to-drifting-down median path to ~26.1. VXN at 26.74 needs a +12.2% move, and its 21-session realized vol is elevated (z of last close only +0.67, so not stretched). What moves me above both estimates is the recent tape: the index printed 30.89, 30.53, 38.26 and 34.02 within the last eight sessions, closing above 30 in four of them, so the local distribution has clearly fatter upside tails than the analogue's calm median path assumes. I stop at 0.28 rather than higher because the last three sessions have already decayed from 38 to 26.7, and 12 sessions is long enough for a spike to mean-revert below 30. No news corpus or prediction-market quote was available, so this rests on price data alone.",
+    "anchored_on": "base_rate",
+    "evidence": [
+      {
+        "date": "2026-11-11",
+        "source": "series_stats",
+        "note": "last 26.74, 252d mean 24.30, p90 29.02, z=0.67, 21d change +26.5%, realized vol elevated"
+      },
+      {
+        "date": "2026-10-26",
+        "source": "base_rate",
+        "note": "unconditional 12-session hit rate for >30 is 0.2103 over 6478 sessions since 2001"
+      },
+      {
+        "date": "2026-11-11",
+        "source": "analogue_forecast",
+        "note": "200-analogue probability 0.23, median path drifts to 26.12 by 12 sessions"
+      },
+      {
+        "date": "2026-11-11",
+        "source": "price_history",
+        "note": "closes above 30 on 2026-11-02 (30.89), 11-03 (30.53), 11-05 (38.26), 11-06 (34.02); since decayed to 26.74"
+      },
+      {
+        "date": "2026-11-11",
+        "source": "search_news",
+        "note": "empty - no news corpus configured; market_implied also returned available=false"
+      }
+    ]
+  },
+  "locked_probability": 0.325,
+  "usage": {
+    "prompt_tokens": 39277,
+    "completion_tokens": 2998,
+    "cost_usd": 0.003644,
+    "latency_s": 24.277882
+  },
+  "tool_calls": 20,
+  "gate_hits": 0,
+  "trace_ref": "artifacts/agent/traces/vxn-2026-11-30-gt-30.json"
+}

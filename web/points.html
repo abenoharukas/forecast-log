@@ -63,6 +63,7 @@
           <div class="pane-head">
             <span class="name up">预测上涨</span>
             <span class="sub" id="up-rule">—</span>
+            <span class="sub">绿色箭头 = 命中，灰色 = 落空</span>
           </div>
           <div class="chart" id="up-chart"></div>
         </div>
@@ -70,6 +71,7 @@
           <div class="pane-head">
             <span class="name down">预测下跌</span>
             <span class="sub" id="down-rule">—</span>
+            <span class="sub">红色箭头 = 命中，灰色 = 落空</span>
           </div>
           <div class="chart" id="down-chart"></div>
         </div>
@@ -79,7 +81,8 @@
           <h2>图和点</h2>
           <div class="note">
             纵轴 = 指数收盘。上块标「预测 5 天后更高」的点，下块标「预测 5 天后更低」的点，
-            点都画在到期那一天（发出日 + 5）。概率落在历史最高 / 最低的 10% 才打点，阈值固定。
+            点都画在到期那一天（发出日 + 5 个交易日）。概率落在历史最高 / 最低的 10% 才打点，阈值固定。
+            命中的口径是「第 5 个交易日收盘 vs 发出日收盘」，不是 5 天内任意一天。
           </div>
         </div>
         <div class="block">
@@ -91,7 +94,7 @@
     </div>
   </main>
   <script>
-    const BUILD = "r1 · 新页：指数 5 天涨跌点";
+    const BUILD = "r2 · 命中点标色，写明 5 天口径";
     document.querySelector("#build").textContent = BUILD;
 
     function makeChart(id) {
@@ -114,7 +117,8 @@
 
     function percent(value) { return value == null ? "—" : Math.round(value * 100) + "%"; }
 
-    function draw(data, chart, line, flags, color, shape) {
+    // 命中 = 亮色实心，落空 = 灰色。目标日那根 K 线不一定存在（周末），跳过。
+    function draw(data, chart, line, flags, hitColor, shape, wantUp) {
       line.setData(data.time.map((time, index) => ({ time, value: data.close[index] })));
       const known = new Set(data.time);
       const markers = [];
@@ -122,7 +126,15 @@
         if (!flag) return;
         const target = data.target[index];
         if (!target || !known.has(target)) return;
-        markers.push({ time: target, position: shape === "arrowUp" ? "belowBar" : "aboveBar", color, shape, size: 0.8 });
+        const outcome = data.outcome[index];
+        const hit = outcome != null && (wantUp ? outcome === 1 : outcome === 0);
+        markers.push({
+          time: target,
+          position: shape === "arrowUp" ? "belowBar" : "aboveBar",
+          color: hit ? hitColor : "#b3aa9c",
+          shape,
+          size: hit ? 1 : 0.7,
+        });
       });
       line.setMarkers(markers);
       chart.timeScale().fitContent();
@@ -132,8 +144,8 @@
       .then((response) => { if (!response.ok) throw new Error(String(response.status)); return response.json(); })
       .then((data) => {
         document.querySelector("#question").textContent = data.question.text;
-        draw(data, upChart, upLine, data.flag_up, "#2f6b3a", "arrowUp");
-        draw(data, downChart, downLine, data.flag_down, "#9b2c1f", "arrowDown");
+        draw(data, upChart, upLine, data.flag_up, "#2f6b3a", "arrowUp", true);
+        draw(data, downChart, downLine, data.flag_down, "#9b2c1f", "arrowDown", false);
 
         const s = data.summary;
         document.querySelector("#up-rule").textContent =

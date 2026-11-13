@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Fear index · 风险预警</title>
+  <title>Fear index · 涨跌点</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
@@ -18,6 +18,7 @@
       --rule: #c9c0b0;
       --blue: #1d4e79;
       --red: #9b2c1f;
+      --green: #2f6b3a;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -34,40 +35,20 @@
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
     .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
     .panes { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-    .pane {
-      flex: 1;
-      min-height: 0;
-      background: var(--sheet);
-      border: 1px solid var(--rule);
-      display: flex;
-      flex-direction: column;
-    }
+    .pane { flex: 1; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; }
     .pane-head {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      gap: 6px 16px;
-      padding: 7px 12px;
-      border-bottom: 1px solid var(--rule);
-      font-family: "IBM Plex Mono", ui-monospace, monospace;
-      font-size: 12px;
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px;
+      padding: 7px 12px; border-bottom: 1px solid var(--rule);
+      font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
     }
     .pane-head .name { font-size: 15px; font-weight: 500; }
-    .pane-head .big { font-size: 22px; font-weight: 500; }
-    .pane-head .verdict { color: var(--muted); }
     .pane-head .up { color: var(--red); }
     .pane-head .down { color: var(--blue); }
     .chart { flex: 1; min-height: 0; }
     aside {
-      width: 360px;
-      flex: none;
-      background: var(--sheet);
-      border: 1px solid var(--rule);
-      padding: 10px 12px;
-      font-family: "IBM Plex Mono", ui-monospace, monospace;
-      font-size: 11.5px;
-      line-height: 1.55;
-      overflow: auto;
+      width: 340px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
+      padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px; line-height: 1.6; overflow: auto;
     }
     aside h2 { margin: 0 0 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
     table { border-collapse: collapse; width: 100%; }
@@ -75,7 +56,7 @@
     th:first-child, td:first-child { text-align: left; }
     td { padding: 0 5px; text-align: right; white-space: nowrap; }
     .block + .block { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
-    .note { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .note { color: var(--muted); font-size: 11px; line-height: 1.55; }
     @media (max-width: 900px) {
       body { overflow: auto; }
       main { height: auto; }
@@ -88,57 +69,48 @@
 <body>
   <main>
     <header>
-      <h1>Fear index · 风险预警</h1>
-      <span class="sub" id="subtitle">—</span>
+      <h1>Fear index · 涨跌点</h1>
+      <span class="sub">纵轴 = fear index 点位；点 = 5 天前说「要涨 / 要跌」的那一天</span>
       <span class="sub" id="build"></span>
     </header>
     <div class="board">
       <div class="panes">
         <div class="pane">
           <div class="pane-head">
-            <span class="name up">未来上涨</span>
-            <span class="sub" id="up-question">—</span>
-            <span>概率 <b class="big" id="up-probability">—</b></span>
-            <span class="verdict" id="up-verdict">—</span>
+            <span class="name up">说「要涨」的点</span>
+            <span class="sub" id="up-rule">—</span>
+            <span class="sub" id="up-hit">—</span>
           </div>
           <div class="chart" id="up-chart"></div>
         </div>
         <div class="pane">
           <div class="pane-head">
-            <span class="name down">未来下跌</span>
-            <span class="sub" id="down-question">—</span>
-            <span>概率 <b class="big" id="down-probability">—</b></span>
-            <span class="verdict" id="down-verdict">—</span>
+            <span class="name down">说「要跌」的点</span>
+            <span class="sub" id="down-rule">—</span>
+            <span class="sub" id="down-hit">—</span>
           </div>
           <div class="chart" id="down-chart"></div>
         </div>
       </div>
       <aside>
         <div class="block">
-          <h2>纵轴</h2>
+          <h2>这两块画的是什么</h2>
           <div class="note">
-            两块的纵轴都是概率（0–100%），各自算各自的：上块只问「会不会涨」，下块只问「会不会跌」，
-            互不共用。红点 = 那天它自己动了 25% 以上（涨跌都算），是事后标记，不是信号。
+            每个交易日收盘后算一次：未来 5 天里会不会出现单日涨超 15%（上块）或跌超 15%（下块）。
+            概率落在这个方向历史最高的 10% 才打点，点画在 5 天后的那一天。
+            阈值事先可以算出来，不是事后挑的。
           </div>
         </div>
         <div class="block">
-          <h2>成绩（各自对各自的事件）</h2>
-          <table id="scores"></table>
-        </div>
-        <div class="block">
-          <h2>最近 12 次 · 上涨</h2>
-          <table><thead><tr><th>日期</th><th>概率</th><th>结果</th></tr></thead><tbody id="up-recent"></tbody></table>
-        </div>
-        <div class="block">
-          <h2>最近 12 次 · 下跌</h2>
-          <table><thead><tr><th>日期</th><th>概率</th><th>结果</th></tr></thead><tbody id="down-recent"></tbody></table>
+          <h2>点准不准</h2>
+          <table id="hits"></table>
         </div>
         <div class="block note" id="note"></div>
       </aside>
     </div>
   </main>
   <script>
-    const BUILD = "r3 · 上涨、下跌各一张图";
+    const BUILD = "r4 · 纵轴改成点位";
     document.querySelector("#build").textContent = BUILD;
 
     function makeChart(id) {
@@ -150,10 +122,7 @@
           fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
         },
         grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
-        rightPriceScale: {
-          borderColor: "#c9c0b0",
-          scaleMargins: { top: 0.05, bottom: 0.05 },
-        },
+        rightPriceScale: { borderColor: "#c9c0b0", scaleMargins: { top: 0.12, bottom: 0.12 } },
         timeScale: { borderColor: "#c9c0b0", rightOffset: 4, minBarSpacing: 0.04 },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
@@ -163,53 +132,25 @@
 
     const upChart = makeChart("#up-chart");
     const downChart = makeChart("#down-chart");
-    const priceFormat = { type: "custom", formatter: (p) => (p * 100).toFixed(0) + "%" };
-    const upLine = upChart.addLineSeries({ color: "#9b2c1f", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat });
-    const downLine = downChart.addLineSeries({ color: "#1d4e79", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat });
-    const cursors = { up: null, down: null };
+    const upLine = upChart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    const downLine = downChart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
 
     function percent(value) {
       return value == null ? "—" : Math.round(value * 100) + "%";
     }
 
-    function verdict(probability, low, high) {
-      if (probability >= high) return "偏高";
-      if (probability <= low) return "偏低";
-      return "平常";
-    }
-
-    function draw(block, chart, line, key) {
-      line.setData(block.time.map((time, index) => ({ time, value: block.probability[index] })));
+    function draw(block, chart, line, color, shape) {
+      const points = block.time.map((time, index) => ({ time, value: block.anchor[index] }));
+      line.setData(points);
       const markers = [];
-      block.time.forEach((time, index) => {
-        if (block.shock[index] === 1) {
-          markers.push({ time, position: "belowBar", color: "#6b6459", shape: "circle", size: 0.4 });
-        }
+      block.flag.forEach((flag, index) => {
+        if (!flag) return;
+        const target = block.target[index];
+        if (!block.time.includes(target)) return;
+        markers.push({ time: target, position: shape === "↑" ? "belowBar" : "aboveBar", color, shape: shape === "↑" ? "arrowUp" : "arrowDown", size: 0.8 });
       });
       line.setMarkers(markers);
       chart.timeScale().fitContent();
-    }
-
-    function fillRecent(block, id) {
-      const body = document.querySelector(id);
-      body.textContent = "";
-      const indexes = [];
-      for (let i = block.time.length - 1; i >= 0 && indexes.length < 12; i -= 1) {
-        if (block.outcome[i] == null) continue;
-        indexes.push(i);
-      }
-      indexes.reverse().forEach((i) => {
-        const tr = document.createElement("tr");
-        [block.time[i], percent(block.probability[i]), block.outcome[i] === 1 ? "出了" : "没出"].forEach(
-          (value, position) => {
-            const td = document.createElement("td");
-            td.textContent = value;
-            if (position === 2 && block.outcome[i] === 1) td.className = "yes";
-            tr.appendChild(td);
-          }
-        );
-        body.appendChild(tr);
-      });
     }
 
     fetch("/artifacts/risk.json?t=" + Date.now())
@@ -218,66 +159,45 @@
         return response.json();
       })
       .then((data) => {
-        document.querySelector("#subtitle").textContent =
-          "未来 " + data.horizon + " 个交易日内，单日涨或跌超过 " + Math.round(data.move * 100) + "%；两个方向分开算";
-        document.querySelector("#up-question").textContent = data.up.text;
-        document.querySelector("#down-question").textContent = data.down.text;
+        draw(data.up, upChart, upLine, "#9b2c1f", "↑");
+        draw(data.down, downChart, downLine, "#1d4e79", "↓");
 
-        document.querySelector("#up-probability").textContent = percent(data.up.latest.probability);
-        document.querySelector("#down-probability").textContent = percent(data.down.latest.probability);
+        const text = (block) =>
+          "阈值 " + percent(block.summary.threshold) + "，打了 " + block.summary.flagged + " 个点";
+        document.querySelector("#up-rule").textContent = text(data.up);
+        document.querySelector("#down-rule").textContent = text(data.down);
+        document.querySelector("#up-hit").textContent =
+          "这些点后来真涨的 " + percent(data.up.summary.hit) + "（基率 " + percent(data.up.summary.base_rate) + "）";
+        document.querySelector("#down-hit").textContent =
+          "这些点后来真跌的 " + percent(data.down.summary.hit) + "（基率 " + percent(data.down.summary.base_rate) + "）";
 
-        const bands = (block) => {
-          const first = block.summary.bands[0];
-          const last = block.summary.bands[block.summary.bands.length - 1];
-          return [first ? first.mean_probability : 0.5, last ? last.mean_probability : 0.5];
-        };
-        const upBand = bands(data.up);
-        const downBand = bands(data.down);
-        document.querySelector("#up-verdict").textContent =
-          verdict(data.up.latest.probability, upBand[0], upBand[1]) + "（" + data.up.latest.date + " 收盘后）";
-        document.querySelector("#down-verdict").textContent =
-          verdict(data.down.latest.probability, downBand[0], downBand[1]) + "（" + data.down.latest.date + " 收盘后）";
-
-        draw(data.up, upChart, upLine, "up");
-        draw(data.down, downChart, downLine, "down");
-        fillRecent(data.up, "#up-recent");
-        fillRecent(data.down, "#down-recent");
-
-        const scores = document.querySelector("#scores");
-        scores.textContent = "";
-        const rows = [
-          ["", "上涨", "下跌"],
-          ["样本", data.up.summary.n + " 次", data.down.summary.n + " 次"],
-          ["历史基准率", percent(data.up.summary.base_rate), percent(data.down.summary.base_rate)],
-          ["模型平均概率", percent(data.up.summary.mean_probability), percent(data.down.summary.mean_probability)],
-          ["模型 Brier", data.up.summary.brier_model.toFixed(4), data.down.summary.brier_model.toFixed(4)],
+        const hits = document.querySelector("#hits");
+        hits.textContent = "";
+        [
+          ["", "要涨的点", "要跌的点"],
+          ["点数", String(data.up.summary.flagged), String(data.down.summary.flagged)],
+          ["真发生", percent(data.up.summary.hit), percent(data.down.summary.hit)],
+          ["基率", percent(data.up.summary.base_rate), percent(data.down.summary.base_rate)],
+          ["Brier", data.up.summary.brier_model.toFixed(4), data.down.summary.brier_model.toFixed(4)],
           ["只看基率", data.up.summary.brier_base.toFixed(4), data.down.summary.brier_base.toFixed(4)],
-          ["恒答 0.5", data.up.summary.brier_half.toFixed(4), data.down.summary.brier_half.toFixed(4)],
-          [
-            "比基率",
-            (data.up.summary.skill >= 0 ? "好 " : "差 ") + Math.abs(data.up.summary.skill * 100).toFixed(1) + "%",
-            (data.down.summary.skill >= 0 ? "好 " : "差 ") + Math.abs(data.down.summary.skill * 100).toFixed(1) + "%",
-          ],
-        ];
-        rows.forEach((row) => {
+        ].forEach((row) => {
           const tr = document.createElement("tr");
           row.forEach((value) => {
             const td = document.createElement("td");
             td.textContent = value;
             tr.appendChild(td);
           });
-          scores.appendChild(tr);
+          hits.appendChild(tr);
         });
 
         document.querySelector("#note").textContent =
-          "两个方向差得很远：上涨那块的 Brier 跟「只按历史基率猜」差不多（" +
-          (data.up.summary.skill >= 0 ? "好 " : "差 ") + Math.abs(data.up.summary.skill * 100).toFixed(1) +
-          "%），下跌那块才有真信号（" +
-          (data.down.summary.skill >= 0 ? "好 " : "差 ") + Math.abs(data.down.summary.skill * 100).toFixed(1) +
-          "%）。所以下块可以当风险表看，上块基本是基率。";
+          "下块可用：打了 " + data.down.summary.flagged + " 个点，后来真跌的 " +
+          percent(data.down.summary.hit) + "，基率只有 " + percent(data.down.summary.base_rate) + "。" +
+          "上块不可用：这些点真涨的只有 " + percent(data.up.summary.hit) + "，比基率 " +
+          percent(data.up.summary.base_rate) + " 还低，所以红箭头基本是反的，别照着做。";
       })
       .catch(() => {
-        document.querySelector("#subtitle").textContent = "risk.json 没有加载";
+        document.querySelector("#up-rule").textContent = "risk.json 没有加载";
       });
   </script>
 </body>

@@ -216,10 +216,25 @@ def summary(rows: list[RiskRow], horizon: int = HORIZON, move: float = MOVE) -> 
 
 
 def _direction(series: Series, matrix: np.ndarray | None, name: str, labels: np.ndarray,
-               horizon: int, move: float) -> dict:
+               horizon: int, move: float, quantile: float = 0.9) -> dict:
     rows = walk_forward(series, matrix, labels)
     last = rows[-1]
     stats = summary(rows, horizon, move)
+    # 打点规则：这个方向概率最高的 10% 才算「说了会涨/会跌」。阈值固定，事前可算。
+    resolved = [row.probability for row in rows if row.outcome is not None]
+    threshold = float(np.quantile(resolved, quantile)) if resolved else 1.0
+    flagged = [row for row in rows if row.probability >= threshold]
+    hits = [row for row in flagged if row.outcome == 1]
+    bars = series.bars
+    index = {row.date: position for position, row in enumerate(rows)}
+    dates = [bar.date.isoformat() for bar in bars]
+    targets = []
+    for row in rows:
+        position = dates.index(row.date)
+        targets.append(dates[min(position + horizon, len(dates) - 1)])
+    stats["threshold"] = round(threshold, 4)
+    stats["flagged"] = len(flagged)
+    stats["hit"] = round(len(hits) / len(flagged), 4) if flagged else None
     stats["skill"] = (
         round(1.0 - stats["brier_model"] / stats["brier_base"], 4)
         if stats.get("brier_base")
@@ -233,6 +248,9 @@ def _direction(series: Series, matrix: np.ndarray | None, name: str, labels: np.
         "outcome": [row.outcome for row in rows],
         "anchor": [round(row.anchor, 2) for row in rows],
         "shock": _shock_for(series, rows),
+        # 点画在目标日（t+horizon），不是在发出日。
+        "target": targets,
+        "flag": [1 if row.probability >= threshold else 0 for row in rows],
         "latest": {
             "date": last.date,
             "probability": round(last.probability, 4),

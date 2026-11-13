@@ -30,6 +30,9 @@ HORIZON = 5
 QUANTILE = 0.90
 MIN_HISTORY = 252
 
+# fetch 用：这四条腿背后的行情，以及备用（广度、黄金）
+CROSS_SYMBOLS = ("^TNX", "DX-Y.NYB", "HYG", "TLT", "SPY", "RSP", "GC=F", "^VIX")
+
 LEGS = (
     ("^TNX", "diff20", -1.0),
     ("DX-Y.NYB", "ret20", -1.0),

@@ -16,7 +16,7 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
-from forecast_log.cross import document as cross_document
+from forecast_log.cross import CROSS_SYMBOLS, document as cross_document
 from forecast_log.direction import document as direction_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
@@ -59,6 +59,17 @@ def fetch_command(root: Path) -> dict:
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
             f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
+        )
+    for symbol in CROSS_SYMBOLS:
+        try:
+            series = fetch_daily(symbol)
+        except (RuntimeError, OSError, ValueError) as error:
+            print(f"{symbol} 取数失败，跳过：{error}")
+            continue
+        save_series(series_path(root, symbol), series)
+        print(
+            f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
+            f"{series.bars[-1].date.isoformat()} 收盘 {series.bars[-1].close}，写入 {series_path(root, symbol)}"
         )
     report = reference_report(root, loaded["^VXN"], loaded["^NDX"])
     print(reference_text(report))

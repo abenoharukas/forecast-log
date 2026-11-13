@@ -5,7 +5,6 @@ import argparse
 from forecast_log.commands import (
     backtest_command,
     cross_command,
-    direction_command,
     fetch_command,
     lock_command,
     resolve_command,
@@ -25,7 +24,6 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("lock", help="给三道题各写一次概率。写过就不能改")
     sub.add_parser("resolve", help="结算日收盘之后写入 resolutions.json")
     sub.add_parser("score", help="计算已结算题目的 Brier 分数")
-    sub.add_parser("direction", help="指数本身 5 天后的涨跌点")
     sub.add_parser("cross", help="跨资产风险偏好偏多时的 5 天上涨点")
     args = parser.parse_args(argv)
     root = repo_root()
@@ -39,8 +37,6 @@ def main(argv: list[str] | None = None) -> None:
         resolve_command(root)
     elif args.command == "score":
         score_command(root)
-    elif args.command == "direction":
-        direction_command(root)
     elif args.command == "cross":
         cross_command(root)
 

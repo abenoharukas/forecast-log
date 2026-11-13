@@ -203,7 +203,7 @@ NDX 那边更冷：7 日点位误差中位 2.1%，猜不动 2.2%；区间覆盖�
 
 | 做法 | 结果 | 结论 |
 |---|---|---|
-| 价格自身特征 + 逻辑回归（`direction.py`） | Brier 0.2472，只按基率猜 0.2410 | 比常数更差 |
+| 价格自身特征 + 逻辑回归（已删，脚本留在 `experiments/direction_lab.py`） | Brier 0.2472，只按基率猜 0.2410 | 比常数更差 |
 | 概率往基率收缩（0.2–0.7） | 分块 bootstrap 区间全部跨 0，收缩到 1.0 才可靠地更好 | 排序里也没有信息 |
 | logit 对齐基率 / 强正则 0.3 | 0.2480 / 0.2472 | 无效 |
 | 目标改成「超过漂移」 | 0.2555，常数 0.2502 | 更差：模型学的全是漂移 |
@@ -234,7 +234,7 @@ forecast-log cross
 pytest
 ```
 
-`forecast-log cross` 重算第二个页面用到的 `artifacts/cross.json`；`forecast-log direction` 是已经被否掉的那条路，留着做对照。
+`forecast-log cross` 重算第二个页面用到的 `artifacts/cross.json`。
 
 实验台（不进页面，只打印表）：
 

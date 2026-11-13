@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 
 from forecast_log.bars import Series, load_series
-from forecast_log.direction import _expanding_z
+from forecast_log.stats import expanding_z
 from forecast_log.paths import series_path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,7 +108,7 @@ def main() -> None:
     print(f"{'线索':<26}{'桶':<8}{'n':>6}{'命中':>8}{'基率':>8}{'差':>8}   95% 区间")
     best = []
     for column, name in zip(columns, names):
-        z = _expanding_z(column)
+        z = expanding_z(column)
         for side, mask in (("低 10%", z <= -1.2816), ("高 10%", z >= 1.2816)):
             keep = mask & ~np.isnan(labels)
             if keep.sum() < 150:
@@ -127,10 +127,9 @@ def main() -> None:
     print(f"共做了 {len(best)} 次比较；带 * 的表示区间不含基率（未做多重比较修正）")
     print()
     print("=== 二、把全部线索一起塞进模型 ===")
-    from forecast_log.direction import _sigmoid
     from direction_lab import expanding_baseline, fit  # 同一套滚动训练
 
-    design = np.column_stack([_expanding_z(c) for c in columns])
+    design = np.column_stack([expanding_z(c) for c in columns])
     usable = ~np.isnan(design).any(axis=1) & ~np.isnan(labels)
     weights, last = None, -10**9
     probability = np.full(n, np.nan)
@@ -143,7 +142,9 @@ def main() -> None:
         if weights is None or i - last >= 21:
             weights = fit(design[ready], labels[ready])
             last = i
-        probability[i] = np.clip(_sigmoid(float(weights[0] + design[i] @ weights[1:])), 0.02, 0.98)
+        probability[i] = np.clip(
+            1.0 / (1.0 + np.exp(-float(weights[0] + design[i] @ weights[1:]))), 0.02, 0.98
+        )
     base = expanding_baseline(labels)
     keep = ~np.isnan(probability) & ~np.isnan(labels) & ~np.isnan(base)
     score = float(np.mean((probability[keep] - labels[keep]) ** 2))

@@ -185,47 +185,36 @@ def test_rolling_path_scores_against_the_close_that_printed():
     assert 0.0 <= document["summary"]["terminal"]["coverage"] <= 1.0
 
 
-def test_direction_probability_never_reads_ahead():
-    from forecast_log.direction import walk_forward
+def test_expanding_z_never_looks_at_later_rows():
+    from forecast_log.stats import expanding_z
 
-    rng = np.random.default_rng(7)
-    closes = np.clip(3000 * np.cumprod(1 + rng.normal(0.0004, 0.012, size=900)), 500, 12000)
-    series = _series(closes)
-    matrix = np.column_stack(
-        [np.log(np.clip(14 + rng.normal(0, 1, size=len(closes)), 8, 30)),
-         np.log(np.clip(90 + rng.normal(0, 6, size=len(closes)), 60, 140))]
-    )
-    rows = walk_forward(series, matrix)
-    assert rows
-    cut = len(series.bars) // 2
-    shattered = Series(
-        series.symbol,
-        series.timezone,
-        series.fetched_at,
-        tuple(
-            Bar(bar.date, 9000.0 if position > cut else bar.close)
-            for position, bar in enumerate(series.bars)
-        ),
-    )
-    again = {row.date: row.probability for row in walk_forward(shattered, matrix)}
-    for row in rows:
-        if row.date <= series.bars[cut].date.isoformat():
-            assert again[row.date] == row.probability
+    values = np.linspace(1.0, 40.0, 300)
+    first = expanding_z(values)
+    shattered = values.copy()
+    shattered[200:] = 999.0
+    again = expanding_z(shattered)
+    assert np.allclose(first[:200], again[:200], equal_nan=True)
+    assert not np.allclose(first[200:], again[200:], equal_nan=True)
 
 
-def test_direction_outcome_is_five_sessions_later():
-    from forecast_log.direction import HORIZON, walk_forward
+def test_cross_marks_land_five_sessions_later():
+    from pathlib import Path
 
-    closes = [100.0] * 400 + [100.0 + position for position in range(1, 400)]
-    series = _series(closes)
-    rows = walk_forward(series, None)
-    assert rows
-    first = rows[0]
-    dates = [bar.date.isoformat() for bar in series.bars]
-    position = dates.index(first.date)
-    assert first.target == dates[position + HORIZON]
-    for row in rows:
-        if row.outcome is not None:
-            spot = dates.index(row.date)
-            expected = 1 if series.bars[spot + HORIZON].close > series.bars[spot].close else 0
-            assert row.outcome == expected
+    from forecast_log.bars import load_series
+    from forecast_log.cross import HORIZON, document
+    from forecast_log.paths import series_path
+
+    root = Path(__file__).resolve().parents[1]
+    if not series_path(root, "^TNX").exists():
+        return
+    series = load_series(series_path(root, "^NDX"))
+    doc = document(root, series)
+    position = {bar.date.isoformat(): index for index, bar in enumerate(series.bars)}
+    checked = 0
+    for moment, target in zip(doc["time"], doc["target"]):
+        if target is None:
+            continue
+        assert position[target] - position[moment] == HORIZON
+        checked += 1
+    assert checked > 100
+    assert len(doc["flag"]) == len(doc["time"]) == len(doc["outcome"])

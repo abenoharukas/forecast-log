@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from forecast_log.bars import load_series
-from forecast_log.direction import _expanding_z, _sigmoid
+from forecast_log.stats import expanding_z, _sigmoid
 from forecast_log.features import load_matrix
 from forecast_log.paths import series_path
 
@@ -138,7 +138,7 @@ def main() -> None:
         np.isnan(forward) | np.isnan(drift), np.nan, (forward > drift).astype(float)
     )
 
-    design = np.column_stack([_expanding_z(features[:, j]) for j in range(features.shape[1])])
+    design = np.column_stack([expanding_z(features[:, j]) for j in range(features.shape[1])])
 
     print("=== 一、把概率收缩 / 重标定，能不能至少追平常数 ===")
     print(f"{'目标':<10}{'做法':<16}{'Brier':>8}{'常数':>9}{'差':>9}")
@@ -172,7 +172,7 @@ def main() -> None:
     print(f"{'因子':<14}{'桶':<8}{'n':>6}{'命中':>8}{'基率':>8}{'差':>8}   95% 区间（分块）")
     for column, name in enumerate(names):
         values = features[:, column]
-        z = _expanding_z(values)
+        z = expanding_z(values)
         for side in ("低 10%", "高 10%"):
             mask = z <= -1.2816 if side == "低 10%" else z >= 1.2816
             keep = mask & ~np.isnan(labels_up)

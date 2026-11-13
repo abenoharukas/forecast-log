@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from forecast_log.bars import Series, load_series
-from forecast_log.direction import _expanding_z
+from forecast_log.stats import expanding_z
 from forecast_log.paths import series_path
 
 HORIZON = 5
@@ -84,7 +84,7 @@ def composite(root: Path, series: Series) -> np.ndarray:
     parts = []
     for symbol, how, sign in LEGS:
         raw = _leg(_prices(root, symbol, dates), how)
-        parts.append(sign * _expanding_z(raw))
+        parts.append(sign * expanding_z(raw))
     stacked = np.column_stack(parts)
     return np.where(np.isnan(stacked).any(axis=1), np.nan, stacked.mean(axis=1))
 

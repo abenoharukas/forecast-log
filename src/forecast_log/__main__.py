@@ -7,6 +7,7 @@ from forecast_log.commands import (
     fetch_command,
     lock_command,
     resolve_command,
+    risk_command,
     score_command,
 )
 from forecast_log.paths import repo_root
@@ -23,6 +24,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("lock", help="给三道题各写一次概率。写过就不能改")
     sub.add_parser("resolve", help="结算日收盘之后写入 resolutions.json")
     sub.add_parser("score", help="计算已结算题目的 Brier 分数")
+    sub.add_parser("risk", help="风险预警：未来 5 个交易日会不会出现一次大波动")
     args = parser.parse_args(argv)
     root = repo_root()
     if args.command == "fetch":
@@ -35,6 +37,8 @@ def main(argv: list[str] | None = None) -> None:
         resolve_command(root)
     elif args.command == "score":
         score_command(root)
+    elif args.command == "risk":
+        risk_command(root)
 
 
 if __name__ == "__main__":

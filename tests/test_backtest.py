@@ -183,3 +183,47 @@ def test_rolling_path_scores_against_the_close_that_printed():
     )
     assert document["summary"]["terminal"]["step"] == PATH_HORIZON
     assert 0.0 <= document["summary"]["terminal"]["coverage"] <= 1.0
+
+
+def test_risk_probability_never_reads_ahead():
+    from forecast_log.risk import features, walk_forward
+
+    rng = np.random.default_rng(7)
+    closes = np.clip(19 + rng.normal(0, 0.6, size=700), 12, 32)
+    series = _series(closes)
+    matrix = np.column_stack(
+        [np.log(np.clip(14 + rng.normal(0, 1, size=len(closes)), 8, 30)),
+         np.log(np.clip(90 + rng.normal(0, 6, size=len(closes)), 60, 140))]
+    )
+    rows = walk_forward(series, matrix)
+    assert rows
+    cut = len(series.bars) // 2
+    # 把中点之后的收盘全部改掉，之前的概率不许动。
+    shattered = Series(
+        series.symbol,
+        series.timezone,
+        series.fetched_at,
+        tuple(
+            Bar(bar.date, 40.0 if position > cut else bar.close)
+            for position, bar in enumerate(series.bars)
+        ),
+    )
+    again = {row.date: row.probability for row in walk_forward(shattered, matrix)}
+    for row in rows:
+        if row.date <= series.bars[cut].date.isoformat():
+            assert again[row.date] == row.probability
+
+
+def test_risk_event_matches_the_next_sessions():
+    from forecast_log.risk import HORIZON, MOVE, outcomes
+
+    closes = [20.0] * 10 + [20.0 * (1 + MOVE * 1.2)] + [20.0] * 10
+    series = _series(closes)
+    labels = outcomes(series)
+    # 第 11 根（下标 10）是那天自己跳的；它前面 HORIZON 天都该记 1。
+    assert labels[10] == 1
+    for position in range(10 - HORIZON, 10):
+        assert labels[position] == 1
+    assert labels[0] == 0
+    assert all(not np.isnan(value) for value in labels[: len(closes) - HORIZON])
+    assert len(labels) == len(closes)

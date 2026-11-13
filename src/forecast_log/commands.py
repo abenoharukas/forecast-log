@@ -16,6 +16,7 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
+from forecast_log.risk import document as risk_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
 from forecast_log.paths import series_path
@@ -90,6 +91,24 @@ def backtest_command(root: Path) -> dict:
     if not ref["matches"]:
         raise SystemExit(1)
     return report
+
+
+def risk_command(root: Path) -> dict:
+    """风险预警（另一道题，写在 artifacts/risk.json，不动现有的页面和题）。"""
+    vxn = load_series(series_path(root, "^VXN"))
+    document = risk_document(vxn, _features_for(root, vxn))
+    path = root / "artifacts" / "risk.json"
+    write_report(path, document, indent=None)
+    stats = document["summary"]
+    print(
+        f"风险预警：{document['question']['text']}\n"
+        f"样本 {stats['n']} 次，基准率 {stats['base_rate']:.1%}，"
+        f"模型 Brier {stats['brier_model']:.4f}，只看基率 {stats['brier_base']:.4f}，"
+        f"恒答 0.5 是 {stats['brier_half']:.4f}\n"
+        f"最新 {document['latest']['date']}：{document['latest']['probability']:.1%}\n"
+        f"写在 {path}"
+    )
+    return document
 
 
 def lock_command(root: Path, now: datetime | None = None) -> list[Path]:

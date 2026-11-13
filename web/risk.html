@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Fear index · 风险预警</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
+  <script src="/web/vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --paper: #e6e0d4;
+      --sheet: #f7f3ea;
+      --ink: #1c1915;
+      --muted: #5e584e;
+      --rule: #c9c0b0;
+      --blue: #1d4e79;
+      --red: #9b2c1f;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: "Newsreader", Palatino, serif;
+      overflow: hidden;
+    }
+    main { height: 100%; display: flex; flex-direction: column; padding: 18px 22px 14px; }
+    header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    h1 { margin: 0; font-weight: 480; font-size: 30px; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; }
+    .answer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 26px;
+      align-items: baseline;
+      margin-top: 12px;
+      padding: 10px 0;
+      border-top: 1px solid var(--ink);
+      border-bottom: 1px solid var(--ink);
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 13px;
+    }
+    .answer b { font-weight: 500; font-size: 22px; }
+    #probability { font-size: 34px; }
+    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
+    .chart-wrap { flex: 1; min-width: 0; background: var(--sheet); border: 1px solid var(--rule); }
+    #chart { height: 100%; }
+    aside {
+      width: 380px;
+      flex: none;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      padding: 10px 12px;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+      line-height: 1.55;
+      overflow: auto;
+    }
+    aside h2 { margin: 0 0 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+    table { border-collapse: collapse; width: 100%; }
+    th { font-weight: 500; font-size: 10.5px; color: var(--muted); text-align: right; padding: 0 5px 3px; }
+    th:first-child, td:first-child { text-align: left; }
+    td { padding: 0 5px; text-align: right; white-space: nowrap; }
+    td.yes { color: var(--red); }
+    .block + .block { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
+    .note { color: var(--muted); font-size: 11px; line-height: 1.5; }
+    @media (max-width: 760px) {
+      body { overflow: auto; }
+      main { height: auto; }
+      .board { flex-direction: column; }
+      .chart-wrap { flex: none; }
+      #chart { height: 55vh; }
+      aside { width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Fear index · 风险预警</h1>
+      <span class="sub" id="question">—</span>
+    </header>
+    <div class="answer">
+      <span>最新收盘 <b id="latest-date">—</b></span>
+      <span>未来几天出事概率 <b id="probability">—</b></span>
+      <span id="verdict">—</span>
+      <span class="sub" id="build"></span>
+    </div>
+    <div class="board">
+      <div class="chart-wrap"><div id="chart"></div></div>
+      <aside>
+        <div class="block">
+          <h2>最近 12 次（报的概率 → 后来真的出事了吗）</h2>
+          <table>
+            <thead><tr><th>日期</th><th>概率</th><th>结果</th></tr></thead>
+            <tbody id="recent"></tbody>
+          </table>
+        </div>
+        <div class="block">
+          <h2>成绩</h2>
+          <table id="scores"></table>
+        </div>
+        <div class="block note" id="note"></div>
+      </aside>
+    </div>
+  </main>
+  <script>
+    const BUILD = "r1 · 新题：风险预警";
+    const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
+      autoSize: true,
+      layout: {
+        background: { type: "solid", color: "#f7f3ea" },
+        textColor: "#5e584e",
+        fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+      },
+      grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
+      rightPriceScale: { borderColor: "#c9c0b0", scaleMargins: { top: 0.02, bottom: 0.02 } },
+      timeScale: { borderColor: "#c9c0b0", rightOffset: 6, minBarSpacing: 0.04 },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+    const line = chart.addLineSeries({
+      color: "#1d4e79",
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      priceFormat: { type: "custom", formatter: (p) => (p * 100).toFixed(0) + "%" },
+    });
+
+    document.querySelector("#build").textContent = BUILD;
+
+    function percent(value) {
+      return value == null ? "—" : Math.round(value * 100) + "%";
+    }
+
+    fetch("/artifacts/risk.json?t=" + Date.now())
+      .then((response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then((data) => {
+        document.querySelector("#question").textContent = data.question.text;
+        document.querySelector("#latest-date").textContent = data.latest.date;
+        document.querySelector("#probability").textContent = percent(data.latest.probability);
+        const p = data.latest.probability;
+        document.querySelector("#verdict").textContent =
+          p >= 0.5 ? "最近不平静" : p >= 0.3 ? "有一点风险" : "近期平静";
+
+        line.setData(data.time.map((time, index) => ({ time, value: data.probability[index] })));
+        // 红点只标「那天自己跳过 25% 以上」的日子，看概率有没有提前抬起来。
+        const markers = [];
+        data.time.forEach((time, index) => {
+          if (data.shock[index] === 1) {
+            markers.push({ time, position: "aboveBar", color: "#9b2c1f", shape: "arrowDown", size: 0.7 });
+          }
+        });
+        line.setMarkers(markers);
+        chart.timeScale().fitContent();
+
+        const recent = document.querySelector("#recent");
+        recent.textContent = "";
+        const rows = [];
+        for (let i = data.time.length - 1; i >= 0 && rows.length < 12; i -= 1) {
+          if (data.outcome[i] == null) continue;
+          rows.push(i);
+        }
+        rows.reverse().forEach((i) => {
+          const tr = document.createElement("tr");
+          const cells = [data.time[i], percent(data.probability[i]), data.outcome[i] === 1 ? "出了" : "没出"];
+          cells.forEach((value, index) => {
+            const td = document.createElement("td");
+            td.textContent = value;
+            if (index === 2 && data.outcome[i] === 1) td.className = "yes";
+            tr.appendChild(td);
+          });
+          recent.appendChild(tr);
+        });
+
+        const s = data.summary;
+        const scores = document.querySelector("#scores");
+        scores.textContent = "";
+        [
+          ["样本", s.n + " 次"],
+          ["历史基准率", percent(s.base_rate)],
+          ["模型平均概率", percent(s.mean_probability)],
+          ["模型 Brier", s.brier_model.toFixed(4)],
+          ["只看基率", s.brier_base.toFixed(4)],
+          ["恒答 0.5", s.brier_half.toFixed(4)],
+        ].forEach(([k, v]) => {
+          const tr = document.createElement("tr");
+          const a = document.createElement("td");
+          a.textContent = k;
+          const b = document.createElement("td");
+          b.textContent = v;
+          tr.append(a, b);
+          scores.appendChild(tr);
+        });
+
+        document.querySelector("#note").textContent =
+          "蓝线是「未来 5 个交易日内出现单日 |涨跌| > 15%」的概率，红箭头是那天自己跳过 25% 以上的日子。" +
+          "这道题只报风险，不报点位。报的概率高低是否带动实际发生率：" +
+          s.bands.map((band) => percent(band.mean_probability) + "→" + percent(band.actual)).join("，") + "。";
+      })
+      .catch(() => {
+        document.querySelector("#question").textContent = "risk.json 没有加载";
+      });
+  </script>
+</body>
+</html>

@@ -229,8 +229,8 @@ def document(root: Path) -> dict:
         "question": {
             "horizon": HORIZON,
             "text": (
-                f"Same cross-asset risk appetite long → does the {TARGET_NAME} print any close above the "
-                f"entry price in the next {HORIZON} A-share sessions?"
+                f"Same cross-asset risk appetite long → is the {TARGET_NAME} close {HORIZON} A-share sessions "
+                "later above the basis close?"
             ),
             "factors": [
                 "The signal is untouched: four US cross-asset factors, 90th percentile of expanding history",
@@ -239,9 +239,10 @@ def document(root: Path) -> dict:
             ],
             "rule": (
                 "Nothing in the signal changes. A US signal dated D is known at 04:00 Beijing the next morning, "
-                "so it is actionable at the 09:30 open of the first A-share session after D. Entry is that "
-                f"session's open; the call is a hit if any of the {HORIZON} A-share closes from that session "
-                "onwards is above it. No close is used to decide or to fill anything."
+                "so the first A-share session after D is the one that settles it. That session's close is the "
+                f"basis of the call; the call is a hit if the close {HORIZON} A-share sessions later is above it. "
+                "The open of that session is recorded as `entry` — the price you could actually pay — but it "
+                "does not decide the call."
             ),
         },
         "fetched_at": series.fetched_at,

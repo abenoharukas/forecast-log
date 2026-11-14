@@ -160,10 +160,10 @@
     <div class="board">
       <div class="pane">
         <div class="pane-head">
-          <span class="name">Risk-on composite → any close above entry within 5 sessions</span>
+          <span class="name">Risk-on composite → day-5 close above the signal-day close</span>
           <span class="sub" id="rule">—</span>
           <span class="sub">marker = the signal day · basis = that day's close · <b style="color:var(--green)">▲ green</b> = day-3 close above it · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 still below · hover for the numbers</span>
-          <span class="sub" id="readout">hover a session: the open you paid, then the best close in the window</span>
+          <span class="sub" id="readout">hover a session: its close, then the day-3 and day-5 closes</span>
           <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
         </div>
         <div class="chart" id="chart" role="img" aria-label="Close price with risk-on signal markers. The side tables list the same signals as data."></div>
@@ -177,10 +177,11 @@
             average of the four. A signal is triggered when the composite exceeds its 90th percentile on that same
             expanding window. Two conditional triggers are added: within 3 calendar days of a CPI release, or 3-7
             days of an NFP release, with the composite at or above its expanding median. No signal on the FOMC
-            decision day. The signal is issued on a close, so the earliest you can pay for it is the next
-            session's open — that open is the entry price, and a call is a hit if any of the five closes from
-            that session onwards is above it. The arrow sits on that session, the one where you act; hover any
-            session to see the entry price, the best close in the window and the day it printed. Factors:
+            decision day. A signal is issued on a close, and that close is the basis of the call: the call is a
+            hit when the close five sessions later is above it. Green = day 3 already above the basis, amber = day
+            3 below but day 5 above, grey = day 5 still below. The next session's open is stored separately as
+            <code>entry</code>, the price you could actually pay; it carries an overnight gap and does not decide
+            the call. Hover any session for the basis, day 3 and day 5. Factors:
             <ul id="factors"></ul>
           </div>
         </div>
@@ -213,7 +214,8 @@
       rightPriceScale: { borderColor: palette.rule, minimumWidth: 64,
         mode: LightweightCharts.PriceScaleMode.Logarithmic,
         scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: palette.rule, rightOffset: 4, minBarSpacing: 0.04 },
+      timeScale: { borderColor: palette.rule, rightOffset: 0, minBarSpacing: 0.04,
+        fixLeftEdge: true, fixRightEdge: true },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
@@ -510,7 +512,7 @@
       return [day, "no signal · close " + data.close[index].toFixed(2)].join(" · ");
     }
 
-    const IDLE_READOUT = "hover a session: the open you paid, then the best close in the window";
+    const IDLE_READOUT = "hover a session: its close, then the day-3 and day-5 closes";
     chart.subscribeCrosshairMove((param) => {
       const text = describeDay(dayOf(param && param.time));
       document.querySelector("#readout").textContent = text || IDLE_READOUT;

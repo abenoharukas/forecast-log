@@ -500,8 +500,8 @@ def document(
         "question": {
             "horizon": HORIZON,
             "text": (
-                f"Cross-asset risk appetite long → does {label} print any close above the entry "
-                f"price in the next {HORIZON} sessions?"
+                f"Cross-asset risk appetite long → is the {label} close {HORIZON} sessions later "
+                "above the basis close?"
             ),
             "factors": [
                 "Factor 1 — 10Y Treasury yield down over 20 sessions",
@@ -516,9 +516,11 @@ def document(
                 f"Average the four standardised factors; mark a point above the {int(QUANTILE * 100)}th percentile "
                 "of all history up to that day, or within 3 days before CPI / 3-7 days before NFP with the score "
                 "at or above the median; no point on the FOMC decision day; and the news veto removes signals on "
-                "days the LLM labels as a strong bearish surprise. A point is issued on a close, so the earliest "
-                "you can pay for it is the next session's open: that open is the entry price, and the call is a "
-                f"hit if any of the {HORIZON} closes from that session onwards is above it."
+                "days the LLM labels as a strong bearish surprise. A point is issued on a close, so that close "
+                "is the basis of the call: the close 3 sessions later and the close 5 sessions later are compared "
+                f"against it, and the call is a hit when the day-{HORIZON} close is above the basis. The next "
+                "session's open is recorded as `entry` — the price you could actually pay — but it does not "
+                "decide the call."
             ),
         },
         "fetched_at": series.fetched_at,

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="The same Nasdaq-100 risk-on signal applied to QQQ: entry at the next open, five-session hit rate, and the days the ETF and index disagree.">
+  <meta name="description" content="The same Nasdaq-100 risk-on signal applied to QQQ: day-5 close against the signal-day close, five-session hit rate, and the days the ETF and index disagree.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>QQQ — same risk-on signals, a tradable instrument</title>
@@ -141,10 +141,10 @@
     <div class="board">
       <div class="pane">
         <div class="pane-head">
-          <span class="name">Risk-on composite → any close above entry within 5 sessions</span>
+          <span class="name">Risk-on composite → day-5 close above the signal-day close</span>
           <span class="sub" id="rule">—</span>
           <span class="sub">marker = the signal day · basis = that day's close · <b style="color:var(--green)">▲ green</b> = day-3 close above it · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 still below · hover for the numbers</span>
-          <span class="sub" id="readout">hover a session: the open you paid, then the best close in the window</span>
+          <span class="sub" id="readout">hover a session: its close, then the day-3 and day-5 closes</span>
           <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
         </div>
         <div class="chart" id="chart" role="img" aria-label="QQQ close price with risk-on signal markers. The side tables list the same signals as data."></div>
@@ -175,7 +175,8 @@
       rightPriceScale: { borderColor: palette.rule, minimumWidth: 64,
         mode: LightweightCharts.PriceScaleMode.Logarithmic,
         scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: palette.rule, rightOffset: 4, minBarSpacing: 0.04 },
+      timeScale: { borderColor: palette.rule, rightOffset: 0, minBarSpacing: 0.04,
+        fixLeftEdge: true, fixRightEdge: true },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
@@ -256,7 +257,7 @@
       return [day, "no signal · close " + data.close[index].toFixed(2)].join(" · ");
     }
 
-    const IDLE_READOUT = "hover a session: the open you paid, then the best close in the window";
+    const IDLE_READOUT = "hover a session: its close, then the day-3 and day-5 closes";
     chart.subscribeCrosshairMove((param) => {
       const text = describeDay(dayOf(param && param.time));
       document.querySelector("#readout").textContent = text || IDLE_READOUT;
@@ -299,7 +300,7 @@
         (same
           ? "Both columns use the identical " + rows[0].signals + " signal days and the identical rule; "
           : "WARNING: the two documents do not flag the same days — the comparison is void. ") +
-        "only the entry and exit prices change. " + data.first_session + " → " + data.last_session + ".";
+        "only the closes being measured change. " + data.first_session + " → " + data.last_session + ".";
     }
 
     function basisPoints(move) {

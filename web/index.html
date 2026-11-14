@@ -251,7 +251,10 @@
       grid: { vertLines: { color: palette.grid }, horzLines: { visible: false } },
       // Fixed axis width: otherwise the canvas resizes when the first labels render.
       rightPriceScale: { borderColor: palette.rule, minimumWidth: 64 },
-      timeScale: { borderColor: palette.rule, rightOffset: 6, minBarSpacing: 0.04 },
+      // Keep the viewport inside the data: no empty bars before the first
+      // session or after the last one, and zoom-out stops at the full history.
+      timeScale: { borderColor: palette.rule, rightOffset: 0, minBarSpacing: 0.04,
+        fixLeftEdge: true, fixRightEdge: true },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
@@ -315,13 +318,13 @@
 
     function applySpan() {
       const times = timeline[symbolOf()].time;
-      const extra = 7;
       if (!span) {
         chart.timeScale().fitContent();
         return;
       }
       const from = barIndexOnOrAfter(times, shift(times[times.length - 1], -span));
-      chart.timeScale().setVisibleLogicalRange({ from, to: times.length - 1 + extra + 3 });
+      // End exactly on the last session: no trailing blank bars.
+      chart.timeScale().setVisibleLogicalRange({ from, to: times.length - 1 });
     }
 
     chart.timeScale().subscribeVisibleTimeRangeChange((range) => {

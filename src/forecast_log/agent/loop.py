@@ -237,19 +237,25 @@ class Agent:
             # In blind mode the only legal move is to submit, so ask for exactly that.
             # Otherwise a model that prefers prose burns the whole step budget and the
             # ablation row measures timeouts instead of forecasting skill.
-            force = {"type": "function", "function": {"name": "submit_forecast"}} if self.blind else None
+            submit_only = {"type": "function", "function": {"name": "submit_forecast"}}
+            # 思考型模型会把步数花在推理上，最后一两步还没提交就超时。最后一轮直接把工具
+            # 钉死成 submit_forecast：这不改变它自己的判断，只是保证「没有答案」这种失败
+            # 不再把整次评测作废。
+            last_steps = step >= self.max_steps - 2
+            force = submit_only if (self.blind or last_steps) else None
             reply = self.llm.chat(
                 messages, tools=specs, temperature=self.temperature, tool_choice=force
             )
             turn = Turn(index=step, reply=reply)
             trace.turns.append(turn)
 
-            if reply.content and not reply.tool_calls:
-                messages.append({"role": "assistant", "content": reply.content})
-                messages.append({"role": "user", "content": "You have not submitted yet. Call submit_forecast now."})
-                continue
             messages.append(_assistant_message(reply))
             if not reply.tool_calls:
+                # 思考型模型经常回一大段 reasoning 加一句结论，却始终不调用工具；照着回一句
+                # 「你还没提交」，比让它在沉默里烧完步数有用。空回复也是同一条路。
+                messages.append(
+                    {"role": "user", "content": "You have not submitted yet. Call submit_forecast now."}
+                )
                 continue
 
             for call in reply.tool_calls:
@@ -272,6 +278,16 @@ class Agent:
                 outcome = self.toolbox.call(call.name, call.arguments)
                 turn.outcomes.append(outcome)
                 messages.append(_tool_message(call.id, outcome.as_message(self.max_tool_chars)))
+
+            if force is not None and not any(call.name == "submit_forecast" for call in reply.tool_calls):
+                # 工具照常执行完再催，别在 assistant 的 tool_calls 后面直接插一条 user 消息：
+                # 那会让下一条请求缺 tool 回复，provider 直接 400。
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Step budget is nearly out. Call submit_forecast now with your best probability.",
+                    }
+                )
 
         trace.error = f"no valid submission after {self.max_steps} steps"
         return trace
@@ -335,6 +351,9 @@ class Agent:
 
 def _assistant_message(reply: Reply) -> dict:
     message: dict = {"role": "assistant", "content": reply.content or ""}
+    if reply.reasoning:
+        # 思考型模型要求原样回传，少这一行下一轮就是 HTTP 400
+        message["reasoning_content"] = reply.reasoning
     if reply.tool_calls:
         message["tool_calls"] = [
             {

@@ -59,7 +59,7 @@
           <thead>
             <tr>
               <th>Forecaster</th><th>Brier</th><th>LogLoss</th><th>ECE</th>
-              <th>Directional hit</th><th>$/forecast</th><th>p50 (s)</th><th>Tool calls</th><th>Gate hits</th>
+              <th>Directional hit</th><th>n</th><th>$/forecast</th><th>p50 (s)</th><th>Tool calls</th><th>Gate hits</th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -93,7 +93,7 @@
       if (name.startsWith("analogue")) return "analogue";
       if (name.startsWith("base rate")) return "base rate";
       if (name.startsWith("constant")) return "constant (0.5)";
-      return name;
+      return name.replace(/^agent /, "").replace("@api.deepseek.com", "");
     };
     const fmt = (value, digits = 4) => (value === undefined || value === null ? "—" : Number(value).toFixed(digits));
     const pct = (value) => (value === undefined || value === null ? "—" : (value * 100).toFixed(0) + "%");
@@ -116,6 +116,7 @@
             `<td>${fmt(row.log_loss)}</td>` +
             `<td>${fmt(row.ece, 3)}</td>` +
             `<td>${pct(row.hit_direction)}</td>` +
+            `<td>${row.n ?? report.n}</td>` +
             `<td>${fmt(row.cost_usd_per_forecast, 5)}</td>` +
             `<td>${fmt(row.latency_p50_s, 2)}</td>` +
             `<td>${fmt(row.tool_calls_mean, 2)}</td>` +
@@ -126,8 +127,10 @@
       const reference = report.references || {};
       const when = report.generated_at ? new Date(report.generated_at).toLocaleString("zh-CN") : "";
       document.querySelector("#stamp").textContent = when;
+      const shared = report.scored_on_shared;
       document.querySelector("#foot").textContent =
-        `${report.n} questions; realised resolution rate ${pct(reference.observed_rate)}; ` +
+        `${report.n} questions${shared && shared !== report.n ? " (all rows scored on the same " + shared + ")" : ""}; ` +
+        `realised resolution rate ${pct(reference.observed_rate)}; ` +
         `constant-0.5 Brier ${fmt((reference["constant_0.5"] || {}).brier)}`;
     }
 
@@ -183,6 +186,9 @@
         "Blind is the same model on the same questions with all tools removed: the ablation for tool value.",
         failures.join("; "), gates.join("; "),
         "Questions are generated from price history, so every outcome is already known: no waiting, no selection.",
+        "Runs priced as $0.00 are models missing from the price table, not free inference; token counts are still recorded.",
+        "Several models were run on the same bench and re-scored on the questions every row answered, so the columns are comparable.",
+        "A model that fails to submit is counted as a failure, not dropped: the failure rate is part of the comparison.",
       ].filter(Boolean).map((line) => `<div>${line}</div>`).join("");
     }
 
@@ -193,8 +199,12 @@
         const names = Object.keys(report.predictors);
         picked = names.sort((a, b) => report.predictors[a].brier - report.predictors[b].brier)[0];
         const config = report.config || {};
+        const models = config.models_merged;
+        const modelLabel = models && models.length > 1
+          ? `${models.length} models: ${models.join(", ")}`
+          : (config.model || "no model");
         document.querySelector("#config").textContent =
-          `${config.symbol} · ${report.n} questions · ${config.model || "no model"} · ${config.modes.join("/")}`;
+          `${config.symbol} · ${report.n} questions · ${modelLabel} · ${config.modes.join("/")}`;
         drawRows();
         drawReliability();
         drawFamilies();

@@ -424,8 +424,29 @@ def evaluate(
     by_id = {row.id: row for row in questions}
     ordered = [by_id[key] for key in sorted(shared, key=lambda key: (by_id[key].question.resolve_session, key))]
 
-    report = {"n": len(ordered), "questions": [row.id for row in ordered], "predictors": {}}
+    report = {
+        "n": len(ordered),
+        "questions": [row.id for row in ordered],
+        "outcomes": {row.id: row.outcome for row in ordered},
+        "predictors": {},
+    }
     for name, entry in results.items():
+        if not entry["_scores"]:
+            # 一道都没答出来的预测者：照样留一行（n=0 + 失败原因），但不参与 Brier 汇总，
+            # 也不许把整次评测带崩——它没有有序列表里的任何一个 key。
+            stats = entry["_stats"]
+            report["predictors"][name] = {
+                "brier": None, "log_loss": None, "ece": None, "hit_direction": None,
+                "mean_probability": None, "observed_rate": float(np.mean([row.outcome for row in ordered])) if ordered else None,
+                "cost_usd_total": round(stats["cost_usd"], 6),
+                "cost_usd_per_forecast": None,
+                "latency_p50_s": round(statistics.median(stats["latency"]), 3) if stats["latency"] else None,
+                "latency_p95_s": None,
+                "tool_calls_mean": round(statistics.fmean(stats["tool_calls"]), 2) if stats["tool_calls"] else 0.0,
+                "gate_hits": stats["gate_hits"], "failures": stats["failures"],
+                "reliability": [], "n": 0,
+            }
+            continue
         pairs = [(entry["_scores"][row.id], row.outcome) for row in ordered]
         if not pairs:
             continue
@@ -451,6 +472,7 @@ def evaluate(
             "gate_hits": stats["gate_hits"],
             "failures": stats["failures"],
             "reliability": reliability(pairs),
+            "pairs": {row.id: round(entry["_scores"][row.id], 6) for row in ordered},
             "by_family": {
                 family: {
                     "n": len(family_pairs),

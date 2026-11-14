@@ -3,3 +3,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .env
+data/news/
+data/daily.jsonl
+artifacts/news_labels/
+artifacts/surprise/

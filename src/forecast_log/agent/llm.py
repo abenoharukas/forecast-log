@@ -88,6 +88,9 @@ class Reply:
     tool_calls: tuple[ToolCall, ...] = ()
     usage: Usage = field(default_factory=Usage)
     finish_reason: str = ""
+    # 思考型模型（DeepSeek V4、o 系列）在多轮工具调用里要求把上一轮的思考原样传回，
+    # 否则下一轮直接 400。丢掉它就等于把这类模型挡在门外。
+    reasoning: str = ""
 
 
 class LLM(Protocol):
@@ -167,8 +170,35 @@ class OpenAICompatLLM:
         if tools:
             payload["tools"] = list(tools)
             payload["tool_choice"] = tool_choice or "auto"
-        body, latency = self._post(payload)
-        return self._parse(body, latency)
+        body, latency = self._chat_post(payload, forced=bool(tool_choice))
+        reply = self._parse(body, latency)
+        # 思考型模型把推理也算进 max_tokens：预算用完会返回空 content、没有 tool_calls、
+        # finish_reason=length。这时候不是模型没有答案，是它没被给够空间。翻倍重试。
+        budget = int(payload.get("max_tokens") or 1600)
+        while (
+            not reply.content
+            and not reply.tool_calls
+            and reply.finish_reason == "length"
+            and budget < 16000
+        ):
+            budget *= 2
+            payload["max_tokens"] = budget
+            body, latency = self._chat_post(payload, forced=False)
+            reply = self._parse(body, latency)
+        return reply
+
+    def _chat_post(self, payload: dict, forced: bool) -> tuple[dict, float]:
+        """思考型模型（DeepSeek V4、o 系列）不接受 tool_choice，连 "auto" 都不行，直接 400。
+
+        `tools` 字段本身是支持的，去掉 `tool_choice` 就正常。不这么兜，一次 400 就会变成
+        「这道题没有答案」，把整次评测的题集切碎。
+        """
+        try:
+            return self._post(payload)
+        except LLMError as error:
+            if "tool_choice" not in str(error):
+                raise
+            return self._post({key: value for key, value in payload.items() if key != "tool_choice"})
 
     def _post(self, payload: dict) -> tuple[dict, float]:
         data = json.dumps(payload).encode()
@@ -241,6 +271,7 @@ class OpenAICompatLLM:
                 latency_s=latency,
             ),
             finish_reason=str(choice.get("finish_reason") or ""),
+            reasoning=str(message.get("reasoning_content") or ""),
         )
 
 

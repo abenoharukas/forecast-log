@@ -40,7 +40,7 @@ from pathlib import Path
 
 import numpy as np
 
-from forecast_log import events
+from forecast_log import daily, events
 from forecast_log.bars import Series, load_series
 from forecast_log.stats import expanding_z
 from forecast_log.paths import series_path
@@ -117,6 +117,17 @@ class Call:
     flag: int
     outcome: int | None
     target: str | None
+    # 价格侧（四个因子 + 日历）自己的结论。`flag` 是再叠加新闻否决之后的结果。
+    price_only: int = 0
+    news_veto: int = 0
+    # 逐列的信息源标签：页面上的勾选框直接对应这些列，任意组合都能在前端重算。
+    composite: int = 0     # 复合分数 ≥ 90 分位
+    cal_cpi: int = 0       # CPI 前 3 天且分数 ≥ 中位
+    cal_nfp: int = 0       # NFP 前 3-7 天且分数 ≥ 中位
+    fomc_day: int = 0      # 决议当天（否决条件）
+    news_bearish: int = 0  # LLM：强利空意外（否决条件）
+    news_bullish: int = 0  # LLM：强利多意外（加分条件）
+    riskoff_hits: int = 0  # 正则：risk-off 概念命中数（可选否决）
 
 
 CPI_WINDOW = 3        # 离 CPI 几天内算「临近」
@@ -135,6 +146,113 @@ def _calendar_distance(root: Path, dates: list[str]) -> dict[str, np.ndarray] | 
     return out
 
 
+# 页面上的勾选框清单。加一个信息源 = 在 components 里加一列 + 在这里加一条，
+# 前端不用改：它按 kind 决定这一列是「触发」「否决」还是「加分」。
+CONTEXTS: list[dict] = [
+    {
+        "key": "composite",
+        "label": "Cross-asset composite (4 factors)",
+        "kind": "trigger",
+        "required": True,          # 基础条件：关掉它就没有任何信号，界面锁死
+        "note": "z-score of yields, dollar, credit, VIX; signal above the 90th percentile",
+        "available_from": None,
+    },
+    {
+        "key": "cal_cpi",
+        "label": "CPI window (3 days before)",
+        "kind": "trigger",
+        "note": "score at or above the median within 3 days of a CPI release",
+        "available_from": "2011-01-01",
+    },
+    {
+        "key": "cal_nfp",
+        "label": "NFP window (3-7 days before)",
+        "kind": "trigger",
+        "note": "score at or above the median 3-7 days before payrolls",
+        "available_from": "2011-01-01",
+    },
+    {
+        "key": "fomc_day",
+        "label": "FOMC decision day",
+        "kind": "veto",
+        "note": "no signal on the day the Fed decides",
+        "available_from": "2011-01-01",
+    },
+    {
+        "key": "news_bearish",
+        "label": "News surprise (LLM)",
+        "kind": "veto",
+        "note": "one LLM read per day; a strong bearish surprise removes that day's signal",
+        "available_from": "2002-01-01",
+    },
+]
+
+
+def _news_labels(root: Path) -> tuple[dict[str, dict], dict]:
+    """新闻侧的标签，两种来源都读：LLM 的「意外」标注优先，退回事件标签。
+
+    这是第一个**进入 `flag` 判定**的新闻因子。它能不能留下，看 `document()` 里
+    `with_news` 和 `price_only` 两套数的差 —— 页面上是并排显示的，不藏。
+    """
+    labels: dict[str, dict] = {}
+    provenance: dict = {"source": None, "days": 0, "veto_days": 0}
+
+    from forecast_log import surprise as surprise_module
+
+    compact = surprise_module.load_compact(root)
+    if compact:
+        for day, label in compact.items():
+            labels[day] = {
+                "surprise": label.get("surprise", "none"),
+                "direction": label.get("direction", "ambiguous"),
+                "prompt_version": label.get("prompt_version", "surprise-v1"),
+                "model": label.get("model", "deepseek-chat"),
+            }
+        provenance.update(source="artifacts/surprise.jsonl (LLM: surprise x direction)", days=len(labels))
+
+    surprise_path = root / "artifacts" / "surprise"
+    if not labels and surprise_path.is_dir():
+        for path in surprise_path.glob("????-??-??.json"):
+            try:
+                record = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            label = record.get("label") or {}
+            labels[record["as_of"]] = {
+                "surprise": label.get("surprise", "none"),
+                "direction": label.get("direction", "ambiguous"),
+                "prompt_version": record.get("prompt_version"),
+                "model": record.get("model"),
+            }
+        provenance.update(source="artifacts/surprise (LLM: surprise x direction)", days=len(labels))
+    provenance["veto_days"] = sum(
+        1 for label in labels.values() if label["surprise"] == "strong" and label["direction"] == "bearish"
+    )
+    return labels, provenance
+
+
+def _keyword_features(root: Path, dates: list[str]) -> dict[str, int]:
+    """每天标题里命中的 risk-off 概念数。没有当天记录就是 0。"""
+    from forecast_log.keywords import scan
+
+    news_dir = root / "data" / "news"
+    if not news_dir.is_dir():
+        return {}
+    wanted = set(dates)
+    out: dict[str, int] = {}
+    for path in news_dir.glob("????-??-??.json"):
+        if path.stem not in wanted:
+            continue
+        try:
+            record = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        titles = [document.get("title", "") for document in record.get("documents", [])]
+        if titles:
+            out[path.stem] = len(scan(titles)["risk_off_hits"])
+    return out
+
+
 def calls(root: Path, series: Series) -> list[Call]:
     closes = np.array([bar.close for bar in series.bars], dtype=float)
     log_close = np.log(closes)
@@ -142,6 +260,8 @@ def calls(root: Path, series: Series) -> list[Call]:
     scores = composite(root, series)
     dates = [bar.date.isoformat() for bar in series.bars]
     calendar = _calendar_distance(root, dates)
+    news, _ = _news_labels(root)
+    keyword_features = _keyword_features(root, dates)
     forward = np.full(n, np.nan)
     forward[:-HORIZON] = log_close[HORIZON:] - log_close[:-HORIZON]
     out = []
@@ -167,6 +287,23 @@ def calls(root: Path, series: Series) -> list[Call]:
             if flag and calendar["fomc"][i] == 0:
                 # FOMC 决议当天：市场在等 2 点的结果，方向最随机，不打点
                 flag = 0
+        # ---- 逐列标签：后面所有组合都从这些列算出来，不再各写一套逻辑
+        label = news.get(dates[i]) or {}
+        bearish = int(label.get("surprise") == "strong" and label.get("direction") == "bearish")
+        bullish = int(label.get("surprise") == "strong" and label.get("direction") == "bullish")
+        if calendar is None:
+            cal_cpi = cal_nfp = fomc_day = 0
+        else:
+            above_middle = scores[i] >= middle
+            low, high = NFP_WINDOW
+            cal_cpi = int(above_middle and calendar["cpi"][i] <= CPI_WINDOW)
+            cal_nfp = int(above_middle and low <= calendar["nfp"][i] <= high)
+            fomc_day = int(calendar["fomc"][i] == 0)
+        composite_flag = int(scores[i] >= threshold)
+
+        price_only = flag
+        # 默认组合 = 复合分数 + 日历触发 − FOMC 当天 − 强利空意外
+        flag = int(bool(composite_flag or cal_cpi or cal_nfp) and not fomc_day and not bearish)
         outcome = None if np.isnan(forward[i]) else int(forward[i] > 0)
         out.append(
             Call(
@@ -177,6 +314,15 @@ def calls(root: Path, series: Series) -> list[Call]:
                 flag=flag,
                 outcome=outcome,
                 target=dates[i + HORIZON] if i + HORIZON < n else None,
+                price_only=price_only,
+                news_veto=int(price_only and not flag),
+                composite=composite_flag,
+                cal_cpi=cal_cpi,
+                cal_nfp=cal_nfp,
+                fomc_day=fomc_day,
+                news_bearish=bearish,
+                news_bullish=bullish,
+                riskoff_hits=keyword_features.get(dates[i], 0),
             )
         )
     return out
@@ -197,16 +343,62 @@ def _calendar_provenance(root: Path) -> dict | None:
     }
 
 
+def _runtime_context(root: Path) -> dict | None:
+    """当日 LLM 读新闻的结果（`forecast-log daily` 写的），没有就没有这一块。
+
+    只做展示和记账：信号由价格侧因子决定，LLM 说偏空不会把信号吞掉，只标成 contested。
+    """
+    record = daily.load(root)
+    if record is None:
+        return None
+    label = record.get("label") or {}
+    news = record.get("news") or {}
+    return {
+        "as_of": record.get("as_of"),
+        "generated_at": record.get("generated_at"),
+        "model": record.get("model"),
+        "prompt_version": record.get("prompt_version"),
+        "tone": label.get("tone"),
+        "confidence": label.get("confidence"),
+        "drivers": label.get("drivers") or [],
+        "note": label.get("note"),
+        "headlines_used": news.get("used"),
+        "headlines_retrieved": news.get("retrieved"),
+        "dropped_after_as_of": news.get("dropped_after_as_of"),
+        "source": news.get("source"),
+        "errors": news.get("errors") or [],
+        "contested": record.get("contested"),
+        "keywords": record.get("keywords"),
+        "veto_watch": record.get("veto_watch"),
+        "cost_usd": (record.get("usage") or {}).get("cost_usd"),
+    }
+
+
 def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
     rows = calls(root, series)
     resolved = [row for row in rows if row.outcome is not None]
-    flagged = [row for row in resolved if row.flag]
-    base = float(np.mean([row.outcome for row in resolved])) if resolved else float("nan")
-    hits = float(np.mean([row.outcome for row in flagged])) if flagged else float("nan")
-    held = [row for row in resolved if row.date >= holdout]
-    held_flag = [row for row in held if row.flag]
-    held_base = float(np.mean([row.outcome for row in held])) if held else float("nan")
-    held_hit = float(np.mean([row.outcome for row in held_flag])) if held_flag else float("nan")
+
+    def tally(selected: list[Call]) -> dict:
+        flagged = [row for row in selected if row.flag]
+        held = [row for row in selected if row.date >= holdout]
+        held_flag = [row for row in held if row.flag]
+        return {
+            "n": len(selected),
+            "base_rate": round(float(np.mean([row.outcome for row in selected])), 4) if selected else None,
+            "flagged": len(flagged),
+            "hit": round(float(np.mean([row.outcome for row in flagged])), 4) if flagged else None,
+            "holdout_n": len(held),
+            "holdout_base_rate": round(float(np.mean([row.outcome for row in held])), 4) if held else None,
+            "holdout_flagged": len(held_flag),
+            "holdout_hit": round(float(np.mean([row.outcome for row in held_flag])), 4) if held_flag else None,
+        }
+
+    price_rows = [Call(**{**row.__dict__, "flag": row.price_only}) for row in resolved]
+    with_news = tally(resolved)
+    price_only = tally(price_rows)
+    _, news_provenance = _news_labels(root)
+    news_provenance["vetoed_signals"] = sum(row.news_veto for row in resolved)
+
     return {
         "question": {
             "horizon": HORIZON,
@@ -218,38 +410,52 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
                 "Factor 4 — VIX above its one-year median",
                 "Add: within 3 days before CPI, or 3-7 days before NFP, with the average at or above the median (calendar pulled by the LLM)",
                 "Remove: no point on the FOMC decision day",
+                "Remove: LLM reads a strong bearish surprise in the day's news (news veto; see the with/without table)",
             ],
             "rule": (
                 f"Average the four standardised factors; mark a point above the {int(QUANTILE * 100)}th percentile "
                 "of all history up to that day, or within 3 days before CPI / 3-7 days before NFP with the score "
-                "at or above the median; no point on the FOMC decision day"
+                "at or above the median; no point on the FOMC decision day; and the news veto removes signals on "
+                "days the LLM labels as a strong bearish surprise"
             ),
         },
         "fetched_at": series.fetched_at,
         "calendar": _calendar_provenance(root),
+        "news": news_provenance,
         "time": [row.date for row in rows],
         "close": [round(row.close, 2) for row in rows],
         "score": [round(row.score, 4) for row in rows],
         "threshold": [round(row.threshold, 4) for row in rows],
         "flag": [row.flag for row in rows],
+        "flag_price_only": [row.price_only for row in rows],
+        "components": {
+            "composite": [row.composite for row in rows],
+            "cal_cpi": [row.cal_cpi for row in rows],
+            "cal_nfp": [row.cal_nfp for row in rows],
+            "fomc_day": [row.fomc_day for row in rows],
+            "news_bearish": [row.news_bearish for row in rows],
+            "news_bullish": [row.news_bullish for row in rows],
+            "riskoff_hits": [row.riskoff_hits for row in rows],
+        },
+        "contexts": [
+            {**item, "available_from": item.get("available_from") or rows[0].date}
+            if item["key"] == "composite"
+            else item
+            for item in CONTEXTS
+        ],
+        "news_veto": [row.news_veto for row in rows],
         "outcome": [row.outcome for row in rows],
         "target": [row.target for row in rows],
-        "summary": {
-            "n": len(resolved),
-            "base_rate": round(base, 4),
-            "flagged": len(flagged),
-            "hit": round(hits, 4),
-            "holdout_from": holdout,
-            "holdout_n": len(held),
-            "holdout_base_rate": round(held_base, 4),
-            "holdout_flagged": len(held_flag),
-            "holdout_hit": round(held_hit, 4),
-        },
+        "summary": {**with_news, "holdout_from": holdout},
+        "summary_price_only": {**price_only, "holdout_from": holdout},
+        "context": _runtime_context(root),
         "latest": {
             "date": rows[-1].date,
             "close": round(rows[-1].close, 2),
             "score": round(rows[-1].score, 4),
             "threshold": round(rows[-1].threshold, 4),
             "flag": rows[-1].flag,
+            "flag_price_only": rows[-1].price_only,
+            "news_veto": bool(rows[-1].news_veto),
         },
     }

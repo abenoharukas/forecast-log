@@ -129,6 +129,88 @@ def agent_forecast_command(
     return records
 
 
+def _rescore(row: dict, outcomes: dict, ids: list[str]) -> dict:
+    """把一行按给定题号子集重算指标。合并多个模型时必须这么做：答不上的题让每一行落在
+    不同子集上，直接比 Brier 等于比不同题目。"""
+    from forecast_log.agent.eval import brier, ece, log_loss, reliability
+
+    pairs = [
+        (row["pairs"][key], outcomes[key]) for key in ids if key in row.get("pairs", {}) and key in outcomes
+    ]
+    if not pairs:
+        return {**row, "brier": None, "n": 0}
+    return {
+        **row,
+        "brier": round(brier(pairs), 4),
+        "log_loss": round(log_loss(pairs), 4),
+        "ece": round(ece(pairs), 4),
+        "hit_direction": round(
+            sum(1.0 if (p >= 0.5) == (o == 1) else 0.0 for p, o in pairs) / len(pairs), 4
+        ),
+        "mean_probability": round(sum(p for p, _ in pairs) / len(pairs), 4),
+        "observed_rate": round(sum(o for _, o in pairs) / len(pairs), 4),
+        "reliability": reliability(pairs),
+        "n": len(pairs),
+    }
+
+
+def _merge_previous(path: Path, report: dict) -> dict:
+    """把上一次同题集的预测者并进来，然后**按共同答上的题**重算每一行。
+
+    只能并同一批题：题集不同直接退出。答不上的题也允许存在，但合并后所有行都只在
+    「每行都答了」的交集上打分，并写清交集大小——这样表里任何两个数都可比。
+    """
+    summary_path = Path(str(path).replace(".json", "_summary.json"))
+    if not summary_path.is_file():
+        return report
+    try:
+        previous = json.loads(summary_path.read_text())
+    except json.JSONDecodeError:
+        return report
+    same_bench = previous.get("bench", previous.get("questions")) == report.get("bench", report.get("questions"))
+    if not same_bench:
+        raise SystemExit("拒绝合并：题集不同。用同一个 --symbol/--stride/--limit/--modes 重跑。")
+
+    outcomes = {**previous.get("outcomes", {}), **report.get("outcomes", {})}
+    model = str((report.get("config") or {}).get("model") or "agent").split("@")[0]
+
+    merged: dict[str, dict] = dict(previous.get("predictors") or {})
+    for name, row in (report.get("predictors") or {}).items():
+        if name.startswith("agent"):
+            name = f"agent {model}" + (" blind" if name.endswith("blind") else "")
+        merged[name] = row
+
+    covered = [
+        set(row.get("pairs") or {}) for row in merged.values() if row.get("pairs")
+    ]
+    shared = sorted(set.intersection(*covered), key=lambda key: str(key)) if covered else []
+    for name, row in merged.items():
+        if row.get("pairs"):
+            merged[name] = _rescore(row, outcomes, shared)
+
+    traces = dict(previous.get("traces") or {})
+    for name, trace in (report.get("traces") or {}).items():
+        if name.startswith("agent"):
+            name = f"agent {model}" + (" blind" if name.endswith("blind") else "")
+        traces[name] = trace
+
+    report = dict(report)
+    report["predictors"] = merged
+    report["traces"] = traces
+    report["outcomes"] = outcomes
+    report["n"] = len(shared) or report.get("n")
+    report["scored_on_shared"] = len(shared)
+    report["config"] = {
+        **(report.get("config") or {}),
+        "models_merged": sorted(
+            str(name).replace("agent ", "").replace(" blind", "")
+            for name in merged
+            if name.startswith("agent")
+        ),
+    }
+    return report
+
+
 def agent_eval_command(
     root: Path,
     *,
@@ -144,6 +226,7 @@ def agent_eval_command(
     out: str = "artifacts/agent_eval.json",
     max_steps: int = 8,
     workers: int = 1,
+    merge: bool = False,
 ) -> dict:
     series = load_series(series_path(root, symbol))
     questions = build_questions(series, stride=stride, limit=limit, modes=modes)
@@ -172,11 +255,15 @@ def agent_eval_command(
         "model": getattr(llm, "name", None) if with_agent else None,
         "workers": workers,
     }
+    report["bench"] = [question.id for question in questions]
     report["traces"] = {
         predictor.name: [trace.to_json() for trace in predictor.traces]
         for predictor in agents
         if predictor.traces
     }
+    if merge:
+        report = _merge_previous(root / out, report)
+
     path = write_report(root / out, report)
     # The page should not download 1.2 MB of traces to draw six rows.
     write_report(

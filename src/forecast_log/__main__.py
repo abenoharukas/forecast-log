@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from datetime import date
 
 from forecast_log.agent_cli import agent_eval_command, agent_forecast_command, agent_report_command
 from forecast_log.commands import (
@@ -11,7 +13,7 @@ from forecast_log.commands import (
     resolve_command,
     score_command,
 )
-from forecast_log import events
+from forecast_log import daily, events, wiki_news
 from forecast_log.paths import repo_root
 
 
@@ -28,6 +30,15 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("score", help="计算已结算题目的 Brier 分数")
     sub.add_parser("cross", help="跨资产风险偏好偏多时的 5 天上涨点")
     sub.add_parser("events", help="让 LLM 拉 FOMC / CPI / NFP 日历（data/events.json）")
+    daily_parser = sub.add_parser("daily", help="收盘后跑一次：抓当天新闻，LLM 给当天风险偏好标签")
+    daily_parser.add_argument("--day", default=None, help="as-of 日期，默认今天")
+    daily_parser.add_argument("--no-cache", action="store_true", help="忽略当天的新闻缓存，重新抓")
+
+    news_parser = sub.add_parser("news-backfill", help="补历史新闻（Wikipedia Portal:Current events）")
+    news_parser.add_argument("--start", default="2013-01-01")
+    news_parser.add_argument("--end", default=None, help="默认到最后一个交易日")
+    news_parser.add_argument("--batch", type=int, default=40, help="一次请求取多少天")
+    sub.add_parser("news-coverage", help="新闻覆盖率：按年、按交易日")
 
     agent = sub.add_parser("agent-forecast", help="让 agent 给三道题写影子预测（不碰 forecasts/）")
     agent.add_argument("--runs", type=int, default=1, help="独立跑几次，log-odds 池化")
@@ -47,6 +58,7 @@ def main(argv: list[str] | None = None) -> None:
     bench.add_argument("--also-blind", action="store_true", help="再加一个不给工具的 agent，做消融")
     bench.add_argument("--out", default="artifacts/agent_eval.json")
     bench.add_argument("--workers", type=int, default=1, help="并发跑几道题")
+    bench.add_argument("--merge", action="store_true", help="把新模型并进上一次同题集的结果，做多模型对比")
 
     report = sub.add_parser("agent-report", help="把 agent_eval.json 打成 markdown 表")
     report.add_argument("--path", default="artifacts/agent_eval.json")
@@ -65,6 +77,42 @@ def main(argv: list[str] | None = None) -> None:
         score_command(root)
     elif args.command == "cross":
         cross_command(root)
+    elif args.command == "news-backfill":
+        start = date.fromisoformat(args.start)
+        days = [day for day in wiki_news.trading_days(root) if day >= start]
+        if args.end:
+            end = date.fromisoformat(args.end)
+            days = [day for day in days if day <= end]
+        print(f"{len(days)} 个交易日，{days[0]} → {days[-1]}")
+        stats = wiki_news.backfill_batch(root, days, batch=args.batch)
+        print(f"新补 {stats['ok']}，已有 {stats['already']}，空页 {stats['empty']}，失败 {stats['failed']}")
+        for error in stats["errors"][:5]:
+            print("  ", error)
+        print(wiki_news.coverage(root, days))
+    elif args.command == "news-coverage":
+        days = [day for day in wiki_news.trading_days(root) if day >= date(2013, 1, 1)]
+        report = wiki_news.coverage(root, days)
+        print(json.dumps(report, ensure_ascii=False, indent=1))
+    elif args.command == "daily":
+        record = daily.run(
+            root,
+            day=date.fromisoformat(args.day) if args.day else None,
+            use_cache=not args.no_cache,
+        )
+        label = record["label"]
+        news = record["news"]
+        print(
+            f"{record['as_of']}  {record['model']}  {label['tone']} {label['confidence']:.2f}  "
+            f"标题 {news['used']}/{news['retrieved']} 条（丢弃 {news['dropped_after_as_of']} 条越界）  "
+            f"${record['usage']['cost_usd']:.5f}"
+        )
+        for driver in label["drivers"]:
+            print("  -", driver)
+        if record["contested"]:
+            print("  与信号相左：页面会把它标成 contested")
+        for error in news["errors"]:
+            print("  抓取失败:", error)
+        print("写在", daily.artifact_path(root))
     elif args.command == "events":
         record = events.fetch(root)
         print(
@@ -91,6 +139,7 @@ def main(argv: list[str] | None = None) -> None:
             modes=tuple(part.strip() for part in args.modes.split(",") if part.strip()),
             out=args.out,
             workers=args.workers,
+            merge=args.merge,
         )
 
 

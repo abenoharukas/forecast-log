@@ -1,6 +1,6 @@
 """同一套信号，换一个市场结算：预测上证综指。
 
-信号**一个字都不改**：四条腿（10 年期收益率、美元、HYG/TLT、VIX）、扩张 z 分数、90 分位阈值、
+信号**一个字都不改**：四个因子（10 年期收益率、美元、HYG/TLT、VIX）、扩张 z 分数、90 分位阈值、
 CPI / NFP / FOMC 三个日历窗口、新闻否决，全部用 `artifacts/cross.json` 里已经算好的那一份。
 换掉的只有两件事：
 
@@ -172,7 +172,7 @@ def document(root: Path) -> dict:
                 f"Same cross-asset risk appetite long → does the {TARGET_NAME} print any close above the "
                 f"entry price in the next {HORIZON} A-share sessions?"
             ),
-            "legs": [
+            "factors": [
                 "The signal is untouched: four US cross-asset factors, 90th percentile of expanding history",
                 "Add: within 3 days before CPI, or 3-7 days before NFP, with the score at or above the median",
                 "Remove: no point on the FOMC decision day, and no point on days with a strong bearish surprise",

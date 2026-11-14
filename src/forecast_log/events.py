@@ -1,7 +1,7 @@
 """LLM 负责的那一段：把价格里没有的事件日历拉下来。
 
 价格序列不知道「下周三有 FOMC」，人知道，而且这类信息提前公布、可以事后核对。所以它不进
-模型的状态向量，而是单独存成一份日历，由 `cross.py` 折成「离下一次会议还有几天」这样的腿。
+模型的状态向量，而是单独存成一份日历，由 `cross.py` 折成「离下一次会议还有几天」这样的输入。
 
 存 `data/events.json`，带 prompt、模型、时间戳、token 成本和校验结果：事后能看出它是问出来的
 还是编的（每年次数、是否工作日、是否在范围内）。
@@ -97,7 +97,7 @@ def fetch(root: Path, llm: LLM | None = None, now: datetime | None = None) -> di
 
 
 def load(root: Path) -> dict[str, list[date]] | None:
-    """日历，没有文件时返回 None，调用方自己决定要不要退化成四条腿。"""
+    """日历，没有文件时返回 None，调用方自己决定要不要退化成四个因子。"""
     path = path_of(root)
     if not path.is_file():
         return None

@@ -141,7 +141,7 @@
             sessions prints a close above it. On the chart the arrow sits on the day the signal is issued — the
             session where you would act; hover any session to see the entry price, the best close in the window and
             the day it printed. Factors:
-            <ul id="legs"></ul>
+            <ul id="factors"></ul>
           </div>
         </div>
         <div class="block">
@@ -449,11 +449,11 @@
         document.querySelector("#question").textContent = data.question.text;
         document.querySelector("#rule").textContent =
           s.flagged + " signals · precision " + percent(s.hit) + " · any close above entry within 5 sessions";
-        document.querySelector("#legs").textContent = "";
-        (data.question.legs || []).forEach((text) => {
+        document.querySelector("#factors").textContent = "";
+        (data.question.factors || []).forEach((text) => {
           const li = document.createElement("li");
           li.textContent = text;
-          document.querySelector("#legs").appendChild(li);
+          document.querySelector("#factors").appendChild(li);
         });
         draw(data);
 

@@ -1,13 +1,13 @@
-"""跨资产风险偏好：四条腿同时偏多时，指数之后 5 个交易日内更容易摸到更高价。
+"""跨资产风险偏好：四个因子同时偏多时，指数之后 5 个交易日内更容易摸到更高价。
 
-四条腿（都只用当天已知的收盘）：
+四个因子（都只用当天已知的收盘）：
 
     10 年期收益率 20 日变化   下行 → 偏多
     美元 20 日涨跌            走弱 → 偏多
     信用 HYG/TLT 20 日涨跌    走强 → 偏多
     VIX 相对一年中位          偏高 → 偏多
 
-每条腿做扩张 z 分数（只用当天及之前），四条取平均，得到复合分数。
+每个因子做扩张 z 分数（只用当天及之前），四个取平均，得到复合分数。
 
 打点规则三个日历事件都用上（日历由 LLM 拉，`data/events.json`）：
 
@@ -53,10 +53,10 @@ HORIZON = 5
 QUANTILE = 0.90
 MIN_HISTORY = 252
 
-# fetch 用：这四条腿背后的行情，以及备用（广度、黄金）
+# fetch 用：这四个因子背后的行情，以及备用（广度、黄金）
 CROSS_SYMBOLS = ("^TNX", "DX-Y.NYB", "HYG", "TLT", "SPY", "RSP", "GC=F", "^VIX")
 
-LEGS = (
+FACTORS = (
     ("^TNX", "diff20", -1.0),
     ("DX-Y.NYB", "ret20", -1.0),
     ("HYG/TLT", "ret20", 1.0),
@@ -101,14 +101,14 @@ def _leg(values: np.ndarray, how: str) -> np.ndarray:
     return out
 
 
-def composite(root: Path, series: Series, legs=LEGS) -> np.ndarray:
-    """复合分数。四条腿缺一条就是 NaN，不拿三条糊弄。
+def composite(root: Path, series: Series, factors=FACTORS) -> np.ndarray:
+    """复合分数。四个因子缺一个就是 NaN，不拿三个糊弄。
 
-    `legs` 可换：A 股那份（`china.py`）用同样的角色、本地的输入。
+    `factors` 可换：换一组跨资产因子，标准化和取平均的方式不动。
     """
     dates = np.array([np.datetime64(bar.date) for bar in series.bars])
     parts = []
-    for symbol, how, sign in legs:
+    for symbol, how, sign in factors:
         raw = _leg(_prices(root, symbol, dates), how)
         parts.append(sign * expanding_z(raw))
     stacked = np.column_stack(parts)
@@ -416,7 +416,7 @@ def document(
 ) -> dict:
     """The study for one instrument. The signals never read this instrument's prices.
 
-    The composite is built from the four cross-asset legs only, so swapping the
+    The composite is built from the four cross-asset factors only, so swapping the
     target (NDX -> QQQ) leaves `flag` untouched and changes only the outcomes.
     """
     label = instrument or series.symbol
@@ -452,7 +452,7 @@ def document(
                 f"Cross-asset risk appetite long → does {label} print any close above the entry "
                 f"price in the next {HORIZON} sessions?"
             ),
-            "legs": [
+            "factors": [
                 "Factor 1 — 10Y Treasury yield down over 20 sessions",
                 "Factor 2 — dollar index weaker over 20 sessions",
                 "Factor 3 — credit HYG/TLT stronger over 20 sessions",

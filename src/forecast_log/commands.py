@@ -105,7 +105,7 @@ def backtest_command(root: Path) -> dict:
 
 
 def cross_command(root: Path) -> dict:
-    """跨资产风险偏好偏多时的 5 天上涨点（artifacts/cross.json）。"""
+    """跨资产风险偏好偏多时，之后 5 个交易日内偏涨的点（artifacts/cross.json）。"""
     ndx = load_series(series_path(root, "^NDX"))
     document = cross_document(root, ndx)
     path = root / "artifacts" / "cross.json"

@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("lock", help="给三道题各写一次概率。写过就不能改")
     sub.add_parser("resolve", help="结算日收盘之后写入 resolutions.json")
     sub.add_parser("score", help="计算已结算题目的 Brier 分数")
-    sub.add_parser("cross", help="跨资产风险偏好偏多时的 5 天上涨点")
+    sub.add_parser("cross", help="跨资产风险偏好偏多时，之后 5 个交易日内的偏涨点")
     sub.add_parser("events", help="让 LLM 拉 FOMC / CPI / NFP 日历（data/events.json）")
     daily_parser = sub.add_parser("daily", help="收盘后跑一次：抓当天新闻，LLM 给当天风险偏好标签")
     daily_parser.add_argument("--day", default=None, help="as-of 日期，默认今天")

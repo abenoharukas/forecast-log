@@ -1,4 +1,4 @@
-"""跨资产风险偏好：四条腿同时偏多时，指数后 5 天偏涨。
+"""跨资产风险偏好：四条腿同时偏多时，指数之后 5 个交易日内更容易摸到更高价。
 
 四条腿（都只用当天已知的收盘）：
 
@@ -16,16 +16,20 @@
     加：离下一次 NFP 在 3 到 7 天之间，且分数 >= 历史中位
     减：FOMC 决议当天不打点（那天市场在等结果，方向最随机）
 
+命中口径：入场价 = 信号当天收盘；之后 5 个交易日内**任何一根收盘高于入场价**就算命中
+（不是「第 5 个交易日收盘更高」，也不是盘中的最高价）。
+
 三个窗口是分开挑的，不是随手写：CPI 0-3 天、NFP 3-7 天在 2015 年前后两段都高于基率；
-NFP 0-2 天反而低于基率（2015 年前 52.1% 对 57.1%），FOMC 0-2 天两段方向相反（63.0% 对 56.8%），
-所以 FOMC 只用来否决决议当天。
+NFP 0-2 天低于基率（2015 年前 −2.4 个点，2015 后 −0.2 个点），
+FOMC 0-2 天两段方向相反（2015 前 +3.8 个点，2015 后 −2.5 个点），所以 FOMC 只用来否决决议当天。
+窗口本身是在旧口径（第 5 日收盘更高）下挑的，换口径后没有重挑，规则照旧。
 
-现状（2026-11-13 重算，三个日历事件都用上）：
+现状（2026-11-15 重算，三个日历事件 + 新闻否决都用上，上面的命中口径）：
 
-    2015 之前     146 个点，命中 65.8%，同期基率 59.0%
-    2015 之后     579 个点，命中 66.3%，同期基率 59.7%
+    全样本       629 个点，命中 85.5%，同期基率 82.1%
+    样本外 2015+ 505 个点，命中 86.1%，同期基率 82.1%
 
-留出期的阈值只用 2015 年之前的数据定。打点约占全部日子的 11%，其中约 82 个独立的 5 天窗口。
+留出期的阈值只用 2015 年之前的数据定。打点约占全部日子的 14%，其中约 101 个独立的 5 天窗口。
 日历来自 LLM（`data/events.json`，129 次 FOMC / 192 次 CPI / 192 次 NFP，$0.0016），
 它只提供「离 CPI 还有几天」，其余判断都在价格这一侧。
 """
@@ -117,6 +121,9 @@ class Call:
     flag: int
     outcome: int | None
     target: str | None
+    # 窗口里最高的那根收盘（页面读数用），和它落在哪天。`outcome` 就是「它比入场价高」。
+    peak: float | None = None
+    peak_at: str | None = None
     # 价格侧（四个因子 + 日历）自己的结论。`flag` 是再叠加新闻否决之后的结果。
     price_only: int = 0
     news_veto: int = 0
@@ -255,15 +262,21 @@ def _keyword_features(root: Path, dates: list[str]) -> dict[str, int]:
 
 def calls(root: Path, series: Series) -> list[Call]:
     closes = np.array([bar.close for bar in series.bars], dtype=float)
-    log_close = np.log(closes)
     n = len(closes)
     scores = composite(root, series)
     dates = [bar.date.isoformat() for bar in series.bars]
     calendar = _calendar_distance(root, dates)
     news, _ = _news_labels(root)
     keyword_features = _keyword_features(root, dates)
-    forward = np.full(n, np.nan)
-    forward[:-HORIZON] = log_close[HORIZON:] - log_close[:-HORIZON]
+    # 入场价就是当天收盘；只要之后 5 个交易日里有任何一根收盘高过它就算命中。
+    # `peak_at` 记下高在哪天（可能不是第 5 天），`target` 仍然是窗口末尾那天，用来对账。
+    peak = np.full(n, np.nan)
+    peak_at: list[str | None] = [None] * n
+    for i in range(n - HORIZON):
+        window = closes[i + 1 : i + 1 + HORIZON]
+        offset = int(np.argmax(window))
+        peak[i] = window[offset]
+        peak_at[i] = dates[i + 1 + offset]
     out = []
     for i in range(n):
         if np.isnan(scores[i]) or i < MIN_HISTORY:
@@ -304,7 +317,8 @@ def calls(root: Path, series: Series) -> list[Call]:
         price_only = flag
         # 默认组合 = 复合分数 + 日历触发 − FOMC 当天 − 强利空意外
         flag = int(bool(composite_flag or cal_cpi or cal_nfp) and not fomc_day and not bearish)
-        outcome = None if np.isnan(forward[i]) else int(forward[i] > 0)
+        resolved = i + HORIZON < n
+        outcome = int(peak[i] > closes[i]) if resolved else None
         out.append(
             Call(
                 date=dates[i],
@@ -313,7 +327,9 @@ def calls(root: Path, series: Series) -> list[Call]:
                 threshold=threshold,
                 flag=flag,
                 outcome=outcome,
-                target=dates[i + HORIZON] if i + HORIZON < n else None,
+                target=dates[i + HORIZON] if resolved else None,
+                peak=float(peak[i]) if resolved else None,
+                peak_at=peak_at[i],
                 price_only=price_only,
                 news_veto=int(price_only and not flag),
                 composite=composite_flag,
@@ -402,7 +418,7 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
     return {
         "question": {
             "horizon": HORIZON,
-            "text": f"Cross-asset risk appetite long → is the index higher {HORIZON} sessions later?",
+            "text": f"Cross-asset risk appetite long → does the index print any close above the entry price in the next {HORIZON} sessions?",
             "legs": [
                 "Factor 1 — 10Y Treasury yield down over 20 sessions",
                 "Factor 2 — dollar index weaker over 20 sessions",
@@ -416,7 +432,8 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
                 f"Average the four standardised factors; mark a point above the {int(QUANTILE * 100)}th percentile "
                 "of all history up to that day, or within 3 days before CPI / 3-7 days before NFP with the score "
                 "at or above the median; no point on the FOMC decision day; and the news veto removes signals on "
-                "days the LLM labels as a strong bearish surprise"
+                "days the LLM labels as a strong bearish surprise. The entry price is that session's close; the call "
+                f"is a hit if any of the next {HORIZON} closes is above it."
             ),
         },
         "fetched_at": series.fetched_at,
@@ -446,6 +463,8 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
         "news_veto": [row.news_veto for row in rows],
         "outcome": [row.outcome for row in rows],
         "target": [row.target for row in rows],
+        "peak": [round(row.peak, 2) if row.peak is not None else None for row in rows],
+        "peak_at": [row.peak_at for row in rows],
         "summary": {**with_news, "holdout_from": holdout},
         "summary_price_only": {**price_only, "holdout_from": holdout},
         "context": _runtime_context(root),

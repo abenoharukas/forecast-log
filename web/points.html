@@ -29,6 +29,10 @@
     }
     .pane-head .name { font-size: 15px; font-weight: 500; }
     .chart { flex: 1; min-height: 0; }
+    #readout {
+      flex-basis: 100%; min-height: 15px; color: var(--ink);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     aside {
       width: 350px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
       padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace;
@@ -115,9 +119,10 @@
     <div class="board">
       <div class="pane">
         <div class="pane-head">
-          <span class="name">Risk-on composite → NDX up after 5 sessions</span>
+          <span class="name">Risk-on composite → any close above entry within 5 sessions</span>
           <span class="sub" id="rule">—</span>
-          <span class="sub">green = signal realised, grey = signal failed</span>
+          <span class="sub">arrow = the day the signal is issued · green = a close in the next 5 sessions got above the entry, grey = none did · hover a session for the check</span>
+          <span class="sub" id="readout">hover a session: entry price, then the best close in the next five sessions</span>
         </div>
         <div class="chart" id="chart"></div>
       </div>
@@ -130,7 +135,10 @@
             average of the four. A signal is triggered when the composite exceeds its 90th percentile on that same
             expanding window. Two conditional triggers are added: within 3 calendar days of a CPI release, or 3-7
             days of an NFP release, with the composite at or above its expanding median. No signal on the FOMC
-            decision day. Factors:
+            decision day. The entry price is the signal session's close; a call is a hit if any of the next five
+            sessions prints a close above it. On the chart the arrow sits on the day the signal is issued — the
+            session where you would act; hover any session to see the entry price, the best close in the window and
+            the day it printed. Factors:
             <ul id="legs"></ul>
           </div>
         </div>
@@ -274,7 +282,7 @@
       applyFlagsToChart(flags);
       document.querySelector("#rule").textContent =
         now.signals + " signals · precision " + (now.precision === null ? "—" : pctOrDash(now.precision)) +
-        " · 5-day horizon · " + (selected.size ? selected.size + " of " + crossData.contexts.length + " contexts" : "no contexts");
+        " · 5-session window · " + (selected.size ? selected.size + " of " + crossData.contexts.length + " contexts" : "no contexts");
 
       const chosenKeys = new Set(crossData.contexts.filter((item) => item.required).map((item) => item.key));
       selected.forEach((key) => chosenKeys.add(key));
@@ -374,21 +382,63 @@
     }
 
     // 勾选变了以后，图上那些点必须跟着变。否则表格说 505，图上还是 629 个箭头。
+    //
+    // 箭头画在**发出信号那天**：用户就是在那天收盘后照这个信号下单的。
+    // 以前画在到期日（+5 个交易日），那天才冒出来的东西已经没用了，
+    // 而且价格刚涨完才打点，明明命中也会被读成追高。到期只在对账读数里出现。
     function applyFlagsToChart(flags, data) {
       const source = data || crossData;
-      const known = new Set(source.time);
       const markers = [];
       flags.forEach((flag, index) => {
         if (!flag) return;
-        const target = source.target[index];
-        if (!target || !known.has(target)) return;
         const hit = source.outcome[index] === 1;
-        markers.push({ time: target, position: "belowBar", shape: "arrowUp", size: hit ? 1 : 0.7,
-          color: hit ? "#2f6b3a" : "#b3aa9c" });
+        markers.push({ time: source.time[index], position: "belowBar", shape: "arrowUp",
+          size: hit ? 1 : 0.7, color: hit ? "#2f6b3a" : "#b3aa9c" });
       });
       markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
       line.setMarkers(markers);
+      shown = { flags, data: source };
     }
+
+    // 悬停读数：信号在哪天发出、那天的收盘、以及 5 个交易日后拿哪一天的收盘对账。
+    // 到期信息只出现在这里，不往未来那天画东西。
+    let shown = { flags: [], data: null };
+
+    function dayOf(time) {
+      if (time == null) return null;
+      if (typeof time === "string") return time;
+      if (typeof time === "object" && time.year) {
+        return time.year + "-" + String(time.month).padStart(2, "0") + "-" + String(time.day).padStart(2, "0");
+      }
+      return null;
+    }
+
+    function describeDay(day) {
+      const data = shown.data;
+      if (!data) return "";
+      const index = data.time.indexOf(day);
+      if (index < 0) return "";
+      const close = data.close[index];
+      const signal = shown.flags[index] === 1;
+      const peak = data.peak ? data.peak[index] : null;
+      const peakAt = data.peak_at ? data.peak_at[index] : null;
+      const parts = [day, signal ? "SIGNAL" : "no signal", (signal ? "entry " : "close ") + close.toFixed(2)];
+      if (peak !== null && peak !== undefined && peakAt) {
+        const move = peak / close - 1;
+        const sign = move >= 0 ? "+" : "";
+        parts.push("best " + peak.toFixed(2) + " on " + peakAt +
+          " (" + sign + (move * 100).toFixed(2) + "%)" + (signal ? " → " + (peak > close ? "hit" : "miss") : ""));
+      } else if (signal) {
+        parts.push("check pending");
+      }
+      return parts.join(" · ");
+    }
+
+    const IDLE_READOUT = "hover a session: entry price, then the best close in the next five sessions";
+    chart.subscribeCrosshairMove((param) => {
+      const text = describeDay(dayOf(param && param.time));
+      document.querySelector("#readout").textContent = text || IDLE_READOUT;
+    });
 
     fetch("/artifacts/cross.json?t=" + Date.now())
       .then((response) => { if (!response.ok) throw new Error(String(response.status)); return response.json(); })
@@ -396,7 +446,7 @@
         const s = data.summary;
         document.querySelector("#question").textContent = data.question.text;
         document.querySelector("#rule").textContent =
-          s.flagged + " signals · precision " + percent(s.hit) + " · 5-day horizon";
+          s.flagged + " signals · precision " + percent(s.hit) + " · any close above entry within 5 sessions";
         document.querySelector("#legs").textContent = "";
         (data.question.legs || []).forEach((text) => {
           const li = document.createElement("li");
@@ -547,16 +597,18 @@
         document.querySelector("#news-note").textContent =
           "Veto: " + (news.vetoed_signals ?? 0) + " signals removed on days the LLM read a strong bearish surprise (" +
           (news.days ?? 0) + " labelled days, " + (news.veto_days ?? 0) + " veto days total). " +
-          "This rule was picked after looking at the same data, so the +1.3 pt out-of-sample gap is inside noise " +
-          "(the vetoed subset's own 95% interval was [-9.4, +9.4]). Both columns are shown so the trade is visible: " +
-          "fewer signals, slightly higher precision.";
+          "This rule was picked after looking at the same data, and the out-of-sample gap it buys is +0.3 pt — " +
+          "the 96 vetoed signals are 85.4% on their own, so the difference is inside noise. " +
+          "Both columns are shown so the trade is visible: fewer signals, about the same precision.";
 
         renderAgentRead(data.context, data.latest);
 
         document.querySelector("#note").textContent =
           "Out-of-sample (thresholds calibrated on pre-2015 data only): " + s.holdout_flagged + " signals, precision " +
           percent(s.holdout_hit) + " against an unconditional base rate of " + percent(s.holdout_base_rate) + ". " +
-          "That is roughly " + Math.round(s.holdout_flagged / 5) + " non-overlapping 5-day windows, so the edge is marginal rather than robust.";
+          "That is roughly " + Math.round(s.holdout_flagged / 5) + " non-overlapping 5-session windows, so the edge is " +
+          "marginal rather than robust. The entry is the signal session's close; a call is a hit if any of the next " +
+          "five closes is above it, so a hit does not say how far or how long the move lasted.";
       })
       .catch(() => { document.querySelector("#question").textContent = "cross.json not available"; });
   </script>

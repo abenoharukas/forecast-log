@@ -169,7 +169,7 @@ NDX 那边更冷：7 日点位误差中位 2.1%，猜不动 2.2%；区间覆盖�
 
 ## 第二个页面：5 个交易日内会不会出现更高的收盘
 
-`web/points.html`，问的是指数自己：**跨资产风险偏好偏多时，之后 5 个交易日里有没有任何一根收盘高于入场价**（入场价 = 信号当天收盘）。坐标轴是指数点位，三角画在**发出信号那天**——也就是照这个信号下单的那一天；颜色是这次对不对（绿 = 窗口里摸到过更高价，灰 = 一次都没有），鼠标悬停能看到「哪天发出、入场价、窗口里最高的收盘和它落在哪天、涨跌多少」。同一套信号换到 QQQ 的对照见下一节（`web/qqq.html`）。
+`web/points.html`，问的是指数自己：**跨资产风险偏好偏多时，之后 5 个交易日里有没有任何一根收盘高于入场价**（入场价 = 信号当天收盘）。坐标轴是指数点位，三角画在**发出信号那天**——也就是照这个信号下单的那一天；颜色是这次对不对（绿 = 窗口里摸到过更高价，灰 = 一次都没有），鼠标悬停能看到「哪天发出、入场价、窗口里最高的收盘和它落在哪天、涨跌多少」。同一套信号换到 QQQ 的对照见下一节（`web/qqq.html`），换到 A 股的对照在再下一节（`web/ssec.html`）。
 
 规则由四个因子构成，全部只用当天及以前的收盘：
 
@@ -247,7 +247,49 @@ NDX 那边更冷：7 日点位误差中位 2.1%，猜不动 2.2%；区间覆盖�
 
 `forecast-log cross` 一次写两份：`artifacts/cross.json`（NDX）和 `artifacts/cross_qqq.json`（QQQ，含 `comparison` 字段）。
 
-界面语言：四个页面（`index.html`、`points.html`、`qqq.html`、`agent.html`）的可见文字一律英文，数据键名和本文档保持中文。
+### 换成 A 股：同样的四根腿，本地输入 —— 没有增量
+
+`web/ssec.html`。四根腿不是按相关性挑的，是按**角色**对应过去的：
+
+| 美国那份 | A 股这份 |
+|---|---|
+| 10 年期收益率下行 | 上证 5 年期国债 ETF（511010.SS）20 日上涨（收益率下行） |
+| 美元走弱 | USDCNY 20 日下跌（人民币走强） |
+| HYG/TLT 走强（信用） | 深证成指 / 上证综指 20 日走强（小盘相对大盘） |
+| VIX 相对一年中位偏高 | ^VIX 相对一年中位偏高（同一根，全球波动率） |
+
+打点规则、90 分位阈值、扩张 z 分数、命中口径全部照抄，**没有**日历触发和新闻否决——那两层的日历是美国的 CPI / NFP / FOMC，新闻标签是英文标题，套到 A 股上是错的输入，不是「同一套思路」。
+
+| | 信号 | 命中 | 基率 | 增量 |
+|---|---|---|---|---|
+| 全样本（2014-06 → 2026-11，3020 个交易日） | 369 | 77.8% | 78.4% | **−0.7** |
+| 2021 起（1415 个交易日） | 59 | 79.7% | 77.0% | +2.6 |
+
+样本从 2014-06 开始，因为国债 ETF 2013-03 才有；留出期因此放到 2021（用 2015 只剩不到一年）。
+
+**这不是「挑错了腿」**：换六种组合，全样本在 −2.1 到 +3.7 之间来回，2021 起在 −4.3 到 +7.0 之间，符号不稳定：
+
+| 四根腿 | 信号 | 增量 | 2021 起信号 | 2021 起增量 |
+|---|---|---|---|---|
+| 利率 · 汇率 · 大小盘 · VIX（默认） | 369 | −0.7 | 59 | +2.6 |
+| 利率 · 汇率 · 恒生 · VIX | 351 | −2.1 | 88 | −4.3 |
+| 利率 · 汇率 · 大小盘 · 恒生 | 398 | +3.0 | 125 | +7.0 |
+| 汇率 · 大小盘 · 恒生 · VIX | 595 | +3.7 | 111 | +5.9 |
+| 汇率 · 大小盘 · 恒生 · 黄金 | 559 | +1.9 | 117 | −1.0 |
+| 汇率 · 黄金 · 大小盘 · VIX | 474 | −1.8 | 74 | +0.0 |
+
+按复合分数分十档，命中率也不单调（第 1 到第 10 档：77 / 72 / 76 / 81 / 83 / 82 / 79 / 76 / 81 / 76）。有方向的信号应该从左边爬到右边，这条在中段最高。
+
+还试过两种「不是改腿而是换看法」的版本，结论一样：
+
+- **把美国那套信号原样搬过来**（信号日之后第一个 A 股收盘入场，因为美股收盘在北京开盘前）：全样本 596 个信号、7109 个交易日，+1.1 个点；2021 起 185 个，+4.0 个点。也不行。
+- **上证自己的 20 日动量**：全样本 +10.9 个点看着很凶，但拆开是 2015 年前 +13.0、2015–2020 +8.8、2020 起 **−2.8**。同一段时期纳斯达克 100 自己的动量也是 2015 年前 +3.7、之后转负——动量是那几年的事，不是 A 股独有的发现。
+
+所以：**+3.4 个点不是「全球风险偏好」的普适规律**，它是那个市场那段时间的。搬到 A 股，同一套思路的增量是 0。
+
+`forecast-log fetch` 会拉 `000001.SS`、`399001.SZ`、`^HSI`、`USDCNY=X`、`511010.SS`；`forecast-log cross` 顺带写 `artifacts/cross_ssec.json`（含 `legs`、`variants`、`deciles`、`imported`）。
+
+界面语言：五个页面（`index.html`、`points.html`、`qqq.html`、`ssec.html`、`agent.html`）的可见文字一律英文，数据键名和本文档保持中文。
 
 ### 术语对照
 
@@ -606,7 +648,7 @@ forecast-log cross
 pytest
 ```
 
-`forecast-log cross` 重算第二个页面用到的 `artifacts/cross.json`，以及 QQQ 对照页用的 `artifacts/cross_qqq.json`。
+`forecast-log cross` 重算第二个页面用到的 `artifacts/cross.json`，以及 QQQ 对照页用的 `artifacts/cross_qqq.json` 和 A 股对照页用的 `artifacts/cross_ssec.json`。
 
 实验台（不进页面，只打印表）：
 
@@ -615,9 +657,9 @@ PYTHONPATH=src:experiments .venv/bin/python experiments/direction_lab.py
 PYTHONPATH=src:experiments .venv/bin/python experiments/cross_asset_lab.py
 ```
 
-`fetch` 把 Yahoo 日线收盘写到 `data/raw/`：两个结算品种（`^VXN`、`^NDX`）、三个前瞻输入（`^VIX9D`、`^VIX3M`、`^VVIX`）、第二个页面用的跨资产行情（`^TNX`、`DX-Y.NYB`、`HYG`、`TLT`、`SPY`、`RSP`、`GC=F`、`^VIX`），以及 QQQ 对照页用的 `QQQ`。取不到的会跳过并打印原因，不会中断。输入取不到时模型自动只用价格自身。`backtest` 从历史上每一个已完成的交易日出发，只用那天及以前的收盘做概率，再和后来的实际收盘对照。概率不会等于单次的 0 或 1。对齐的是：报 20% 的那些日子里，后来大约有两成越过门槛。`backtest` 同时写出 `artifacts/timeline.json`（含 7 日对账的每一行）和 `artifacts/backtest_report.json`（含分步长的那张表）。
+`fetch` 把 Yahoo 日线收盘写到 `data/raw/`：两个结算品种（`^VXN`、`^NDX`）、三个前瞻输入（`^VIX9D`、`^VIX3M`、`^VVIX`）、第二个页面用的跨资产行情（`^TNX`、`DX-Y.NYB`、`HYG`、`TLT`、`SPY`、`RSP`、`GC=F`、`^VIX`），QQQ 对照页用的 `QQQ`，还有 A 股那一份的 `000001.SS`、`399001.SZ`、`^HSI`、`USDCNY=X`、`511010.SS`。取不到的会跳过并打印原因，不会中断。输入取不到时模型自动只用价格自身。`backtest` 从历史上每一个已完成的交易日出发，只用那天及以前的收盘做概率，再和后来的实际收盘对照。概率不会等于单次的 0 或 1。对齐的是：报 20% 的那些日子里，后来大约有两成越过门槛。`backtest` 同时写出 `artifacts/timeline.json`（含 7 日对账的每一行）和 `artifacts/backtest_report.json`（含分步长的那张表）。
 
-图在 `web/index.html`（fear index）、`web/points.html`（5 个交易日内偏涨的点）和 `web/qqq.html`（同一批信号换到 QQQ）。仓库根目录运行：
+图在 `web/index.html`（fear index）、`web/points.html`（5 个交易日内偏涨的点）、`web/qqq.html`（同一批信号换到 QQQ）和 `web/ssec.html`（同样的思路换到 A 股）。仓库根目录运行：
 
 ```bash
 python3 serve.py 8731
@@ -770,7 +812,7 @@ forecast-log agent-eval --limit 96 --stride 60 --also-blind
 pytest tests/test_agent.py             # 19 个测试，不联网、不需要 key
 ```
 
-页面在 `web/agent.html`（读 `artifacts/agent_eval_summary.json`），和另外两张图同一个 `serve.py`。`FORECAST_LOG_MODEL` 和 `FORECAST_LOG_BASE_URL` 把同一段代码指到任何 OpenAI 兼容端点，包括本地的 vLLM 或 Ollama。设计说明写在 [`docs/agent.md`](docs/agent.md)。
+页面在 `web/agent.html`（读 `artifacts/agent_eval_summary.json`），和另外几张图同一个 `serve.py`。`FORECAST_LOG_MODEL` 和 `FORECAST_LOG_BASE_URL` 把同一段代码指到任何 OpenAI 兼容端点，包括本地的 vLLM 或 Ollama。设计说明写在 [`docs/agent.md`](docs/agent.md)。
 
 ## 附录：招聘要求
 

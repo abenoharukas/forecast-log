@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Shanghai composite — the same composite, ported to A-shares</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
+  <script src="/web/vendor/lightweight-charts.standalone.production.js"></script>
+  <style>
+    :root {
+      --paper: #e6e0d4; --sheet: #f7f3ea; --ink: #1c1915; --muted: #5e584e;
+      --rule: #c9c0b0; --blue: #1d4e79; --red: #9b2c1f; --green: #2f6b3a;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; overflow: hidden; }
+    main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; }
+    header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    h1 { margin: 0; font-weight: 480; font-size: 28px; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
+    .sub a { color: var(--blue); }
+    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
+    .pane { flex: 1; min-width: 0; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; }
+    .pane-head {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 7px 12px;
+      border-bottom: 1px solid var(--rule); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+    }
+    .pane-head .name { font-size: 15px; font-weight: 500; }
+    .chart { flex: 1; min-height: 0; }
+    #readout { flex-basis: 100%; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    aside {
+      width: 420px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
+      padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11px; line-height: 1.5; overflow: auto;
+    }
+    aside h2 { margin: 0 0 4px; font-size: 11.5px; font-weight: 500; color: var(--muted); }
+    table { border-collapse: collapse; width: 100%; }
+    th { font-weight: 500; font-size: 10.5px; color: var(--muted); text-align: right; padding: 0 5px 3px; }
+    th:first-child, td:first-child { text-align: left; }
+    td { padding: 0 5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .block + .block { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--rule); }
+    .note { color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .verdict { font-size: 13px; font-weight: 500; color: var(--red); }
+    .bands { table-layout: fixed; font-size: 10px; }
+    .bands th, .bands td { padding: 0 1px; text-align: center; }
+    .bands th:first-child, .bands td:first-child { text-align: center; color: var(--muted); font-size: 9.5px; }
+    .weak { color: var(--muted); }
+    @media (max-width: 960px) {
+      body { overflow: auto; } main { height: auto; }
+      .board { flex-direction: column; } .pane { min-height: 340px; } aside { width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Shanghai composite — the same composite, ported to A-shares</h1>
+      <span class="sub" id="question">—</span>
+      <span class="sub" id="build">r1 · four factors, Chinese inputs · <a href="/web/points.html">NDX page →</a> · <a href="/web/qqq.html">QQQ →</a></span>
+    </header>
+    <div class="board">
+      <div class="pane">
+        <div class="pane-head">
+          <span class="name">Risk-on composite → any close above entry within 5 sessions</span>
+          <span class="sub" id="rule">—</span>
+          <span class="sub">arrow = the day the signal is issued · green = a close in the next 5 sessions got above the entry, grey = none did · hover a session for the check</span>
+          <span class="sub" id="readout">hover a session: entry price, then the best close in the next five sessions</span>
+        </div>
+        <div class="chart" id="chart"></div>
+      </div>
+      <aside>
+        <div class="block">
+          <div class="verdict" id="verdict">—</div>
+          <div class="note" id="verdict-note"></div>
+        </div>
+        <div class="block">
+          <h2>Composite vs everything else</h2>
+          <table id="summary"></table>
+        </div>
+        <div class="block">
+          <h2>Every leg combination tried</h2>
+          <table id="variants"></table>
+          <div class="note">Same four roles, different members: the sign flips when one leg changes.</div>
+        </div>
+        <div class="block">
+          <h2>Bands of the composite (low → high)</h2>
+          <table class="bands" id="bands"></table>
+          <div class="note">Tenths of the score range, hit rate in %. A real signal climbs left to right; this one peaks in the middle.</div>
+        </div>
+        <div class="block">
+          <h2>What was not ported</h2>
+          <div class="note" id="imported"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <script>
+    const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
+      autoSize: true,
+      layout: { background: { type: "solid", color: "#f7f3ea" }, textColor: "#5e584e",
+        fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
+      grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
+      rightPriceScale: { borderColor: "#c9c0b0",
+        mode: LightweightCharts.PriceScaleMode.Logarithmic,
+        scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { borderColor: "#c9c0b0", rightOffset: 4, minBarSpacing: 0.04 },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
+    });
+    const line = chart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+
+    const percent = (value) => (value == null ? "—" : (value * 100).toFixed(1) + "%");
+    const points = (value) => (value == null ? "—" : (value >= 0 ? "+" : "−") + Math.abs(value * 100).toFixed(1) + " pt");
+    const IDLE_READOUT = "hover a session: entry price, then the best close in the next five sessions";
+
+    let shown = { flags: [], data: null };
+
+    function dayOf(time) {
+      if (time == null) return null;
+      if (typeof time === "string") return time;
+      if (typeof time === "object" && time.year) {
+        return time.year + "-" + String(time.month).padStart(2, "0") + "-" + String(time.day).padStart(2, "0");
+      }
+      return null;
+    }
+
+    function describeDay(day) {
+      const data = shown.data;
+      if (!data) return "";
+      const index = data.time.indexOf(day);
+      if (index < 0) return "";
+      const close = data.close[index];
+      const signal = shown.flags[index] === 1;
+      const peak = data.peak[index];
+      const peakAt = data.peak_at[index];
+      const parts = [day, signal ? "SIGNAL" : "no signal", (signal ? "entry " : "close ") + close.toFixed(2)];
+      if (peak !== null && peak !== undefined && peakAt) {
+        const move = peak / close - 1;
+        const sign = move >= 0 ? "+" : "−";
+        parts.push("best " + peak.toFixed(2) + " on " + peakAt + " (" + sign + Math.abs(move * 100).toFixed(2) + "%)" +
+          (signal ? " → " + (peak > close ? "hit" : "miss") : ""));
+      } else if (signal) {
+        parts.push("check pending");
+      }
+      return parts.join(" · ");
+    }
+
+    chart.subscribeCrosshairMove((param) => {
+      const text = describeDay(dayOf(param && param.time));
+      document.querySelector("#readout").textContent = text || IDLE_READOUT;
+    });
+
+    function applyMarkers(data) {
+      const markers = [];
+      data.flag.forEach((flag, index) => {
+        if (!flag) return;
+        const hit = data.outcome[index] === 1;
+        markers.push({ time: data.time[index], position: "belowBar", shape: "arrowUp",
+          size: hit ? 0.9 : 0.7, color: hit ? "#2f6b3a" : "#b3aa9c" });
+      });
+      line.setMarkers(markers);
+      shown = { flags: data.flag, data };
+    }
+
+    function table(rows, head) {
+      const element = document.createElement("table");
+      const headRow = document.createElement("tr");
+      head.forEach((text) => {
+        const th = document.createElement("th");
+        th.textContent = text;
+        headRow.appendChild(th);
+      });
+      element.appendChild(headRow);
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        row.forEach((value) => {
+          const td = document.createElement("td");
+          td.textContent = value;
+          if (value === null) td.className = "weak";
+          tr.appendChild(td);
+        });
+        element.appendChild(tr);
+      });
+      return element;
+    }
+
+    function renderSummary(data) {
+      const summary = data.summary;
+      const rows = [
+        ["All sessions", String(summary.flagged), percent(summary.hit), percent(summary.base_rate), points(summary.hit - summary.base_rate)],
+        ["2021 onward", String(summary.holdout_flagged), percent(summary.holdout_hit), percent(summary.holdout_base_rate), points(summary.holdout_hit - summary.holdout_base_rate)],
+      ];
+      const host = document.querySelector("#summary");
+      host.replaceWith(Object.assign(table(rows, ["", "Signals", "Precision", "Base rate", "Lift"]), { id: "summary" }));
+    }
+
+    function renderVariants(data) {
+      const rows = data.variants.map((row) => [
+        row.name.toLowerCase().replace(/, /g, " · "),
+        points(row.lift),
+        points(row.holdout_lift),
+      ]);
+      const host = document.querySelector("#variants");
+      host.replaceWith(Object.assign(table(rows, ["", "All", "2021+"]), { id: "variants" }));
+    }
+
+    function renderBands(data) {
+      const element = document.createElement("table");
+      element.className = "bands";
+      element.id = "bands";
+      const head = document.createElement("tr");
+      head.appendChild(document.createElement("th"));
+      data.deciles.forEach((band) => {
+        const th = document.createElement("th");
+        th.textContent = String(band.band);
+        head.appendChild(th);
+      });
+      element.appendChild(head);
+      const body = document.createElement("tr");
+      const label = document.createElement("td");
+      label.textContent = "hit";
+      body.appendChild(label);
+      data.deciles.forEach((band) => {
+        const td = document.createElement("td");
+        td.textContent = (band.hit * 100).toFixed(0);
+        body.appendChild(td);
+      });
+      element.appendChild(body);
+      const host = document.querySelector("#bands");
+      host.replaceWith(element);
+    }
+
+    fetch("/artifacts/cross_ssec.json?t=" + Date.now())
+      .then((response) => { if (!response.ok) throw new Error(String(response.status)); return response.json(); })
+      .then((data) => {
+        const summary = data.summary;
+        const lift = summary.hit - summary.base_rate;
+        document.querySelector("#question").textContent = data.question.text;
+        document.querySelector("#rule").textContent =
+          summary.flagged + " signals · precision " + percent(summary.hit) + " · " + data.instrument +
+          " · from " + data.first_session.slice(0, 7);
+        document.querySelector("#verdict").textContent =
+          "No edge: " + percent(summary.hit) + " against a " + percent(summary.base_rate) + " base rate, " +
+          points(lift) + ".";
+        document.querySelector("#verdict-note").textContent =
+          "The same rule on the Nasdaq 100 was worth +3.4 pt. Ported to Chinese factors it lands on the wrong " +
+          "side of zero, and 2021 onward (" + summary.holdout_flagged + " signals) is noise either way.";
+
+        const imported = data.imported;
+        const importedText = imported && imported.all
+          ? "The CPI/NFP/FOMC windows and the news veto stayed behind — American calendars and English " +
+            "headlines. The untouched US signal was also run against this market, entering on the first SSEC " +
+            "close after the US signal day: " + points(imported.all.lift) + " over all " + imported.all.n +
+            " sessions, " + points(imported.holdout.lift) + " after 2021. Importing it does not rescue it."
+          : "The US calendar and news layers were not ported: they are American inputs.";
+        document.querySelector("#imported").textContent = importedText;
+
+        line.setData(data.time.map((time, index) => ({ time, value: data.close[index] })));
+        chart.timeScale().fitContent();
+        applyMarkers(data);
+        renderSummary(data);
+        renderVariants(data);
+        renderBands(data);
+        document.querySelector("aside").scrollTop = 0;
+      })
+      .catch(() => { document.querySelector("#question").textContent = "cross_ssec.json not available"; });
+  </script>
+</body>
+</html>

@@ -16,6 +16,7 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
+from forecast_log.china import CHINA_SYMBOLS, document as china_document
 from forecast_log.cross import CROSS_SYMBOLS, comparison, document as cross_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
@@ -61,7 +62,7 @@ def fetch_command(root: Path) -> dict:
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
             f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
         )
-    for symbol in (*CROSS_SYMBOLS, *COMPARE_SYMBOLS):
+    for symbol in (*CROSS_SYMBOLS, *COMPARE_SYMBOLS, *CHINA_SYMBOLS):
         try:
             series = fetch_daily(symbol)
         except (RuntimeError, OSError, ValueError) as error:
@@ -152,6 +153,25 @@ def cross_command(root: Path) -> dict:
         print(
             f"  判定不一致 {len(other['comparison']['disagreements'])} 天，写在 {other_path}"
         )
+    # A 股那一份：同样的四根腿换成本地输入，结论是「没有增量」，页面上直接这么说。
+    ssec_path = series_path(root, "000001.SS")
+    if ssec_path.is_file():
+        study = china_document(root)
+        study_path = root / "artifacts" / "cross_ssec.json"
+        write_report(study_path, study, indent=None)
+        stats = study["summary"]
+        print(
+            f"\n同样的思路换到上证综指（{study['first_session']} → {study['last_session']}，"
+            f"四根腿换成本地输入）：\n"
+            f"  打点 {stats['flagged']} 个，命中 {stats['hit']:.1%}，基率 {stats['base_rate']:.1%}"
+            f"（{stats['hit'] - stats['base_rate']:+.1%}）\n"
+            f"  2021 起 {stats['holdout_flagged']} 个，命中 {stats['holdout_hit']:.1%}，"
+            f"基率 {stats['holdout_base_rate']:.1%}（{stats['holdout_hit'] - stats['holdout_base_rate']:+.1%}）\n"
+            f"  六种腿的组合在 {min(v['lift'] for v in study['variants']):+.1%} 到 "
+            f"{max(v['lift'] for v in study['variants']):+.1%} 之间，写在 {study_path}"
+        )
+    else:
+        print("000001.SS 还没取，跳过 A 股那一份（forecast-log fetch）")
     return document
 
 

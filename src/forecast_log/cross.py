@@ -101,11 +101,14 @@ def _leg(values: np.ndarray, how: str) -> np.ndarray:
     return out
 
 
-def composite(root: Path, series: Series) -> np.ndarray:
-    """复合分数。四条腿缺一条就是 NaN，不拿三条糊弄。"""
+def composite(root: Path, series: Series, legs=LEGS) -> np.ndarray:
+    """复合分数。四条腿缺一条就是 NaN，不拿三条糊弄。
+
+    `legs` 可换：A 股那份（`china.py`）用同样的角色、本地的输入。
+    """
     dates = np.array([np.datetime64(bar.date) for bar in series.bars])
     parts = []
-    for symbol, how, sign in LEGS:
+    for symbol, how, sign in legs:
         raw = _leg(_prices(root, symbol, dates), how)
         parts.append(sign * expanding_z(raw))
     stacked = np.column_stack(parts)

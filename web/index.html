@@ -1,25 +1,21 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Nasdaq fear index (VXN): each session's forecast against the realised close, with forecast error by horizon and the error ledger.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <title>Nasdaq fear index</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
-  <script src="/web/vendor/lightweight-charts.standalone.production.js"></script>
+  <link rel="preload" href="/web/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/web/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/web/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/web/theme.css">
+  <script src="/web/vendor/lightweight-charts.standalone.production.js" defer></script>
+  <script src="/web/theme.js" defer></script>
   <style>
-    :root {
-      --paper: #e6e0d4;
-      --sheet: #f7f3ea;
-      --ink: #1c1915;
-      --muted: #5e584e;
-      --rule: #c9c0b0;
-      --blue: #1d4e79;
-      --ochre: #8a5a12;
-    }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body {
@@ -36,10 +32,25 @@
       padding: 18px 22px 14px;
     }
     header { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
-    h1 { margin: 0; font-weight: 480; font-size: 32px; letter-spacing: -0.03em; }
+    h1 {
+      margin: 0;
+      font-weight: 480;
+      font-size: clamp(1.45rem, 1.1rem + 1vw, 2rem);
+      letter-spacing: -0.03em;
+      text-wrap: balance;
+    }
     .group { display: flex; flex-wrap: wrap; gap: 6px; }
+    .link-button {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--ink);
+      border: 1px solid var(--control);
+      padding: 6px 10px;
+      text-decoration: none;
+    }
+    .link-button:hover { background: var(--ink); color: var(--sheet); }
     #ranges { margin-left: auto; }
-    #horizons button { font-size: 11px; padding: 5px 7px; }
+    #horizons button { font-size: 11px; padding: 5px 7px; min-block-size: 24px; }
     button {
       font-family: "IBM Plex Mono", ui-monospace, monospace;
       font-size: 12px;
@@ -49,7 +60,9 @@
       padding: 6px 10px;
       cursor: pointer;
     }
+    button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     button.active, button:hover { background: var(--ink); color: var(--sheet); }
+    button.active { box-shadow: inset 0 0 0 2px var(--sheet); }
     .readout {
       display: flex;
       flex-wrap: wrap;
@@ -61,13 +74,14 @@
       border-bottom: 1px solid var(--ink);
       font-family: "IBM Plex Mono", ui-monospace, monospace;
       font-size: 13px;
+      font-variant-numeric: tabular-nums;
     }
     .readout b { font-weight: 500; font-size: 18px; }
     .readout i { display: inline-block; width: 22px; height: 0; margin-right: 8px; vertical-align: middle; }
     .readout .actual { border-top: 2px solid var(--blue); }
     .readout .forecast { border-top: 2px dashed var(--ochre); }
     .readout .point { border-top: 2px solid var(--ochre); }
-    .readout .naive { border-top: 2px dotted #6b6459; }
+    .readout .naive { border-top: 2px dotted var(--muted); }
     #range-label { margin-left: auto; color: var(--muted); }
     #chart {
       flex: 1;
@@ -106,6 +120,8 @@
       right: 8px;
       font-size: 10.5px;
       padding: 2px 6px;
+      min-block-size: 24px;
+      min-inline-size: 24px;
     }
     #lad-open { display: none; }
     body.panel-hidden #ladder { display: none; }
@@ -151,27 +167,27 @@
   <main>
     <header>
       <h1 id="symbol">Fear index</h1>
-      <div class="group" id="horizons">
-        <button type="button" data-n="0" class="active">h = 0 vs realised</button>
-        <button type="button" data-n="1">h = 1 vs realised</button>
-        <button type="button" data-n="2">h = 2 vs realised</button>
-        <button type="button" data-n="3">h = 3 vs realised</button>
-        <button type="button" data-n="4">h = 4 vs realised</button>
-        <button type="button" data-n="5">h = 5 vs realised</button>
-        <button type="button" data-n="6">h = 6 vs realised</button>
-        <button type="button" data-n="7">h = 7 vs realised</button>
+      <div class="group" id="horizons" role="group" aria-label="Forecast horizon">
+        <button type="button" data-n="0" class="active" aria-pressed="true">h = 0 vs realised</button>
+        <button type="button" data-n="1" aria-pressed="false">h = 1 vs realised</button>
+        <button type="button" data-n="2" aria-pressed="false">h = 2 vs realised</button>
+        <button type="button" data-n="3" aria-pressed="false">h = 3 vs realised</button>
+        <button type="button" data-n="4" aria-pressed="false">h = 4 vs realised</button>
+        <button type="button" data-n="5" aria-pressed="false">h = 5 vs realised</button>
+        <button type="button" data-n="6" aria-pressed="false">h = 6 vs realised</button>
+        <button type="button" data-n="7" aria-pressed="false">h = 7 vs realised</button>
       </div>
       <div class="group">
-        <button type="button" id="lad-open">Error ledger</button>
+        <button type="button" id="lad-open" aria-controls="ladder" aria-expanded="true">Error ledger</button>
       </div>
       <div class="group">
-        <a href="/web/agent.html" style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:var(--ink);border:1px solid var(--ink);padding:6px 10px;text-decoration:none;">Agent scoreboard</a>
+        <a class="link-button" href="/web/agent.html">Agent scoreboard</a>
       </div>
-      <div class="group" id="ranges">
-        <button type="button" data-span="90">3M</button>
-        <button type="button" data-span="365" class="active">1Y</button>
-        <button type="button" data-span="1825">5Y</button>
-        <button type="button" data-span="0">All</button>
+      <div class="group" id="ranges" role="group" aria-label="Time range">
+        <button type="button" data-span="90" aria-pressed="false">3M</button>
+        <button type="button" data-span="365" class="active" aria-pressed="true">1Y</button>
+        <button type="button" data-span="1825" aria-pressed="false">5Y</button>
+        <button type="button" data-span="0" aria-pressed="false">All</button>
       </div>
     </header>
     <div class="readout">
@@ -187,18 +203,19 @@
     </div>
     <div class="board">
       <div class="chart-wrap">
-        <div id="chart"></div>
+        <div id="chart" role="img" aria-label="Fear index close with the model forecast and realised values. The error ledger lists the same numbers as a table."></div>
       </div>
-      <aside id="ladder">
-        <button type="button" id="lad-close">close ×</button>
+      <aside id="ladder" aria-label="Error ledger">
+        <button type="button" id="lad-close" aria-controls="ladder">close ×</button>
         <div class="lad-cols">
           <div class="lad-block">
             <div class="lad-title">
               <b id="lad-kind">h-session forecast vs realised</b><span id="lad-note"> · latest</span>
             </div>
             <table>
+              <caption class="visually-hidden">Latest forecasts for the selected horizon compared with realised closes</caption>
               <thead>
-                <tr><th>Originated</th><th>Resolves</th><th>Forecast</th><th>Realised</th><th>Error</th></tr>
+                <tr><th scope="col">Originated</th><th scope="col">Resolves</th><th scope="col">Forecast</th><th scope="col">Realised</th><th scope="col">Error</th></tr>
               </thead>
               <tbody id="lad-current"></tbody>
             </table>
@@ -206,8 +223,9 @@
           <div class="lad-block" id="lad-history-block">
             <div class="lad-title">Forecast error by horizon · full history</div>
             <table>
+              <caption class="visually-hidden">Forecast error by horizon across the full history</caption>
               <thead>
-                <tr><th>Horizon</th><th>n</th><th>MAE (pts)</th><th>MAPE</th><th>Band coverage</th><th>Random walk</th></tr>
+                <tr><th scope="col">Horizon</th><th scope="col">n</th><th scope="col">MAE (pts)</th><th scope="col">MAPE</th><th scope="col">Band coverage</th><th scope="col">Random walk</th></tr>
               </thead>
               <tbody id="lad-history"></tbody>
             </table>
@@ -218,26 +236,29 @@
     </div>
   </main>
   <script>
+    document.addEventListener("DOMContentLoaded", () => {
     // Bumped whenever the drawing code changes. If this is not what you expect, the page is stale.
-    const BUILD = "build r24 · forecast (dashed) vs realised (solid)";
+    const BUILD = "build r25 · forecast (dashed) vs realised (solid) · follows the OS colour scheme";
 
+    const palette = fcTheme.palette();
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
       layout: {
-        background: { type: "solid", color: "#f7f3ea" },
-        textColor: "#5e584e",
+        background: { type: "solid", color: palette.sheet },
+        textColor: palette.muted,
         fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
       },
-      grid: { vertLines: { color: "#eadfce" }, horzLines: { visible: false } },
-      rightPriceScale: { borderColor: "#c9c0b0" },
-      timeScale: { borderColor: "#c9c0b0", rightOffset: 6, minBarSpacing: 0.04 },
+      grid: { vertLines: { color: palette.grid }, horzLines: { visible: false } },
+      // Fixed axis width: otherwise the canvas resizes when the first labels render.
+      rightPriceScale: { borderColor: palette.rule, minimumWidth: 64 },
+      timeScale: { borderColor: palette.rule, rightOffset: 6, minBarSpacing: 0.04 },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
     });
       // Forecast: ochre dashed, drawn on the resolution date.
     const forecastSeries = chart.addLineSeries({
-      color: "#8a5a12",
+      color: palette.ochre,
       lineWidth: 1,
       lineStyle: LightweightCharts.LineStyle.Dashed,
       priceLineVisible: false,
@@ -246,10 +267,17 @@
     });
       // Actual: blue solid.
     const actualSeries = chart.addLineSeries({
-      color: "#1d4e79",
+      color: palette.blue,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
+    });
+
+    // Canvas cannot inherit the CSS palette: repaint it when the scheme flips.
+    fcTheme.subscribe((p) => {
+      chart.applyOptions(fcTheme.chartOptions(p));
+      forecastSeries.applyOptions({ color: p.ochre });
+      actualSeries.applyOptions({ color: p.blue });
     });
 
     let span = 365;
@@ -597,28 +625,41 @@
         horizon === 0
           ? "h = 0 band: conditional 10-90% interval from the prior close, evaluated on the same session"
           : "h = " + horizon + " band: interval formed " + horizon + " sessions earlier, drawn on the resolution date";
-      document.querySelector("#tomorrow").style.color = "#5e584e";
+      document.querySelector("#tomorrow").style.color = "var(--muted)";
       document.querySelector("#build").textContent = BUILD;
       latestTime = price.time[price.time.length - 1];
       requestAnimationFrame(applySpan);
       updateLegend(latestTime);
     }
 
-    document.querySelector("#lad-close").addEventListener("click", () => {
+    const ladderOpen = document.querySelector("#lad-open");
+    const ladderClose = document.querySelector("#lad-close");
+
+    ladderClose.addEventListener("click", () => {
       document.body.classList.add("panel-hidden");
+      ladderOpen.setAttribute("aria-expanded", "false");
+      ladderOpen.focus();
       requestAnimationFrame(() => chart.resize && chart.resize());
     });
 
-    document.querySelector("#lad-open").addEventListener("click", () => {
+    ladderOpen.addEventListener("click", () => {
       document.body.classList.remove("panel-hidden");
+      ladderOpen.setAttribute("aria-expanded", "true");
       requestAnimationFrame(() => chart.resize && chart.resize());
     });
+
+    function syncPressed(root) {
+      root.querySelectorAll("button").forEach((item) => {
+        item.setAttribute("aria-pressed", item.classList.contains("active") ? "true" : "false");
+      });
+    }
 
     document.querySelector("#horizons").addEventListener("click", (event) => {
       const button = event.target.closest("button");
       if (!button) return;
       horizon = Number(button.dataset.n);
       document.querySelectorAll("#horizons button").forEach((item) => item.classList.toggle("active", item === button));
+      syncPressed(document.querySelector("#horizons"));
       showQuestion();
     });
 
@@ -627,6 +668,7 @@
       if (!button) return;
       span = Number(button.dataset.span);
       document.querySelectorAll("#ranges button").forEach((item) => item.classList.toggle("active", item === button));
+      syncPressed(document.querySelector("#ranges"));
       applySpan();
     });
 
@@ -642,6 +684,7 @@
       .catch(() => {
         document.querySelector("#leg-date").textContent = "timeline.json not available";
       });
+    });
   </script>
 </body>
 </html>

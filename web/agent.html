@@ -1,23 +1,23 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Forecast-log agent scoreboard: Brier, log loss, calibration and cost for every forecaster on the same resolved questions.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>forecast-log · agent evaluation</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
+  <link rel="preload" href="/web/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/web/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/web/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/web/theme.css">
   <style>
-    :root {
-      --paper: #e6e0d4; --sheet: #f7f3ea; --ink: #1c1915; --muted: #5e584e;
-      --rule: #c9c0b0; --blue: #1d4e79; --red: #9b2c1f; --green: #2f6b3a;
-    }
     * { box-sizing: border-box; }
     body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; }
     main { padding: 16px 20px 20px; max-width: 1400px; margin: 0 auto; }
     header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-    h1 { margin: 0; font-weight: 480; font-size: 28px; letter-spacing: -0.03em; }
+    h1 { margin: 0; font-weight: 480; font-size: clamp(1.3rem, 1rem + 1vw, 1.75rem); letter-spacing: -0.03em; text-wrap: balance; }
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
     .board { margin-top: 14px; display: flex; gap: 12px; align-items: flex-start; }
     .pane { flex: 1; min-width: 0; background: var(--sheet); border: 1px solid var(--rule); }
@@ -30,12 +30,20 @@
     table { border-collapse: collapse; width: 100%; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; }
     .pane table { font-size: 13px; }
     th { font-weight: 500; font-size: 10.5px; color: var(--muted); text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-    td { padding: 5px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid rgba(201,192,176,.45); }
+    td { padding: 5px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid color-mix(in oklab, var(--rule) 45%, transparent); }
     th:first-child, td:first-child { text-align: left; }
-    tbody tr { cursor: pointer; }
-    tbody tr:hover { background: #efe8db; }
-    tbody tr.on { background: #e4dccb; }
-    .best { color: var(--green); font-weight: 500; }
+    th[scope="row"] {
+      font-weight: 400; text-align: left; color: var(--ink);
+      border-bottom: 1px solid color-mix(in oklab, var(--rule) 45%, transparent);
+    }
+    .row-pick {
+      font: inherit; color: inherit; background: none; border: 0; padding: 0;
+      text-align: left; cursor: pointer;
+    }
+    .row-pick:hover { text-decoration: underline; }
+    tbody tr:hover { background: color-mix(in oklab, var(--ink) 7%, var(--sheet)); }
+    tbody tr.on { background: color-mix(in oklab, var(--ink) 14%, var(--sheet)); }
+    .best { color: var(--green-text); font-weight: 500; }
     .note { color: var(--muted); font-size: 11.5px; line-height: 1.6; font-family: "IBM Plex Mono", ui-monospace, monospace; }
     .block + .block { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
     .fam td, .fam th { font-size: 11.5px; padding: 3px 6px; }
@@ -56,10 +64,11 @@
       <div class="pane">
         <div class="pane-head">Identical resolved questions; every forecaster answers all of them</div>
         <table>
+          <caption class="visually-hidden">Forecast accuracy for every model on the same resolved questions</caption>
           <thead>
             <tr>
-              <th>Forecaster</th><th>Brier</th><th>LogLoss</th><th>ECE</th>
-              <th>Directional hit</th><th>n</th><th>$/forecast</th><th>p50 (s)</th><th>Tool calls</th><th>Gate hits</th>
+              <th scope="col">Forecaster</th><th scope="col">Brier</th><th scope="col">LogLoss</th><th scope="col">ECE</th>
+              <th scope="col">Directional hit</th><th scope="col">n</th><th scope="col">$/forecast</th><th scope="col">p50 (s)</th><th scope="col">Tool calls</th><th scope="col">Gate hits</th>
             </tr>
           </thead>
           <tbody id="rows"></tbody>
@@ -69,17 +78,18 @@
       <aside>
         <div class="block">
           <h2 id="picked">Pick a row on the left</h2>
-          <table id="rel" class="fam"></table>
+          <table id="rel" class="fam" aria-labelledby="picked"></table>
         </div>
         <div class="block">
-          <h2>By question family · Brier, lower is better</h2>
-          <table id="fams" class="fam"></table>
+          <h2 id="fams-title">By question family · Brier, lower is better</h2>
+          <table id="fams" class="fam" aria-labelledby="fams-title"></table>
         </div>
         <div class="block note" id="notes"></div>
       </aside>
     </div>
   </main>
   <script>
+    document.addEventListener("DOMContentLoaded", () => {
     const FAMILY = {
       level: "spot level", quantile: "60th percentile",
       band_up: "+5%", band_down: "−5%",
@@ -111,7 +121,7 @@
           const tr = document.createElement("tr");
           if (name === picked) tr.className = "on";
           tr.innerHTML =
-            `<td>${name}</td>` +
+            `<th scope="row"><button type="button" class="row-pick">${name}</button></th>` +
             `<td class="${row.brier === best ? "best" : ""}">${fmt(row.brier)}</td>` +
             `<td>${fmt(row.log_loss)}</td>` +
             `<td>${fmt(row.ece, 3)}</td>` +
@@ -121,7 +131,7 @@
             `<td>${fmt(row.latency_p50_s, 2)}</td>` +
             `<td>${fmt(row.tool_calls_mean, 2)}</td>` +
             `<td>${row.gate_hits || 0}</td>`;
-          tr.onclick = () => { picked = name; drawRows(); drawReliability(); };
+          tr.querySelector(".row-pick").addEventListener("click", () => selectForecaster(name));
           body.appendChild(tr);
         });
       const reference = report.references || {};
@@ -134,18 +144,28 @@
         `constant-0.5 Brier ${fmt((reference["constant_0.5"] || {}).brier)}`;
     }
 
+    // Re-rendering replaces the button that had focus: put focus back on it.
+    function selectForecaster(name) {
+      picked = name;
+      drawRows();
+      drawReliability();
+      const again = [...document.querySelectorAll("#rows .row-pick")]
+        .find((button) => button.textContent === name);
+      if (again) again.focus();
+    }
+
     function drawReliability() {
       if (!picked) return;
       const row = report.predictors[picked];
       document.querySelector("#picked").textContent = `Reliability: ${picked}`;
       const table = document.querySelector("#rel");
-      let html = "<thead><tr><th>Probability bin</th><th>n</th><th>Mean forecast</th><th>Realised</th><th>Bias</th></tr></thead><tbody>";
+      let html = "<thead><tr><th scope=\"col\">Probability bin</th><th scope=\"col\">n</th><th scope=\"col\">Mean forecast</th><th scope=\"col\">Realised</th><th scope=\"col\">Bias</th></tr></thead><tbody>";
       (row.reliability || []).forEach((bin) => {
         const gap = Math.abs(bin.mean_predicted - bin.observed);
         const width = Math.max(1, Math.round(gap * 260));
         const cls = bin.mean_predicted > bin.observed ? "over" : "";
         html +=
-          `<tr><td>${bin.bin}</td><td>${bin.n}</td>` +
+          `<tr><th scope="row">${bin.bin}</th><td>${bin.n}</td>` +
           `<td>${pct(bin.mean_predicted)}</td><td>${pct(bin.observed)}</td>` +
           `<td><span class="bar ${cls}" style="width:${width}px"></span> ${gap.toFixed(3)}</td></tr>`;
       });
@@ -162,11 +182,11 @@
       const names = Object.keys(report.predictors).sort(
         (a, b) => report.predictors[a].brier - report.predictors[b].brier
       );
-      let html = "<thead><tr><th>Forecaster</th>" +
-        families.map((family) => `<th>${FAMILY[family] || family}</th>`).join("") +
+      let html = "<thead><tr><th scope=\"col\">Forecaster</th>" +
+        families.map((family) => `<th scope="col">${FAMILY[family] || family}</th>`).join("") +
         "</tr></thead><tbody>";
       names.forEach((name) => {
-        html += `<tr><td>${SHORT(name)}</td>`;
+        html += `<tr><th scope="row">${SHORT(name)}</th>`;
         families.forEach((family) => {
           const entry = (report.predictors[name].by_family || {})[family];
           html += `<td>${entry ? fmt(entry.brier) : "—"}</td>`;
@@ -213,6 +233,7 @@
       .catch(() => {
         document.querySelector("#config").textContent = "agent_eval_summary.json not available: run forecast-log agent-eval";
       });
+    });
   </script>
 </body>
 </html>

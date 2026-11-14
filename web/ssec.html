@@ -1,25 +1,29 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="The US cross-asset risk-on signal applied to the Shanghai composite: entry at the A-share open, five-session hit rate, and its out-of-sample lift.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>Shanghai composite — the same signal, a different market</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,480;6..72,560&display=swap" rel="stylesheet">
-  <script src="/web/vendor/lightweight-charts.standalone.production.js"></script>
+  <link rel="preload" href="/web/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/web/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/web/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/web/theme.css">
+  <script src="/web/vendor/lightweight-charts.standalone.production.js" defer></script>
+  <script src="/web/theme.js" defer></script>
+  <script src="/web/ctxbar.js" defer></script>
   <style>
-    :root {
-      --paper: #e6e0d4; --sheet: #f7f3ea; --ink: #1c1915; --muted: #5e584e;
-      --rule: #c9c0b0; --blue: #1d4e79; --red: #9b2c1f; --green: #2f6b3a;
-    }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; overflow: hidden; }
     main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; }
-    header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-    h1 { margin: 0; font-weight: 480; font-size: 28px; letter-spacing: -0.03em; }
+    header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; min-block-size: 57px; }
+    /* Always own row: the question text arrives later and must not move it. */
+    #build { flex-basis: 100%; }
+    h1 { margin: 0; font-weight: 480; font-size: clamp(1.3rem, 1rem + 1vw, 1.75rem); letter-spacing: -0.03em; text-wrap: balance; }
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
     .sub a { color: var(--blue); }
     .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
@@ -29,8 +33,16 @@
       border-bottom: 1px solid var(--rule); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
     }
     .pane-head .name { font-size: 15px; font-weight: 500; }
+    .board { position: relative; }
+    .pane-head .toggle {
+      font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
+      background: transparent; border: 1px solid var(--control); border-radius: 2px;
+      padding: 1px 7px; min-block-size: 24px; cursor: pointer; margin-left: auto;
+    }
+    .pane-head .toggle:hover { background: var(--paper); }
+    aside.hidden { display: none; }
     .chart { flex: 1; min-height: 0; }
-    #readout { flex-basis: 100%; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #readout { flex: 1 1 240px; min-width: 0; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     aside {
       width: 400px; flex: none; background: var(--sheet); border: 1px solid var(--rule);
       padding: 10px 12px; font-family: "IBM Plex Mono", ui-monospace, monospace;
@@ -40,6 +52,7 @@
     table { border-collapse: collapse; width: 100%; }
     th { font-weight: 500; font-size: 10.5px; color: var(--muted); text-align: right; padding: 0 5px 3px; }
     th:first-child, td:first-child { text-align: left; }
+    th[scope="row"] { font-weight: 400; text-align: left; color: var(--muted); }
     td { padding: 0 5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .block + .block { margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--rule); }
     .note { color: var(--muted); font-size: 11px; line-height: 1.55; }
@@ -52,6 +65,48 @@
       body { overflow: auto; } main { height: auto; }
       .board { flex-direction: column; } .pane { min-height: 340px; } aside { width: auto; }
     }
+    .ctxbar { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 12px; padding: 9px 11px; background: var(--sheet); border: 1px solid var(--rule); }
+    .ctxbar-top { display: grid; grid-template-columns: 150px minmax(0, 1fr) 176px; gap: 14px; align-items: start; }
+    .ctxbar-head { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+    .ctxbar-title { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+    .ctxbar-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 20px; }
+    .ctxbar-actions { display: flex; flex-direction: column; gap: 4px; }
+    .ctxbar-status { font-size: 10px; color: var(--muted); min-height: 13px; }
+    .ctxbar-result { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; padding-top: 6px; border-top: 1px solid var(--rule); }
+    .ctxbar-result table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    .ctxbar-result td, .ctxbar-result th { padding: 1px 6px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+    .ctxbar-result td:first-child, .ctxbar-result th:first-child { text-align: left; color: var(--muted); }
+    .ctx { display: flex; flex-direction: column; gap: 4px; }
+    .ctxbar-boxes label { font-size: 11px; color: var(--ink); display: flex; gap: 6px; align-items: baseline; cursor: pointer; }
+    .ctxbar-boxes label .kind { color: var(--muted); font-size: 10px; }
+    .ctxbar-boxes label.required span { font-weight: 500; }
+    .ctxbar-boxes label.required input { cursor: not-allowed; opacity: .65; }
+    #ctx-reset, #ctx-all { font: inherit; font-size: 11px; padding: 3px 8px; min-block-size: 24px; cursor: pointer; background: var(--sheet); border: 1px solid var(--control); color: var(--ink); }
+    .ctxbar.collapsed { padding: 9px 11px; }
+    .ctxbar.collapsed .ctxbar-head { display: none; }
+    .ctxbar.collapsed .ctxbar-top,
+    .ctxbar.collapsed .ctxbar-boxes,
+    .ctxbar.collapsed .ctxbar-actions,
+    .ctxbar.collapsed .ctxbar-result,
+    .ctxbar.collapsed .ctxbar-body { display: none; }
+    .ctxbar.collapsed .ctxbar-top { grid-template-columns: 150px; gap: 0; }
+    .ctxbar.collapsed .ctxbar-head .sub { display: none; }
+    .ctxbar.collapsed .ctxbar-title { margin: 0; }
+    /* 顶部一条横杠，中间一个三角。位置固定，内容只往下展。 */
+    .ctxbar-bar {
+      display: flex; align-items: center; justify-content: center; width: 100%; min-block-size: 24px;
+      background: transparent; border: 0;
+      border-bottom: 1px solid var(--rule); padding: 0; margin: 0;
+      font: inherit; font-size: 10px; line-height: 1; color: var(--muted);
+      cursor: pointer;
+    }
+    .ctxbar-bar:hover { color: var(--ink); }
+    @media (max-width: 1100px) { .ctxbar-top { grid-template-columns: 1fr; } .ctxbar-result { grid-template-columns: 1fr; } }
+    /* Reserve the panel's final height so the chart does not jump down when the
+       factor list arrives. Tuned to the two-column layout. */
+    @media (min-width: 1101px) and (max-width: 1680px) {
+      .ctxbar:not(.collapsed) { min-block-size: 240px; }
+    }
   </style>
 </head>
 <body>
@@ -61,29 +116,51 @@
       <span class="sub" id="question">—</span>
       <span class="sub" id="build">r1 · the US composite, unchanged · <a href="/web/points.html">NDX page →</a> · <a href="/web/qqq.html">QQQ →</a></span>
     </header>
+    <section class="ctxbar" aria-label="Context factors">
+      <button class="ctxbar-bar" id="ctx-toggle" type="button" aria-label="Context factors" aria-expanded="true">&#9650;</button>
+      <div class="ctxbar-top">
+        <div class="ctxbar-head">
+          <span class="ctxbar-title">Context</span>
+          <span class="sub">pick what the model may use</span>
+        </div>
+        <div id="ctx-picker" class="ctxbar-boxes"></div>
+        <div class="ctxbar-actions">
+          <button type="button" id="ctx-reset">Price factors only</button>
+          <button type="button" id="ctx-all">Everything available</button>
+          <span class="ctxbar-status" id="ctx-status" role="status"></span>
+        </div>
+      </div>
+      <div class="ctxbar-body">
+        <div class="ctxbar-result">
+          <table id="ctx-table" aria-label="Signal statistics for the current context selection"></table>
+          <div class="note" id="ctx-note"></div>
+        </div>
+      </div>
+    </section>
     <div class="board">
       <div class="pane">
         <div class="pane-head">
           <span class="name">Same signal → any A-share close above entry within 5 sessions</span>
           <span class="sub" id="rule">—</span>
-          <span class="sub">arrow = the A-share session that acts on a US signal from the night before · green = a close in the next 5 sessions got above the entry, grey = none did · hover a session for the check</span>
-          <span class="sub" id="readout">hover a session: entry price, then the best close in the next five sessions</span>
+          <span class="sub">marker = the signal day · basis = that day's close · <b style="color:var(--green)">▲ green</b> = day-3 close above it · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 still below · hover for the numbers</span>
+          <span class="sub" id="readout">hover a session: the open you paid, then the best close in the window</span>
+          <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
         </div>
-        <div class="chart" id="chart"></div>
+        <div class="chart" id="chart" role="img" aria-label="Shanghai composite close with risk-on signal markers. The side tables list the same signals as data."></div>
       </div>
-      <aside>
+      <aside id="side-panel">
         <div class="block">
           <div class="verdict" id="verdict">—</div>
           <div class="note" id="verdict-note"></div>
         </div>
         <div class="block">
           <h2>One signal, two markets</h2>
-          <table id="compare"></table>
+          <table id="compare" aria-label="One signal, two markets"></table>
           <div class="note" id="compare-note"></div>
         </div>
         <div class="block">
           <h2>Bands of the composite (low → high)</h2>
-          <table class="bands" id="bands"></table>
+          <table class="bands" id="bands" aria-label="Bands of the composite"></table>
           <div class="note" id="bands-note"></div>
         </div>
         <div class="block">
@@ -94,27 +171,56 @@
     </div>
   </main>
   <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    const palette = fcTheme.palette();
     const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
       autoSize: true,
-      layout: { background: { type: "solid", color: "#f7f3ea" }, textColor: "#5e584e",
+      layout: { background: { type: "solid", color: palette.sheet }, textColor: palette.muted,
         fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
-      grid: { vertLines: { color: "#eadfce" }, horzLines: { color: "#eadfce" } },
-      rightPriceScale: { borderColor: "#c9c0b0",
+      grid: { vertLines: { color: palette.grid }, horzLines: { color: palette.grid } },
+      rightPriceScale: { borderColor: palette.rule, minimumWidth: 64,
         mode: LightweightCharts.PriceScaleMode.Logarithmic,
         scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: "#c9c0b0", rightOffset: 4, minBarSpacing: 0.04 },
+      timeScale: { borderColor: palette.rule, rightOffset: 4, minBarSpacing: 0.04 },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
     });
-    const line = chart.addLineSeries({ color: "#1d4e79", lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+    const line = chart.addLineSeries({ color: palette.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
 
     const percent = (value) => (value == null ? "—" : (value * 100).toFixed(1) + "%");
     const points = (value) => (value == null ? "—" : (value >= 0 ? "+" : "−") + Math.abs(value * 100).toFixed(1) + " pt");
-    const IDLE_READOUT = "hover a session: entry price, then the best close in the next five sessions";
+    const IDLE_READOUT = "hover a session: its close, then the day-3 and day-5 closes";
 
     let index_of = {};
     let data = null;
+    let lastFlags = null;
+
+    // 三天内做到 = 绿箭头；只有第 4–5 天才做到 = 琥珀圆圈；五天都没做到 = 灰方块。
+    // 形状 + 颜色双重编码，不只靠色相传递结果。
+    function drawFlags(flags) {
+      lastFlags = flags;
+      if (!data) return;
+      const p = fcTheme.palette();
+      const markers = [];
+      flags.forEach((flag, index) => {
+        if (!flag || data.outcome[index] === null) return;
+        const hit = data.outcome[index] === 1;
+        const fast = hit && data.hit3[index] === 1;
+        markers.push({ time: data.time[index], position: "belowBar",
+          shape: fast ? "arrowUp" : hit ? "circle" : "square",
+          size: !hit ? 0.65 : fast ? 1 : 0.9,
+          color: !hit ? p.grey : fast ? p.green : p.amber });
+      });
+      line.setMarkers(markers);
+    }
+
+    // 画布拿不到 CSS 变量：系统配色一变，重新上色并重画标记。
+    fcTheme.subscribe((p) => {
+      chart.applyOptions(fcTheme.chartOptions(p));
+      line.applyOptions({ color: p.blue });
+      if (lastFlags) drawFlags(lastFlags);
+    });
 
     function dayOf(time) {
       if (time == null) return null;
@@ -129,20 +235,25 @@
       if (!data) return "";
       const index = index_of[day];
       if (index === undefined) return "";
-      const close = data.close[index];
       const signal = data.flag[index] === 1;
       const peak = data.peak[index];
       const peakAt = data.peak_at[index];
       const parts = [day];
-      if (signal) parts.push("SIGNAL from " + data.us_date[index]);
-      parts.push((signal ? "entry " : "close ") + close.toFixed(2));
-      if (peak !== null && peak !== undefined && peakAt) {
-        const move = peak / close - 1;
-        const sign = move >= 0 ? "+" : "−";
-        parts.push("best " + peak.toFixed(2) + " on " + peakAt + " (" + sign + Math.abs(move * 100).toFixed(2) + "%)" +
-          (signal ? " → " + (peak > close ? "hit" : "miss") : ""));
-      } else if (signal) {
-        parts.push("check pending");
+      if (signal) {
+        const base = data.base_close[index];
+        const c3 = data.close3 ? data.close3[index] : null;
+        const c5 = data.close5 ? data.close5[index] : null;
+        parts.push("signal from " + data.us_date[index], "close " + base.toFixed(2));
+        if (c3 !== null && c3 !== undefined && c5 !== null && c5 !== undefined) {
+          const m = (value) => (value / base - 1 >= 0 ? "+" : "−") + Math.abs((value / base - 1) * 100).toFixed(2) + "%";
+          parts.push("day 3 " + c3.toFixed(2) + " (" + m(c3) + ")",
+                     "day 5 " + c5.toFixed(2) + " (" + m(c5) + ")" +
+                     (c3 > base ? " → green" : c5 > base ? " → amber" : " → grey"));
+        } else {
+          parts.push("check pending");
+        }
+      } else {
+        parts.push("no signal · close " + data.close[index].toFixed(2));
       }
       return parts.join(" · ");
     }
@@ -158,17 +269,19 @@
       const headRow = document.createElement("tr");
       head.forEach((text) => {
         const th = document.createElement("th");
+        th.scope = "col";
         th.textContent = text;
         headRow.appendChild(th);
       });
       element.appendChild(headRow);
       rows.forEach((row) => {
         const tr = document.createElement("tr");
-        row.forEach((value) => {
-          const td = document.createElement("td");
-          td.textContent = value;
-          if (value === "—") td.className = "weak";
-          tr.appendChild(td);
+        row.forEach((value, column) => {
+          const cell = document.createElement(column === 0 ? "th" : "td");
+          if (column === 0) cell.scope = "row";
+          cell.textContent = value;
+          if (value === "—") cell.className = "weak";
+          tr.appendChild(cell);
         });
         element.appendChild(tr);
       });
@@ -180,11 +293,11 @@
       const rows = [
         ["Signals", String(a.signals), String(r.signals)],
         ["Precision", percent(a.hit), percent(r.hit)],
-        ["Base rate", percent(a.base_rate), percent(r.base_rate)],
+        ["Any random day", percent(a.base_rate), percent(r.base_rate)],
         ["Lift", points(a.lift), points(r.lift)],
         ["Since " + d.summary.holdout_from, String(h.signals), String(r.holdout_signals)],
         ["Precision", percent(h.hit), percent(r.holdout_hit)],
-        ["Base rate", percent(h.base_rate), percent(r.holdout_base_rate)],
+        ["Any random day", percent(h.base_rate), percent(r.holdout_base_rate)],
         ["Lift", points(h.lift), points(r.holdout_lift)],
       ];
       const host = document.querySelector("#compare");
@@ -198,15 +311,17 @@
       element.className = "bands";
       element.id = "bands";
       const head = document.createElement("tr");
-      head.appendChild(document.createElement("th"));
+      head.appendChild(document.createElement("th")).scope = "col";
       d.bands.forEach((band) => {
         const th = document.createElement("th");
+        th.scope = "col";
         th.textContent = String(band.band);
         head.appendChild(th);
       });
       element.appendChild(head);
       const body = document.createElement("tr");
-      const label = document.createElement("td");
+      const label = document.createElement("th");
+      label.scope = "row";
       label.textContent = "hit";
       body.appendChild(label);
       d.bands.forEach((band) => {
@@ -227,26 +342,19 @@
         const r = d.reference;
         document.querySelector("#question").textContent = d.question.text;
         document.querySelector("#rule").textContent =
-          a.signals + " signals · precision " + percent(a.hit) + " · " + d.instrument +
-          " · from " + d.first_session.slice(0, 7);
+          a.signals + " signals · 1-3 days " + percent(a.hit3) + " · 4-5 days " + percent(a.hit45);
         document.querySelector("#verdict").textContent =
           "The signal points the right way here too, at a third of the size: " + points(a.lift) + " against " +
           points(r.lift) + " on the Nasdaq 100.";
         document.querySelector("#verdict-note").textContent =
           percent(a.hit) + " of " + a.signals + " signals beat the " + percent(a.base_rate) +
-          " base rate. Since " + d.summary.holdout_from + " it is " + points(d.summary.holdout.lift) +
+          " that any random session gets. Since " + d.summary.holdout_from + " it is " + points(d.summary.holdout.lift) +
           " on " + d.summary.holdout.signals + " signals — better than the full sample, on fewer points.";
 
         line.setData(d.time.map((time, index) => ({ time, value: d.close[index] })));
         chart.timeScale().fitContent();
-        const markers = [];
-        d.flag.forEach((flag, index) => {
-          if (!flag || d.outcome[index] === null) return;
-          markers.push({ time: d.time[index], position: "belowBar", shape: "arrowUp",
-            size: d.outcome[index] === 1 ? 1 : 0.7,
-            color: d.outcome[index] === 1 ? "#2f6b3a" : "#b3aa9c" });
-        });
-        line.setMarkers(markers);
+        drawFlags(d.flag);
+        initCtxbar(d, drawFlags);
         renderCompare(d);
         renderBands(d);
         document.querySelector("#bands-note").textContent =
@@ -254,12 +362,27 @@
           "left to right; this one does not.";
         document.querySelector("#note").textContent =
           "Unchanged: the four factors, the 90th-percentile band, the CPI/NFP windows, the FOMC and news veto. " +
-          "Changed: a US signal dated D is acted on at the open of the first A-share session after D, because " +
-          "the US close lands at 04:00 Beijing time, and the window is 5 A-share sessions. Entry is that " +
-          "session's close. Closes are unadjusted.";
+          "Changed: a US signal dated D is known at 04:00 Beijing the next morning, so it is acted on at the " +
+          "09:30 open of the first A-share session after D. Entry is that open, the window is the five " +
+          "A-share closes from that session onwards, and no close is used to decide or to fill anything. " +
+          "Closes are unadjusted.";
         document.querySelector("aside").scrollTop = 0;
       })
       .catch(() => { document.querySelector("#question").textContent = "cross_ssec.json not available"; });
+    });
+  </script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    // 右侧面板收起来 / 展开。三个页面同一套。
+    const togglePanel = document.querySelector("#toggle-panel");
+    togglePanel.addEventListener("click", () => {
+      const panel = document.querySelector("aside");
+      const hidden = panel.classList.toggle("hidden");
+      togglePanel.textContent = hidden ? "panel ‹" : "panel ›";
+      togglePanel.title = hidden ? "Show the side panel" : "Collapse the side panel";
+      togglePanel.setAttribute("aria-expanded", String(!hidden));
+    });
+    });
   </script>
 </body>
 </html>

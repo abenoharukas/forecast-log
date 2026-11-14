@@ -22,7 +22,7 @@ HISTORY_START = date(1985, 1, 1)
 def fetch_daily(symbol: str, timeout: float = 60) -> Series:
     """Daily Close from the Yahoo chart API. This is the only price source."""
     quoted = urllib.parse.quote(symbol, safe="")
-    by_date: dict[date, float] = {}
+    by_date: dict[date, tuple[float | None, float]] = {}
     tz_name = "America/New_York"
     start = HISTORY_START
     stop = datetime.now(NY).date() + timedelta(days=1)
@@ -42,7 +42,10 @@ def fetch_daily(symbol: str, timeout: float = 60) -> Series:
         tz_name = chunk_zone or tz_name
         by_date.update(rows)
         start = end
-    bars = tuple(Bar(date=day, close=price) for day, price in sorted(by_date.items()))
+    bars = tuple(
+        Bar(date=day, close=close, open=open_)
+        for day, (open_, close) in sorted(by_date.items())
+    )
     if not bars:
         raise RuntimeError(f"Yahoo returned no closes for {symbol}")
     _assert_daily(symbol, bars)
@@ -79,7 +82,7 @@ def _load(query: str, symbol: str, timeout: float) -> dict:
     raise RuntimeError(f"Yahoo chart error for {symbol}: out of attempts")
 
 
-def _read_chart(symbol: str, payload: dict) -> tuple[str | None, dict[date, float]]:
+def _read_chart(symbol: str, payload: dict) -> tuple[str | None, dict[date, tuple[float | None, float]]]:
     chart = payload["chart"]
     if chart.get("error"):
         raise RuntimeError(f"Yahoo chart error for {symbol}: {chart['error']}")
@@ -90,12 +93,16 @@ def _read_chart(symbol: str, payload: dict) -> tuple[str | None, dict[date, floa
     tz_name = meta.get("exchangeTimezoneName") or "America/New_York"
     zone = ZoneInfo(tz_name)
     stamps = result.get("timestamp") or []
-    closes = result["indicators"]["quote"][0]["close"]
+    quote = result["indicators"]["quote"][0]
+    closes, opens = quote["close"], quote["open"]
     rows = {}
-    for stamp, close in zip(stamps, closes):
+    for stamp, close, open_ in zip(stamps, closes, opens):
         if close is None:
             continue
-        rows[datetime.fromtimestamp(int(stamp), zone).date()] = round(float(close), 4)
+        rows[datetime.fromtimestamp(int(stamp), zone).date()] = (
+            None if open_ is None else round(float(open_), 4),
+            round(float(close), 4),
+        )
     return tz_name, rows
 
 

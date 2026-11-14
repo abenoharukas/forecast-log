@@ -5,20 +5,19 @@ CPI / NFP / FOMC 三个日历窗口、新闻否决，全部用 `artifacts/cross.
 换掉的只有两件事：
 
     入场  美股 D 日收盘 = 北京 D+1 日 04:00，A 股 09:30 开盘前就知道，
-          所以入场价 = D 之后**第一个 A 股交易日**的收盘（不是 D 当天，那天 A 股早收盘了）
-    窗口  入场之后 5 个 A 股交易日，任何一根收盘高于入场价算命中
+          所以成交价 = D 之后**第一个 A 股交易日**的**开盘价**（不是收盘 —— 收盘那个价还买不到）
+    窗口  入场那天加上之后 4 根收盘，共 5 根，任何一根高于入场价算命中
 
 这就是「同一条规则，能不能在中国市场用」，不是「给中国另造一套规则」。所以这里没有国债 ETF、
 没有人民币汇率、没有深证成指——那些是别的信号。
 
-现状（信号 629 个）：
+现状（开盘成交口径）：
 
-    A 股  596 个信号（同一个信号日，A 股日历上落在别的交易日），命中 77.7%，基率 76.6%，+1.1 个点
-    2021 起 185 个，命中 81.1%，基率 77.0%，+4.1 个点
+    A 股      591 个信号，命中 81.2%，基率 80.3%，+0.9 个点
+    2015 起   475 个，命中 84.0%，基率 81.3%，+2.7 个点（标准误 ±2.1，仍在噪声里）
 
-对比同一条信号在纳斯达克 100 上：命中 85.5%、基率 82.1%、+3.4 个点（样本外 +4.0）。
-所以「同一套思路搬到 A 股」这件事，方向对但幅度小得多，2021 起的 +4.1 也只有 185 个点、标准差 ±3 个点，
-不该当成结论。
+对比同一条信号在纳斯达克 100 上：命中 86.0%、基率 83.4%、+2.6 个点。
+所以「同一套思路搬到 A 股」这件事，方向对但幅度约为三分之一，且不显著。
 """
 
 from __future__ import annotations
@@ -48,34 +47,47 @@ class Entry:
 
     date: str            # A 股入场那天（信号之后第一个 A 股交易日）
     us_date: str         # 信号本身落在哪个美股交易日
-    close: float
+    entry: float         # 入场价 = 那天的开盘价（09:30），不是收盘
+    base_close: float | None  # 信号那天收盘，颜色的比较基准
+    close3: float | None      # 信号后第 3 天收盘
+    close5: float | None      # 信号后第 5 天收盘
+    hit3: int | None          # 第 3 天收盘高于基准（绿）；`outcome` 是第 5 天（绿 + 黄）
     outcome: int | None  # 之后 5 个 A 股交易日里有没有一根收盘高于入场价
     target: str | None   # 窗口末尾那天，用来对账
     peak: float | None
     peak_at: str | None
 
 
-def _sessions(series: Series) -> tuple[list[str], np.ndarray]:
+def _sessions(series: Series) -> tuple[list[str], np.ndarray, np.ndarray]:
     dates = [bar.date.isoformat() for bar in series.bars]
     closes = np.array([bar.close for bar in series.bars], dtype=float)
-    return dates, closes
+    opens = np.array([np.nan if bar.open is None else bar.open for bar in series.bars], dtype=float)
+    return dates, opens, closes
 
 
 def entries(root: Path) -> list[Entry]:
     """信号来自 `artifacts/cross.json`（美股日历），只把入场日和窗口换成 A 股的。"""
     signal_doc = json.loads((root / "artifacts" / "cross.json").read_text())
     series = load_series(series_path(root, TARGET))
-    dates, closes = _sessions(series)
+    dates, opens, closes = _sessions(series)
     n = len(dates)
 
     peak = np.full(n, np.nan)
     peak_at: list[str | None] = [None] * n
+    close3 = np.full(n, np.nan)
+    close5 = np.full(n, np.nan)
+    base_close = np.full(n, np.nan)
+    # 判定基准 = 信号那天（箭头那天）的收盘价；之后第 3 天、第 5 天的收盘拿它比。
+    # 买入价仍然记下（次日开盘），但它不决定颜色。
     for i in range(n - HORIZON):
         window = closes[i + 1 : i + 1 + HORIZON]
-        if np.all(np.isfinite(window)):
+        if np.isfinite(opens[i]) and np.all(np.isfinite(window)):
             offset = int(np.argmax(window))
             peak[i] = window[offset]
             peak_at[i] = dates[i + 1 + offset]
+            base_close[i] = closes[i]
+            close3[i] = closes[i + 3]
+            close5[i] = closes[i + 5]
 
     position = {day: index for index, day in enumerate(dates)}
     out: list[Entry] = []
@@ -94,8 +106,12 @@ def entries(root: Path) -> list[Entry]:
             Entry(
                 date=day,
                 us_date=us_day,
-                close=float(closes[index]),
-                outcome=int(peak[index] > closes[index]) if resolved else None,
+                entry=float(opens[index]),
+                base_close=float(base_close[index]) if resolved else None,
+                close3=float(close3[index]) if resolved else None,
+                close5=float(close5[index]) if resolved else None,
+                hit3=int(close3[index] > base_close[index]) if resolved else None,
+                outcome=int(close5[index] > base_close[index]) if resolved else None,
                 target=dates[index + HORIZON] if resolved else None,
                 peak=float(peak[index]) if resolved else None,
                 peak_at=peak_at[index],
@@ -104,22 +120,51 @@ def entries(root: Path) -> list[Entry]:
     return out
 
 
+def _component_row(signal_doc: dict, dates: list[str], kept: list[int], i: int) -> dict:
+    """这一根 A 股 K 线对应的那几列标签。
+
+    能用的窗口 = 上一根 A 股 K 线之后、这一根之前收盘的那些美股交易日（春节、国庆可能有好几个）。
+    窗口里若有一天打了点，就用**那一天**的全部列（否决列也跟着那一天，不能把整段窗口的
+    FOMC 否决叠加进来）；没有打点就用最后一天。这样前端重算与后端口径一致。
+    """
+    us_days = signal_doc["time"]
+    position = kept.index(i) if i in kept else 0
+    previous = dates[kept[position - 1]] if position > 0 else None
+    high = int(np.searchsorted(us_days, dates[i], side="left"))
+    low = max(0, high - 1) if previous is None else int(np.searchsorted(us_days, previous, side="left"))
+    if high <= low:
+        return {key: 0 for key in signal_doc["components"]}
+    components = signal_doc["components"]
+    chosen = high - 1
+    for j in range(high - 1, low - 1, -1):
+        if components["composite"][j] or components["cal_cpi"][j] or components["cal_nfp"][j]:
+            chosen = j
+            break
+    return {key: int(components[key][chosen]) for key in components}
+
+
 def document(root: Path) -> dict:
     """页面用的那一份：信号原封不动，换的只有入场日和窗口。"""
     signal_doc = json.loads((root / "artifacts" / "cross.json").read_text())
     series = load_series(series_path(root, TARGET))
-    dates, closes = _sessions(series)
+    dates, opens, closes = _sessions(series)
     n = len(dates)
     rows = entries(root)
 
     peak = np.full(n, np.nan)
     peak_at: list[str | None] = [None] * n
+    close3 = np.full(n, np.nan)
+    close5 = np.full(n, np.nan)
+    base_close = np.full(n, np.nan)
     for i in range(n - HORIZON):
         window = closes[i + 1 : i + 1 + HORIZON]
-        if np.all(np.isfinite(window)):
+        if np.isfinite(opens[i]) and np.all(np.isfinite(window)):
             offset = int(np.argmax(window))
             peak[i] = window[offset]
             peak_at[i] = dates[i + 1 + offset]
+            base_close[i] = closes[i]
+            close3[i] = closes[i + 3]
+            close5[i] = closes[i + 5]
 
     position = {day: index for index, day in enumerate(dates)}
     flagged = {position[row.date] for row in rows if row.outcome is not None}
@@ -132,17 +177,32 @@ def document(root: Path) -> dict:
         pairs = list(pairs)
         return round(float(np.mean([hit for _, hit in pairs])), 4) if pairs else None
 
+    def split(indexes) -> dict:
+        """命中按天拆开：三天内 / 只有第 4–5 天 / 五天都没做到。互斥，加起来是 1。"""
+        indexes = [i for i in indexes if np.isfinite(peak[i])]
+        if not indexes:
+            return {"hit3": None, "hit45": None, "miss": None}
+        three = sum(1 for i in indexes if close3[i] > base_close[i]) / len(indexes)
+        later = sum(1 for i in indexes if close3[i] <= base_close[i] and close5[i] > base_close[i]) / len(indexes)
+        return {"hit3": round(three, 4), "hit45": round(later, 4), "miss": round(1 - three - later, 4)}
+
     def summary(low: str, high: str, picks) -> dict:
         window = [i for i in kept if low <= dates[i] < high]
-        base = rate((dates[i], int(peak[i] > closes[i])) for i in window if np.isfinite(peak[i]))
+        usable = [i for i in window if np.isfinite(peak[i])]
+        base = rate((dates[i], int(close5[i] > base_close[i])) for i in usable)
         chosen = [i for i in window if i in picks and np.isfinite(peak[i])]
-        hit = rate((dates[i], int(peak[i] > closes[i])) for i in chosen)
+        hit = rate((dates[i], int(close5[i] > base_close[i])) for i in chosen)
         return {
-            "sessions": len([i for i in window if np.isfinite(peak[i])]),
+            "sessions": len(usable),
             "signals": len(chosen),
             "hit": hit,
             "base_rate": base,
             "lift": None if hit is None or base is None else round(hit - base, 4),
+            "hit3": split(chosen)["hit3"],
+            "hit45": split(chosen)["hit45"],
+            "miss": split(chosen)["miss"],
+            "base3": split(usable)["hit3"],
+            "base45": split(usable)["hit45"],
         }
 
     # 分档：复合分数照旧是美股那一份，看它在 A 股上有没有单调性
@@ -154,7 +214,7 @@ def document(root: Path) -> dict:
         day = dates[i]
         while pointer + 1 < len(signal_days) and signal_days[pointer + 1] < day:
             pointer += 1
-        scored.append((signal_scores[pointer], int(peak[i] > closes[i])))
+        scored.append((signal_scores[pointer], int(close5[i] > base_close[i])))
     if scored:
         ordered = sorted(scored)
         size = len(ordered) // 10
@@ -178,9 +238,10 @@ def document(root: Path) -> dict:
                 "Remove: no point on the FOMC decision day, and no point on days with a strong bearish surprise",
             ],
             "rule": (
-                "Nothing in the signal changes. A US signal dated D is actionable in China at the open of the "
-                "first A-share session after D, because the US close lands at 04:00 Beijing time. Entry is that "
-                f"session's close; the call is a hit if any of the next {HORIZON} A-share closes is above it."
+                "Nothing in the signal changes. A US signal dated D is known at 04:00 Beijing the next morning, "
+                "so it is actionable at the 09:30 open of the first A-share session after D. Entry is that "
+                f"session's open; the call is a hit if any of the {HORIZON} A-share closes from that session "
+                "onwards is above it. No close is used to decide or to fill anything."
             ),
         },
         "fetched_at": series.fetched_at,
@@ -188,9 +249,15 @@ def document(root: Path) -> dict:
         "last_session": dates[-1],
         "time": [dates[i] for i in kept],
         "close": [round(float(closes[i]), 2) for i in kept],
+        "open": [round(float(opens[i]), 2) if np.isfinite(opens[i]) else None for i in kept],
+        "entry": [round(float(opens[i]), 2) if i in flagged else None for i in kept],
+        "base_close": [round(float(base_close[i]), 2) if i in flagged else None for i in kept],
+        "close3": [round(float(close3[i]), 2) if i in flagged else None for i in kept],
+        "close5": [round(float(close5[i]), 2) if i in flagged else None for i in kept],
+        "hit3": [int(close3[i] > base_close[i]) if i in flagged else None for i in kept],
         "flag": [1 if i in flagged else 0 for i in kept],
         "us_date": [signal_of.get(i) for i in kept],
-        "outcome": [int(peak[i] > closes[i]) if np.isfinite(peak[i]) else None for i in kept],
+        "outcome": [int(close5[i] > base_close[i]) if np.isfinite(peak[i]) else None for i in kept],
         "peak": [round(float(peak[i]), 2) if np.isfinite(peak[i]) else None for i in kept],
         "peak_at": [peak_at[i] for i in kept],
         "summary": {
@@ -198,6 +265,14 @@ def document(root: Path) -> dict:
             "holdout": summary(HOLDOUT, "2100", flagged),
             "holdout_from": HOLDOUT,
         },
+        # 上下文勾选框要用的列。对齐规则：这一根 A 股 K 线所对应的美股收盘，
+        # 必须是「上一根 A 股 K 线之后新产生的」——美股休市那天没有新信号，
+        # 同一份美股收盘不能在连续两个 A 股交易日各下一次单。否则前端重算会多数出几笔。
+        "components": {
+            key: [_component_row(signal_doc, dates, kept, i)[key] for i in kept]
+            for key in signal_doc["components"]
+        },
+        "contexts": signal_doc["contexts"],
         "bands": bands,
         "reference": {
             "instrument": "^NDX",

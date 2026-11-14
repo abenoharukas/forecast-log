@@ -13,6 +13,9 @@ NY = ZoneInfo("America/New_York")
 class Bar:
     date: date
     close: float
+    # 开盘价。只有「照着信号下单」的标的才必须存（^NDX、QQQ、000001.SS）；
+    # 因子和结算只用收盘，所以旧文件缺这一列仍然能读。
+    open: float | None = None
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,11 @@ def validate_bars(bars: tuple[Bar, ...] | list[Bar]) -> None:
         raise ValueError("duplicate session dates")
     if any(bar.close <= 0 or bar.close != bar.close for bar in bars):
         raise ValueError("closes must be finite and positive")
+    if any(
+        bar.open is not None and (bar.open <= 0 or bar.open != bar.open)
+        for bar in bars
+    ):
+        raise ValueError("opens must be finite and positive when present")
 
 
 def save_series(path: Path, series: Series) -> None:
@@ -43,7 +51,8 @@ def save_series(path: Path, series: Series) -> None:
         "timezone": series.timezone,
         "fetched_at": series.fetched_at,
         "bars": [
-            {"date": bar.date.isoformat(), "close": bar.close} for bar in series.bars
+            {"date": bar.date.isoformat(), "open": bar.open, "close": bar.close}
+            for bar in series.bars
         ],
     }
     path.write_text(json.dumps(payload, indent=2) + "\n")
@@ -52,7 +61,11 @@ def save_series(path: Path, series: Series) -> None:
 def load_series(path: Path) -> Series:
     payload = json.loads(path.read_text())
     bars = tuple(
-        Bar(date=date.fromisoformat(row["date"]), close=float(row["close"]))
+        Bar(
+            date=date.fromisoformat(row["date"]),
+            close=float(row["close"]),
+            open=float(row["open"]) if row.get("open") is not None else None,
+        )
         for row in payload["bars"]
     )
     series = Series(

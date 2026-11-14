@@ -16,18 +16,19 @@
     加：离下一次 NFP 在 3 到 7 天之间，且分数 >= 历史中位
     减：FOMC 决议当天不打点（那天市场在等结果，方向最随机）
 
-命中口径：入场价 = 信号当天收盘；之后 5 个交易日内**任何一根收盘高于入场价**就算命中
-（不是「第 5 个交易日收盘更高」，也不是盘中的最高价）。
+成交口径：信号在 D 日**收盘后**成立，最早只能在 D+1 **开盘**成交，所以入场价 = D+1 的开盘价，
+窗口 = D+1 起 5 根收盘，**任何一根高于入场价**就算命中（不是「第 5 个交易日收盘更高」，也不是盘中最高价）。
+不能用 D 日自己的收盘当入场价：那个价是判断依据，同时也是已经过去的价格。
 
 三个窗口是分开挑的，不是随手写：CPI 0-3 天、NFP 3-7 天在 2015 年前后两段都高于基率；
 NFP 0-2 天低于基率（2015 年前 −2.4 个点，2015 后 −0.2 个点），
 FOMC 0-2 天两段方向相反（2015 前 +3.8 个点，2015 后 −2.5 个点），所以 FOMC 只用来否决决议当天。
 窗口本身是在旧口径（第 5 日收盘更高）下挑的，换口径后没有重挑，规则照旧。
 
-现状（2026-11-15 重算，三个日历事件 + 新闻否决都用上，上面的命中口径）：
+现状（2026-11-14 重算，开盘成交口径，三个日历事件 + 新闻否决都用上）：
 
-    全样本       629 个点，命中 85.5%，同期基率 82.1%
-    样本外 2015+ 505 个点，命中 86.1%，同期基率 82.1%
+    价格侧       726 个点，命中 86.5%，同期基率 83.4%
+    再加新闻否决 629 个点，命中 86.0%，同期基率 83.4%（否决反而是减分项，见 README）
 
 留出期的阈值只用 2015 年之前的数据定。打点约占全部日子的 14%，其中约 101 个独立的 5 天窗口。
 日历来自 LLM（`data/events.json`，129 次 FOMC / 192 次 CPI / 192 次 NFP，$0.0016），
@@ -124,6 +125,15 @@ class Call:
     flag: int
     outcome: int | None
     target: str | None
+    # 真正能成交的那个价：信号成立之后第一个交易日的开盘价。
+    entry: float | None = None
+    entry_at: str | None = None
+    # 第 3 根、第 5 根收盘。判定只看这两个数，不看「期间任意一根」。
+    base_close: float | None = None   # 信号那天收盘，颜色的比较基准
+    close3: float | None = None       # 信号后第 3 天收盘
+    close5: float | None = None       # 信号后第 5 天收盘
+    # `hit3` = 第 3 天收盘高于买入价（绿）。`outcome` = 第 5 天收盘高于买入价（绿 + 黄）。
+    hit3: int | None = None
     # 窗口里最高的那根收盘（页面读数用），和它落在哪天。`outcome` 就是「它比入场价高」。
     peak: float | None = None
     peak_at: str | None = None
@@ -276,24 +286,45 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
     scores = composite(root, series)
     if target is None:
         closes = np.array([bar.close for bar in series.bars], dtype=float)
+        opens = np.array(
+            [np.nan if bar.open is None else bar.open for bar in series.bars], dtype=float
+        )
     else:
         # 精确按日期取价：缺的那天就是「测不了」，不拿前一天的收盘顶替。
-        price = {bar.date.isoformat(): bar.close for bar in target.bars}
-        closes = np.array([price.get(day, np.nan) for day in dates], dtype=float)
+        price = {bar.date.isoformat(): (bar.open, bar.close) for bar in target.bars}
+        opens = np.array([price.get(day, (np.nan, np.nan))[0] for day in dates], dtype=float)
+        closes = np.array([price.get(day, (np.nan, np.nan))[1] for day in dates], dtype=float)
     calendar = _calendar_distance(root, dates)
     news, _ = _news_labels(root)
     keyword_features = _keyword_features(root, dates)
-    # 入场价就是当天收盘；只要之后 5 个交易日里有任何一根收盘高过它就算命中。
-    # `peak_at` 记下高在哪天（可能不是第 5 天），`target` 仍然是窗口末尾那天，用来对账。
+    # 信号在 D 日收盘后才成立，所以最早只能在 D+1 的**开盘**成交。
+    # 入场价取 D+1 的开盘价：用 D 日自己的收盘当入场价，等于拿同一个价既做判断又做成交，
+    # 收盘那一刻信号才成立，那个价已经拿不到了。
+    # 窗口仍然是入场日加上之后 4 个收盘，共 5 根，任何一根高过入场价就算命中。
+    # `close3` / `close5` 是第 3 根、第 5 根收盘。判定就用这两个数，不再看「期间任意一根」：
+    # 第 3 天收盘高于买入价 = 绿；第 3 天没到、第 5 天到了 = 黄；第 5 天还没到 = 灰。
+    entry = np.full(n, np.nan)
+    entry_at: list[str | None] = [None] * n
     peak = np.full(n, np.nan)
     peak_at: list[str | None] = [None] * n
-    for i in range(n - HORIZON):
-        window = closes[i + 1 : i + 1 + HORIZON]
-        if not np.all(np.isfinite(window)):
+    close3 = np.full(n, np.nan)
+    close5 = np.full(n, np.nan)
+    base_close = np.full(n, np.nan)
+    # 判定基准 = 信号那天的收盘价（你预测时屏幕上那个价）。之后的第 3 天、第 5 天收盘拿它比。
+    # 买入价仍然记下（次日开盘，唯一能成交的价），但它不决定颜色。
+    for i in range(n - HORIZON - 1):
+        j = i + 1
+        window = closes[j + 1 : j + 1 + HORIZON]
+        if not np.isfinite(opens[j]) or not np.all(np.isfinite(window)):
             continue
+        entry[i] = opens[j]
+        entry_at[i] = dates[j]
+        base_close[i] = closes[i]
+        close3[i] = closes[i + 3]
+        close5[i] = closes[i + 5]
         offset = int(np.argmax(window))
         peak[i] = window[offset]
-        peak_at[i] = dates[i + 1 + offset]
+        peak_at[i] = dates[j + 1 + offset]
     out = []
     for i in range(n):
         if np.isnan(scores[i]) or i < MIN_HISTORY:
@@ -334,12 +365,18 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
         price_only = flag
         # 默认组合 = 复合分数 + 日历触发 − FOMC 当天 − 强利空意外
         flag = int(bool(composite_flag or cal_cpi or cal_nfp) and not fomc_day and not bearish)
-        resolved = i + HORIZON < n and np.isfinite(peak[i]) and np.isfinite(closes[i])
-        outcome = int(peak[i] > closes[i]) if resolved else None
+        resolved = np.isfinite(peak[i]) and np.isfinite(entry[i])
+        outcome = int(close5[i] > base_close[i]) if resolved else None
         out.append(
             Call(
                 date=dates[i],
                 close=float(closes[i]),
+                entry=float(entry[i]) if resolved else None,
+                entry_at=entry_at[i],
+                base_close=float(base_close[i]) if resolved else None,
+                close3=float(close3[i]) if resolved else None,
+                close5=float(close5[i]) if resolved else None,
+                hit3=int(close3[i] > base_close[i]) if resolved else None,
                 score=float(scores[i]),
                 threshold=threshold,
                 flag=flag,
@@ -423,6 +460,14 @@ def document(
     rows = calls(root, series, target)
     resolved = [row for row in rows if row.outcome is not None]
 
+    def split(rows: list[Call]) -> dict:
+        """命中按天拆开：三天内 / 只有第 4–5 天 / 五天都没做到。互斥，加起来是 1。"""
+        if not rows:
+            return {"hit3": None, "hit45": None, "miss": None}
+        three = float(np.mean([1 if row.hit3 == 1 else 0 for row in rows]))
+        later = float(np.mean([1 if (row.outcome == 1 and row.hit3 == 0) else 0 for row in rows]))
+        return {"hit3": round(three, 4), "hit45": round(later, 4), "miss": round(1 - three - later, 4)}
+
     def tally(selected: list[Call]) -> dict:
         flagged = [row for row in selected if row.flag]
         held = [row for row in selected if row.date >= holdout]
@@ -436,6 +481,12 @@ def document(
             "holdout_base_rate": round(float(np.mean([row.outcome for row in held])), 4) if held else None,
             "holdout_flagged": len(held_flag),
             "holdout_hit": round(float(np.mean([row.outcome for row in held_flag])), 4) if held_flag else None,
+            # 三天内 / 只有第 4–5 天：信号侧与基率并排，避免只报「五天命中」那个合计数。
+            "hit3": split(flagged)["hit3"],
+            "hit45": split(flagged)["hit45"],
+            "miss": split(flagged)["miss"],
+            "base3": split(selected)["hit3"],
+            "base45": split(selected)["hit45"],
         }
 
     price_rows = [Call(**{**row.__dict__, "flag": row.price_only}) for row in resolved]
@@ -465,8 +516,9 @@ def document(
                 f"Average the four standardised factors; mark a point above the {int(QUANTILE * 100)}th percentile "
                 "of all history up to that day, or within 3 days before CPI / 3-7 days before NFP with the score "
                 "at or above the median; no point on the FOMC decision day; and the news veto removes signals on "
-                "days the LLM labels as a strong bearish surprise. The entry price is that session's close; the call "
-                f"is a hit if any of the next {HORIZON} closes is above it."
+                "days the LLM labels as a strong bearish surprise. A point is issued on a close, so the earliest "
+                "you can pay for it is the next session's open: that open is the entry price, and the call is a "
+                f"hit if any of the {HORIZON} closes from that session onwards is above it."
             ),
         },
         "fetched_at": series.fetched_at,
@@ -476,6 +528,12 @@ def document(
         "news": news_provenance,
         "time": [row.date for row in rows],
         "close": [round(row.close, 2) for row in rows],
+        "entry": [round(row.entry, 2) if row.entry is not None else None for row in rows],
+        "entry_at": [row.entry_at for row in rows],
+        "base_close": [round(row.base_close, 2) if row.base_close is not None else None for row in rows],
+        "close3": [round(row.close3, 2) if row.close3 is not None else None for row in rows],
+        "close5": [round(row.close5, 2) if row.close5 is not None else None for row in rows],
+        "hit3": [row.hit3 for row in rows],
         "score": [round(row.score, 4) for row in rows],
         "threshold": [round(row.threshold, 4) for row in rows],
         "flag": [row.flag for row in rows],
@@ -553,8 +611,8 @@ def comparison(primary: dict, other: dict) -> dict:
             {
                 "date": day,
                 "target": primary["target"][index],
-                "a_return": round(primary["peak"][index] / primary["close"][index] - 1, 6),
-                "b_return": round(other["peak"][index] / other["close"][index] - 1, 6),
+                "a_return": round(primary["peak"][index] / primary["entry"][index] - 1, 6),
+                "b_return": round(other["peak"][index] / other["entry"][index] - 1, 6),
                 "a_hit": primary["outcome"][index],
                 "b_hit": other["outcome"][index],
             }

@@ -26,23 +26,32 @@ def test_every_signal_enters_on_the_first_a_share_session_after_the_us_date():
         assert days[index - 1] <= row.us_date
 
 
-def test_the_window_is_five_a_share_sessions_and_the_hit_is_any_close_above_entry():
+def test_the_entry_is_the_open_and_the_window_starts_there():
     if not _have_inputs():
         return
     series = load_series(series_path(ROOT, china.TARGET))
     days = [bar.date.isoformat() for bar in series.bars]
-    closes = {bar.date.isoformat(): bar.close for bar in series.bars}
+    bars = {bar.date.isoformat(): bar for bar in series.bars}
     position = {day: index for index, day in enumerate(days)}
     for row in china.entries(ROOT):
+        index = position[row.date]
+        # 入场价必须是那天的开盘价：收盘价那一刻信号才成立，买不到。
+        assert row.entry == bars[row.date].open
         if row.outcome is None:
             assert row.peak is None and row.target is None
             continue
-        index = position[row.date]
+        # 窗口是买入日之后的 5 个收盘，买入当天不算。
         window = days[index + 1 : index + 1 + china.HORIZON]
-        best = max(closes[day] for day in window)
+        best = max(bars[day].close for day in window)
         assert row.target == days[index + china.HORIZON]
         assert row.peak == best
-        assert row.outcome == int(best > row.close)
+        # 判定基准是箭头那天的收盘价；比较的对象是第 3 天、第 5 天的收盘。
+        day = days[index]
+        assert row.base_close == bars[day].close
+        assert row.close3 == bars[days[index + 3]].close
+        assert row.close5 == bars[days[index + 5]].close
+        assert row.hit3 == int(row.close3 > row.base_close)
+        assert row.outcome == int(row.close5 > row.base_close)
 
 
 def test_the_signal_itself_is_not_rebuilt_for_this_market():

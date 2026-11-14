@@ -153,22 +153,20 @@ def cross_command(root: Path) -> dict:
         print(
             f"  判定不一致 {len(other['comparison']['disagreements'])} 天，写在 {other_path}"
         )
-    # A 股那一份：同样的四根腿换成本地输入，结论是「没有增量」，页面上直接这么说。
+    # A 股那一份：信号一个字不改，只换了入场的市场。
     ssec_path = series_path(root, "000001.SS")
     if ssec_path.is_file():
         study = china_document(root)
         study_path = root / "artifacts" / "cross_ssec.json"
         write_report(study_path, study, indent=None)
-        stats = study["summary"]
+        whole, held = study["summary"]["all"], study["summary"]["holdout"]
         print(
-            f"\n同样的思路换到上证综指（{study['first_session']} → {study['last_session']}，"
-            f"四根腿换成本地输入）：\n"
-            f"  打点 {stats['flagged']} 个，命中 {stats['hit']:.1%}，基率 {stats['base_rate']:.1%}"
-            f"（{stats['hit'] - stats['base_rate']:+.1%}）\n"
-            f"  2021 起 {stats['holdout_flagged']} 个，命中 {stats['holdout_hit']:.1%}，"
-            f"基率 {stats['holdout_base_rate']:.1%}（{stats['holdout_hit'] - stats['holdout_base_rate']:+.1%}）\n"
-            f"  六种腿的组合在 {min(v['lift'] for v in study['variants']):+.1%} 到 "
-            f"{max(v['lift'] for v in study['variants']):+.1%} 之间，写在 {study_path}"
+            f"\n同一个信号、换到上证综指结算（{study['first_session']} → {study['last_session']}）：\n"
+            f"  全样本 {whole['signals']} 个信号 命中 {whole['hit']:.1%} 对基率 {whole['base_rate']:.1%}"
+            f"（{whole['lift']:+.1%}）\n"
+            f"  {study['summary']['holdout_from']} 起 {held['signals']} 个 命中 {held['hit']:.1%} "
+            f"对基率 {held['base_rate']:.1%}（{held['lift']:+.1%}）\n"
+            f"  写在 {study_path}"
         )
     else:
         print("000001.SS 还没取，跳过 A 股那一份（forecast-log fetch）")

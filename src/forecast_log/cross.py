@@ -260,11 +260,23 @@ def _keyword_features(root: Path, dates: list[str]) -> dict[str, int]:
     return out
 
 
-def calls(root: Path, series: Series) -> list[Call]:
-    closes = np.array([bar.close for bar in series.bars], dtype=float)
-    n = len(closes)
-    scores = composite(root, series)
+def calls(root: Path, series: Series, target: Series | None = None) -> list[Call]:
+    """Signals from `series`'s calendar; outcomes from `target`'s prices when given.
+
+    The composite, the calendar triggers and the news veto never read the price of
+    the thing being predicted, so passing another instrument as `target` keeps every
+    `flag` bit-for-bit and only re-scores the entries and exits. That is what makes
+    the QQQ page a fair check of the same signalling rule.
+    """
     dates = [bar.date.isoformat() for bar in series.bars]
+    n = len(dates)
+    scores = composite(root, series)
+    if target is None:
+        closes = np.array([bar.close for bar in series.bars], dtype=float)
+    else:
+        # 精确按日期取价：缺的那天就是「测不了」，不拿前一天的收盘顶替。
+        price = {bar.date.isoformat(): bar.close for bar in target.bars}
+        closes = np.array([price.get(day, np.nan) for day in dates], dtype=float)
     calendar = _calendar_distance(root, dates)
     news, _ = _news_labels(root)
     keyword_features = _keyword_features(root, dates)
@@ -274,6 +286,8 @@ def calls(root: Path, series: Series) -> list[Call]:
     peak_at: list[str | None] = [None] * n
     for i in range(n - HORIZON):
         window = closes[i + 1 : i + 1 + HORIZON]
+        if not np.all(np.isfinite(window)):
+            continue
         offset = int(np.argmax(window))
         peak[i] = window[offset]
         peak_at[i] = dates[i + 1 + offset]
@@ -317,7 +331,7 @@ def calls(root: Path, series: Series) -> list[Call]:
         price_only = flag
         # 默认组合 = 复合分数 + 日历触发 − FOMC 当天 − 强利空意外
         flag = int(bool(composite_flag or cal_cpi or cal_nfp) and not fomc_day and not bearish)
-        resolved = i + HORIZON < n
+        resolved = i + HORIZON < n and np.isfinite(peak[i]) and np.isfinite(closes[i])
         outcome = int(peak[i] > closes[i]) if resolved else None
         out.append(
             Call(
@@ -390,8 +404,20 @@ def _runtime_context(root: Path) -> dict | None:
     }
 
 
-def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
-    rows = calls(root, series)
+def document(
+    root: Path,
+    series: Series,
+    holdout: str = "2015-01-01",
+    instrument: str | None = None,
+    target: Series | None = None,
+) -> dict:
+    """The study for one instrument. The signals never read this instrument's prices.
+
+    The composite is built from the four cross-asset legs only, so swapping the
+    target (NDX -> QQQ) leaves `flag` untouched and changes only the outcomes.
+    """
+    label = instrument or series.symbol
+    rows = calls(root, series, target)
     resolved = [row for row in rows if row.outcome is not None]
 
     def tally(selected: list[Call]) -> dict:
@@ -416,9 +442,13 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
     news_provenance["vetoed_signals"] = sum(row.news_veto for row in resolved)
 
     return {
+        "instrument": label,
         "question": {
             "horizon": HORIZON,
-            "text": f"Cross-asset risk appetite long → does the index print any close above the entry price in the next {HORIZON} sessions?",
+            "text": (
+                f"Cross-asset risk appetite long → does {label} print any close above the entry "
+                f"price in the next {HORIZON} sessions?"
+            ),
             "legs": [
                 "Factor 1 — 10Y Treasury yield down over 20 sessions",
                 "Factor 2 — dollar index weaker over 20 sessions",
@@ -437,6 +467,8 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
             ),
         },
         "fetched_at": series.fetched_at,
+        "first_session": rows[0].date if rows else None,
+        "last_session": rows[-1].date if rows else None,
         "calendar": _calendar_provenance(root),
         "news": news_provenance,
         "time": [row.date for row in rows],
@@ -477,4 +509,58 @@ def document(root: Path, series: Series, holdout: str = "2015-01-01") -> dict:
             "flag_price_only": rows[-1].price_only,
             "news_veto": bool(rows[-1].news_veto),
         },
+    }
+
+
+def _instrument_row(doc: dict) -> dict:
+    summary = doc["summary"]
+    hit, base = summary["hit"], summary["base_rate"]
+    held_hit, held_base = summary["holdout_hit"], summary["holdout_base_rate"]
+    return {
+        "instrument": doc["instrument"],
+        "signals": summary["flagged"],
+        "precision": hit,
+        "base_rate": base,
+        "lift": None if hit is None or base is None else round(hit - base, 4),
+        "holdout_signals": summary["holdout_flagged"],
+        "holdout_precision": held_hit,
+        "holdout_base_rate": held_base,
+        "holdout_lift": None if held_hit is None or held_base is None else round(held_hit - held_base, 4),
+    }
+
+
+def comparison(primary: dict, other: dict) -> dict:
+    """One set of signals, two instruments: precision side by side, plus where they disagree.
+
+    Everything that decides *when* to buy (composite, calendar, news veto) is computed
+    without the target's own prices, so the two documents must flag the same sessions.
+    `same_flags` says whether that held; if it ever stops holding, the comparison is void.
+    """
+    if primary["time"] != other["time"]:
+        raise ValueError("documents are on different session calendars")
+    disagreements = []
+    for index, day in enumerate(primary["time"]):
+        if not primary["flag"][index]:
+            continue
+        if primary["outcome"][index] is None or other["outcome"][index] is None:
+            continue
+        if primary["outcome"][index] == other["outcome"][index]:
+            continue
+        disagreements.append(
+            {
+                "date": day,
+                "target": primary["target"][index],
+                "a_return": round(primary["peak"][index] / primary["close"][index] - 1, 6),
+                "b_return": round(other["peak"][index] / other["close"][index] - 1, 6),
+                "a_hit": primary["outcome"][index],
+                "b_hit": other["outcome"][index],
+            }
+        )
+    return {
+        "a": primary["instrument"],
+        "b": other["instrument"],
+        "rows": [_instrument_row(primary), _instrument_row(other)],
+        "same_days": primary["time"] == other["time"],
+        "same_flags": primary["flag"] == other["flag"],
+        "disagreements": disagreements,
     }

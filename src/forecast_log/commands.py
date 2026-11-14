@@ -16,7 +16,7 @@ from forecast_log.backtest import (
 )
 from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
-from forecast_log.cross import CROSS_SYMBOLS, document as cross_document
+from forecast_log.cross import CROSS_SYMBOLS, comparison, document as cross_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
 from forecast_log.paths import series_path
@@ -26,6 +26,8 @@ from forecast_log.yahoo import fetch_daily
 NY = ZoneInfo("America/New_York")
 # The settlement symbols. questions.json is the contract; these are what it points at.
 SYMBOLS = ("^VXN", "^NDX")
+# 同一套信号，换一只能真下单的基金：用来检查结论是不是绑在指数点位上。
+COMPARE_SYMBOLS = ("QQQ",)
 
 
 def _features_for(root: Path, series) -> object:
@@ -59,7 +61,7 @@ def fetch_command(root: Path) -> dict:
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
             f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
         )
-    for symbol in CROSS_SYMBOLS:
+    for symbol in (*CROSS_SYMBOLS, *COMPARE_SYMBOLS):
         try:
             series = fetch_daily(symbol)
         except (RuntimeError, OSError, ValueError) as error:
@@ -120,6 +122,36 @@ def cross_command(root: Path) -> dict:
         f"阈值 {document['latest']['threshold']:.3f}，{'打点' if document['latest']['flag'] else '不打点'}\n"
         f"写在 {path}"
     )
+    for symbol in COMPARE_SYMBOLS:
+        compare_path = series_path(root, symbol)
+        if not compare_path.is_file():
+            print(f"{symbol} 还没取，跳过对照（forecast-log fetch）")
+            continue
+        # 信号还是那一条：只把入场/出场价换成这只标的的收盘。
+        other = cross_document(root, ndx, instrument=symbol, target=load_series(compare_path))
+        other["comparison"] = comparison(document, other)
+        other_path = root / "artifacts" / f"cross_{symbol.lower()}.json"
+        write_report(other_path, other, indent=None)
+        rows = other["comparison"]["rows"]
+        print(
+            f"\n同一套信号、换到 {symbol}（{other['first_session']} → {other['last_session']}，"
+            f"日历对齐 {'是' if other['comparison']['same_flags'] else '否'}）："
+        )
+        for row in rows:
+            print(
+                f"  {row['instrument']:6s} 全样本 {row['signals']} 个信号 "
+                f"命中 {row['precision']:.1%} 对基率 {row['base_rate']:.1%}（{row['lift']:+.1%}）"
+                if row["lift"] is not None
+                else f"  {row['instrument']:6s} 无信号"
+            )
+            print(
+                f"         样本外 {row['holdout_signals']} 个 "
+                f"命中 {row['holdout_precision']:.1%} 对基率 {row['holdout_base_rate']:.1%}"
+                f"（{row['holdout_lift']:+.1%}）"
+            )
+        print(
+            f"  判定不一致 {len(other['comparison']['disagreements'])} 天，写在 {other_path}"
+        )
     return document
 
 

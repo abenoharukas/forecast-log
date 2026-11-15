@@ -157,3 +157,289 @@ th[scope="row"] { font-weight: 400; }
     scroll-behavior: auto !important;
   }
 }
+
+/* ==========================================================================
+   Context Factor Panel (.ctxbar) — Floating Parameters Overlay
+   ========================================================================== */
+.ctxbar {
+  position: absolute;
+  top: 56px;
+  left: 20px;
+  right: 20px;
+  max-width: 1040px;
+  margin: 0 auto;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 18px 16px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.08);
+  max-height: calc(100% - 76px);
+  overflow-y: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.ctxbar.collapsed,
+.ctxbar[hidden] {
+  display: none !important;
+}
+
+.ctxbar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+
+.ctxbar-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ctxbar-title {
+  font-family: "Newsreader", Palatino, serif;
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.ctxbar-status-badge {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ctxbar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.ctxbar-btn {
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 9px;
+  min-block-size: 24px;
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: 2px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.ctxbar-btn:hover {
+  background: var(--paper);
+  border-color: var(--ink);
+}
+
+.ctxbar-btn.primary {
+  background: var(--blue);
+  color: var(--sheet);
+  border-color: var(--blue);
+}
+
+.ctxbar-btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+.ctxbar-btn[disabled] {
+  background: var(--rule);
+  border-color: var(--rule);
+  color: var(--muted);
+  cursor: progress;
+}
+
+.ctxbar-close {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 7px;
+  min-block-size: 24px;
+  min-inline-size: 24px;
+  background: transparent;
+  border: 1px solid var(--control);
+  border-radius: 2px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+
+.ctxbar-close:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+  background: var(--paper);
+}
+
+.ctxbar-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .ctxbar-content {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+}
+
+.ctx-section-title {
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.ctxbar-boxes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ctxbar-boxes label {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  cursor: pointer;
+}
+
+.ctxbar-boxes label input[type="checkbox"],
+.ctxbar-boxes label input[type="radio"] {
+  margin: 0;
+  accent-color: var(--blue);
+  cursor: pointer;
+  flex-shrink: 0;
+  position: relative;
+  top: 2px;
+}
+
+.ctxbar-boxes label .kind {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ctxbar-boxes label.required {
+  cursor: default;
+}
+
+.ctxbar-boxes label.required span {
+  font-weight: 500;
+}
+
+.ctxbar-boxes label.required input {
+  cursor: not-allowed;
+  opacity: .65;
+}
+
+.ctx-group {
+  margin: 6px 0 0;
+  padding: 8px 12px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--paper);
+}
+
+.ctx-group > legend {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 6px;
+}
+
+.ctxbar-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+.ctxbar-result table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.ctxbar-result td,
+.ctxbar-result th {
+  padding: 2px 6px;
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ctxbar-result td:first-child,
+.ctxbar-result th:first-child {
+  text-align: left;
+  color: var(--muted);
+}
+
+.ctxbar-result thead th {
+  border-bottom: 1px solid var(--rule);
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.ctxbar-result tbody th[scope="row"] {
+  font-weight: 400;
+}
+
+.ctxbar-note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  border-top: 1px solid var(--rule);
+  padding-top: 8px;
+}
+
+.pane-toggles {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane-head .toggle.active {
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+}
+
+.pane-head #rule {
+  cursor: pointer;
+  text-decoration: underline dotted var(--control);
+  text-underline-offset: 3px;
+  transition: color 0.12s;
+}
+
+.pane-head #rule:hover {
+  color: var(--ink);
+  text-decoration-color: var(--ink);
+}
+

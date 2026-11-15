@@ -18,7 +18,7 @@
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; overflow: hidden; }
-    main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; }
+    main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; position: relative; }
     header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; min-block-size: 57px; }
     /* Always own row: the question text arrives later and must not move it. */
     #build { flex-basis: 100%; }
@@ -58,60 +58,13 @@
     td { padding: 0 5px; text-align: right; white-space: nowrap; }
     .block + .block { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
     .note { color: var(--muted); font-size: 11px; line-height: 1.55; }
-    .ctxbar {
-      display: flex; flex-direction: column; gap: 8px;
-      margin: 10px 0 12px; padding: 9px 11px;
-      background: var(--sheet); border: 1px solid var(--rule);
+    .pane-head .toggle {
+      font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
+      background: transparent; border: 1px solid var(--control); border-radius: 2px;
+      padding: 1px 7px; min-block-size: 24px; cursor: pointer;
     }
-    .ctxbar-top { display: grid; grid-template-columns: 150px minmax(0, 1fr) 176px; gap: 14px; align-items: start; }
-    .ctxbar-head { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
-    .ctxbar.collapsed { padding: 9px 11px; }
-    .ctxbar.collapsed .ctxbar-head { display: none; }
-    .ctxbar.collapsed .ctxbar-top,
-    .ctxbar.collapsed .ctxbar-boxes,
-    .ctxbar.collapsed .ctxbar-actions,
-    .ctxbar.collapsed .ctxbar-result,
-    .ctxbar.collapsed .ctxbar-body { display: none; }
-    .ctxbar.collapsed .ctxbar-top { grid-template-columns: 150px; gap: 0; }
-    .ctxbar.collapsed .ctxbar-head .sub { display: none; }
-    .ctxbar.collapsed .ctxbar-title { margin: 0; }
-    /* 顶部一条横杠，中间一个三角。位置固定，内容只往下展。 */
-    .ctxbar-bar {
-      display: flex; align-items: center; justify-content: center; width: 100%; min-block-size: 24px;
-      background: transparent; border: 0;
-      border-bottom: 1px solid var(--rule); padding: 0; margin: 0;
-      font: inherit; font-size: 10px; line-height: 1; color: var(--muted);
-      cursor: pointer;
-    }
-    .ctxbar-bar:hover { color: var(--ink); }
-    .ctxbar-status { font-size: 10px; color: var(--muted); min-height: 13px; }
-    .ctxbar-result { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; padding-top: 6px; border-top: 1px solid var(--rule); }
-    @media (max-width: 1100px) { .ctxbar-top { grid-template-columns: 1fr; } .ctxbar-result { grid-template-columns: 1fr; } }
-    /* Reserve the panel's final height so the chart does not jump down when the
-       factor list arrives. Tuned to the two-column layout; content taller than
-       this at narrower widths simply grows (no blank space). */
-    @media (min-width: 1101px) and (max-width: 1680px) {
-      .ctxbar:not(.collapsed) { min-block-size: 300px; }
-    }
-    .ctxbar-title { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
-    .ctxbar-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 20px; }
-    .ctxbar-actions { display: flex; flex-direction: column; gap: 4px; }
-    .ctxbar-result table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    .ctxbar-result :is(td, th) { padding: 1px 6px; white-space: nowrap; color: var(--ink); }
-    .ctxbar-result thead th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--rule); }
-    .ctxbar-result tbody th[scope="row"] { color: var(--muted); font-weight: 400; }
-    .ctx { display: flex; flex-direction: column; gap: 4px; }
-    .ctx label { font-size: 11px; color: var(--ink); display: flex; gap: 6px; align-items: baseline; cursor: pointer; }
-    .ctx .kind { color: var(--muted); font-size: 10px; }
-    .ctxbar-boxes label.required span { font-weight: 500; }
-    .ctxbar-boxes label.required input { cursor: not-allowed; opacity: .65; }
+    .pane-head .toggle:hover { background: var(--paper); }
     .ctx-table td, .ctx-table th { font-variant-numeric: tabular-nums; }
-    #ctx-run, #ctx-reset, #ctx-all {
-      font: inherit; font-size: 11px; padding: 3px 8px; min-block-size: 24px; cursor: pointer;
-      background: var(--sheet); border: 1px solid var(--control); color: var(--ink);
-    }
-    #ctx-run { background: var(--blue); color: var(--sheet); border-color: var(--blue); }
-    #ctx-run[disabled] { background: var(--rule); border-color: var(--rule); color: var(--muted); cursor: progress; }
     .ctxbar-status.busy { color: var(--blue); }
     .ctxbar-result.loading { opacity: .45; transition: opacity .12s; }
     .spinner {
@@ -135,25 +88,30 @@
       <span class="sub" id="question">—</span>
       <span class="sub" id="build">r2 · cross-asset risk-on composite · follows the OS colour scheme · <a href="/web/qqq.html">QQQ check →</a> · <a href="/web/ssec.html">A-shares →</a></span>
     </header>
-    <section class="ctxbar" aria-label="Context factors">
-      <button class="ctxbar-bar" id="ctx-toggle" type="button" aria-label="Context factors" aria-expanded="true">&#9650;</button>
-      <div class="ctxbar-top">
-        <div class="ctxbar-head">
-          <span class="ctxbar-title">Context</span>
-          <span class="sub">pick what the model may use</span>
+    <section class="ctxbar collapsed" id="ctxbar" aria-label="Context factors">
+      <div class="ctxbar-header">
+        <div class="ctxbar-title-group">
+          <span class="ctxbar-title">Model Context Factors</span>
+          <span class="ctxbar-status-badge" id="ctx-status" role="status"></span>
         </div>
-        <div id="ctx-picker" class="ctxbar-boxes"></div>
-        <div class="ctxbar-actions">
-          <button type="button" id="ctx-run">Run estimate</button>
-          <button type="button" id="ctx-reset">Price factors only</button>
-          <button type="button" id="ctx-all">Everything available</button>
-          <span class="ctxbar-status" id="ctx-status" role="status"></span>
+        <div class="ctxbar-header-actions">
+          <button type="button" class="ctxbar-btn primary" id="ctx-run">Run estimate</button>
+          <button type="button" class="ctxbar-btn" id="ctx-reset" title="Keep only base composite factor">Price factors only</button>
+          <button type="button" class="ctxbar-btn" id="ctx-all" title="Select all available factors">Everything available</button>
+          <button type="button" class="ctxbar-close" id="ctx-close" aria-label="Close factor panel" title="Close factors panel">✕</button>
         </div>
       </div>
-      <div class="ctxbar-body">
-        <div class="ctxbar-result">
-          <table id="ctx-table" aria-label="Signal statistics for the current context selection"></table>
-          <div class="note" id="ctx-note"></div>
+      <div class="ctxbar-content">
+        <div class="ctxbar-picker-col">
+          <div class="ctx-section-title">Factors & Filters (Triggers / Vetoes)</div>
+          <div id="ctx-picker" class="ctxbar-boxes"></div>
+        </div>
+        <div class="ctxbar-stats-col">
+          <div class="ctx-section-title">Performance vs Baseline</div>
+          <div class="ctxbar-result">
+            <table id="ctx-table" aria-label="Signal statistics for the current context selection"></table>
+            <div class="ctxbar-note" id="ctx-note"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -161,10 +119,13 @@
       <div class="pane">
         <div class="pane-head">
           <span class="name">Risk-on composite → day-5 close above the signal-day close</span>
-          <span class="sub" id="rule">—</span>
+          <span class="sub" id="rule" title="Click to configure context factors">—</span>
           <span class="sub">marker = the signal day · basis = that day's close · <b style="color:var(--green)">▲ green</b> = day-3 close above it · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 still below · hover for the numbers</span>
           <span class="sub" id="readout">hover a session: its close, then the day-3 and day-5 closes</span>
-          <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
+          <div class="pane-toggles">
+            <button class="toggle" id="ctx-toggle" type="button" aria-controls="ctxbar" aria-expanded="false" title="Configure model context factors">factors &#9662;</button>
+            <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
+          </div>
         </div>
         <div class="chart" id="chart" role="img" aria-label="Close price with risk-on signal markers. The side tables list the same signals as data."></div>
       </div>
@@ -349,6 +310,15 @@
         " signals · from " + effectiveFrom +
         (triggers.length ? "" : " · NO TRIGGER SELECTED");
 
+      const toggleFactors = document.querySelector("#ctx-toggle");
+      const panel = document.querySelector(".ctxbar");
+      const isOpen = panel && !panel.classList.contains("collapsed");
+      if (toggleFactors) {
+        toggleFactors.textContent = "factors (" + chosenKeys.size + "/" + crossData.contexts.length + ") " + (isOpen ? "\u25B4" : "\u25BE");
+        toggleFactors.setAttribute("aria-expanded", String(isOpen));
+        toggleFactors.classList.toggle("active", isOpen);
+      }
+
       const chosen = crossData.contexts.filter((item) => selected.has(item.key));
       const base = crossData.summary.base_rate;
       document.querySelector("#ctx-note").textContent = chosen.length
@@ -364,26 +334,75 @@
     function buildContextPicker() {
       const holder = document.querySelector("#ctx-picker");
       holder.textContent = "";
-      crossData.contexts.forEach((item) => {
+
+      function option(item, extra) {
         const label = document.createElement("label");
+        label.className = "ctx-item" + (item.required ? " required" : "");
         const box = document.createElement("input");
-        box.type = "checkbox";
         const required = Boolean(item.required);
+        box.type = item.group ? "radio" : "checkbox";
+        if (item.group) box.name = "group-" + item.group;
         box.checked = required || selected.has(item.key);
         box.disabled = required;
         box.dataset.required = String(required);
         if (required) label.classList.add("required");
         box.onchange = () => {
-          box.checked ? selected.add(item.key) : selected.delete(item.key);
+          if (item.group) {
+            groups[item.group].forEach((key) => selected.delete(key));
+            if (box.checked) selected.add(item.key);
+            buildContextPicker();
+          } else {
+            box.checked ? selected.add(item.key) : selected.delete(item.key);
+          }
           runEstimate("selection changed");
         };
         const text = document.createElement("span");
         text.innerHTML = item.label + ' <span class="kind">· ' + item.kind +
-          (required ? " · always on (base trigger)" : "") +
+          (required ? ' <span class="badge">always on</span>' : "") +
           " · " + item.note + "</span>";
         label.appendChild(box);
         label.appendChild(text);
-        holder.appendChild(label);
+        return label;
+      }
+
+      // 同组互斥：一次只能选一个，或者选「不用」。
+      const groups = {};
+      crossData.contexts.filter((item) => item.group).forEach((item) => {
+        (groups[item.group] = groups[item.group] || []).push(item.key);
+      });
+
+      const standalone = document.createElement("div");
+      standalone.className = "ctx-standalone";
+      crossData.contexts.filter((item) => !item.group).forEach((item) => standalone.appendChild(option(item, 0)));
+      holder.appendChild(standalone);
+
+      Object.entries(groups).forEach(([name, keys]) => {
+        const members = crossData.contexts.filter((item) => item.group === name);
+        const field = document.createElement("fieldset");
+        field.className = "ctx-group";
+        const legend = document.createElement("legend");
+        legend.textContent = (members[0].group_label || name) + " · 三选一";
+        field.appendChild(legend);
+
+        const offLabel = document.createElement("label");
+        offLabel.className = "ctx-item";
+        const offBox = document.createElement("input");
+        offBox.type = "radio";
+        offBox.name = "group-" + name;
+        offBox.checked = keys.every((key) => !selected.has(key));
+        offBox.onchange = () => {
+          keys.forEach((key) => selected.delete(key));
+          buildContextPicker();
+          runEstimate("selection changed");
+        };
+        const offText = document.createElement("span");
+        offText.innerHTML = 'None <span class="kind">· off · 不撤任何信号</span>';
+        offLabel.appendChild(offBox);
+        offLabel.appendChild(offText);
+        field.appendChild(offLabel);
+
+        members.forEach((item) => field.appendChild(option(item, 1)));
+        holder.appendChild(field);
       });
     }
 
@@ -699,23 +718,80 @@
   </script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-    // 因素面板收起来 / 展开。三个页面同一套。
-    const toggleFactors = document.querySelector("#ctx-toggle");
-    toggleFactors.addEventListener("click", () => {
-      const hidden = document.querySelector(".ctxbar").classList.toggle("collapsed");
-      toggleFactors.textContent = hidden ? "\u25BC" : "\u25B2";
-      toggleFactors.setAttribute("aria-expanded", String(!hidden));
-    });
+      // 因素面板收起来 / 展开。三个页面同一套。
+      const toggleFactors = document.querySelector("#ctx-toggle");
+      const closeFactors = document.querySelector("#ctx-close");
+      const ruleElem = document.querySelector("#rule");
 
-    // 右侧面板收起来 / 展开。三个页面同一套。
-    const togglePanel = document.querySelector("#toggle-panel");
-    togglePanel.addEventListener("click", () => {
-      const panel = document.querySelector("aside");
-      const hidden = panel.classList.toggle("hidden");
-      togglePanel.textContent = hidden ? "panel ‹" : "panel ›";
-      togglePanel.title = hidden ? "Show the side panel" : "Collapse the side panel";
-      togglePanel.setAttribute("aria-expanded", String(!hidden));
-    });
+      function setOpen(open) {
+        const panel = document.querySelector(".ctxbar");
+        if (!panel) return;
+        panel.classList.toggle("collapsed", !open);
+        const chosenKeys = crossData ? new Set(crossData.contexts.filter((item) => item.required).map((item) => item.key)) : new Set();
+        if (typeof selected !== "undefined") selected.forEach((key) => chosenKeys.add(key));
+        const total = crossData ? crossData.contexts.length : 0;
+        if (toggleFactors) {
+          toggleFactors.textContent = "factors (" + chosenKeys.size + "/" + total + ") " + (open ? "\u25B4" : "\u25BE");
+          toggleFactors.setAttribute("aria-expanded", String(open));
+          toggleFactors.classList.toggle("active", open);
+        }
+      }
+
+      if (toggleFactors) {
+        toggleFactors.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const panel = document.querySelector(".ctxbar");
+          const isOpen = panel && !panel.classList.contains("collapsed");
+          setOpen(!isOpen);
+        });
+      }
+
+      if (closeFactors) {
+        closeFactors.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setOpen(false);
+        });
+      }
+
+      if (ruleElem) {
+        ruleElem.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const panel = document.querySelector(".ctxbar");
+          const isOpen = panel && !panel.classList.contains("collapsed");
+          setOpen(!isOpen);
+        });
+      }
+
+      document.addEventListener("click", (e) => {
+        const panel = document.querySelector(".ctxbar");
+        if (!panel || panel.classList.contains("collapsed")) return;
+        if (panel.contains(e.target)) return;
+        if (toggleFactors && toggleFactors.contains(e.target)) return;
+        if (ruleElem && ruleElem.contains(e.target)) return;
+        setOpen(false);
+      });
+
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          const panel = document.querySelector(".ctxbar");
+          if (panel && !panel.classList.contains("collapsed")) {
+            setOpen(false);
+            if (toggleFactors) toggleFactors.focus();
+          }
+        }
+      });
+
+      // 右侧面板收起来 / 展开。三个页面同一套。
+      const togglePanel = document.querySelector("#toggle-panel");
+      if (togglePanel) {
+        togglePanel.addEventListener("click", () => {
+          const panel = document.querySelector("aside");
+          const hidden = panel.classList.toggle("hidden");
+          togglePanel.textContent = hidden ? "panel ‹" : "panel ›";
+          togglePanel.title = hidden ? "Show the side panel" : "Collapse the side panel";
+          togglePanel.setAttribute("aria-expanded", String(!hidden));
+        });
+      }
     });
   </script>
 </body>

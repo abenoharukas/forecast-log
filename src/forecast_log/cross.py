@@ -116,6 +116,62 @@ def composite(root: Path, series: Series, factors=FACTORS) -> np.ndarray:
     return np.where(np.isnan(stacked).any(axis=1), np.nan, stacked.mean(axis=1))
 
 
+def _vendor_name(slug: str) -> str:
+    """给页面上的人话名字：deepseek-flash → DeepSeek · flash。"""
+    head, _, tail = slug.partition("-")
+    pretty = {"deepseek": "DeepSeek", "qwen": "Qwen"}.get(head.split(".")[0], head)
+    if head.startswith("qwen"):
+        pretty = "Qwen"
+        tail = head[len("qwen") :].lstrip(".") + (f"-{tail}" if tail else "")
+    return f"{pretty} · {tail}" if tail else pretty
+
+
+def _news_providers(root: Path, dates: list[str]) -> tuple[dict[str, list[int]], list[dict]]:
+    """每个读过新闻的模型，各自一列否决位。
+
+    标签是分批实验产出的（`artifacts/news_ab/<模型>/`），覆盖天数远少于价格序列，所以
+    没标过的日子一律记 0（不否决），并把覆盖区间写进 `note`，页面上看得见。
+    加这一列不改变 `flag`：默认选中的仍是原来那一个 `news_bearish`。
+    """
+    base = root / "artifacts" / "news_ab"
+    if not base.is_dir():
+        return {}, []
+    columns: dict[str, list[int]] = {}
+    contexts: list[dict] = []
+    for folder in sorted(path for path in base.iterdir() if path.is_dir()):
+        if folder.name.startswith("deepseek"):
+            # DeepSeek 已由全量的 news_bearish (deepseek-chat) 代表，避免列表中重复出现两个 DeepSeek
+            continue
+        labels: dict[str, float] = {}
+        for path in folder.glob("????-??-??.json"):
+            try:
+                record = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            labels[record["as_of"]] = float(record.get("label", {}).get("severity", 0.0))
+        if not labels:
+            continue
+        key = f"news_{folder.name}"
+        columns[key] = [1 if labels.get(day, 0.0) >= 0.6 else 0 for day in dates]
+        ordered = sorted(labels)
+        contexts.append(
+            {
+                "key": key,
+                "label": f"News score — {_vendor_name(folder.name)}",
+                "kind": "veto",
+                "note": (
+                    f"severity ≥ 0.6 on a labeled day removes that day's signal; "
+                    f"{len(labels)} of {len(dates)} days labeled ({ordered[0]} → {ordered[-1]}), "
+                    f"unlabeled days never veto"
+                ),
+                "group": "news",
+                "group_label": "News source",
+                "available_from": ordered[0],
+            }
+        )
+    return columns, contexts
+
+
 @dataclass(frozen=True)
 class Call:
     date: str
@@ -200,10 +256,12 @@ CONTEXTS: list[dict] = [
     },
     {
         "key": "news_bearish",
-        "label": "News surprise (LLM)",
+        "label": "News score — DeepSeek",
         "kind": "veto",
-        "note": "one LLM read per day; a strong bearish surprise removes that day's signal",
+        "note": "one LLM read per day; a strong bearish surprise removes that day's signal (deepseek-chat)",
         "available_from": "2002-01-01",
+        "group": "news",
+        "group_label": "News source",
     },
 ]
 
@@ -494,6 +552,7 @@ def document(
     price_only = tally(price_rows)
     _, news_provenance = _news_labels(root)
     news_provenance["vetoed_signals"] = sum(row.news_veto for row in resolved)
+    news_columns, news_contexts = _news_providers(root, [row.date for row in rows])
 
     return {
         "instrument": label,
@@ -548,13 +607,15 @@ def document(
             "news_bearish": [row.news_bearish for row in rows],
             "news_bullish": [row.news_bullish for row in rows],
             "riskoff_hits": [row.riskoff_hits for row in rows],
+            **news_columns,
         },
         "contexts": [
             {**item, "available_from": item.get("available_from") or rows[0].date}
             if item["key"] == "composite"
             else item
             for item in CONTEXTS
-        ],
+        ]
+        + news_contexts,
         "news_veto": [row.news_veto for row in rows],
         "outcome": [row.outcome for row in rows],
         "target": [row.target for row in rows],

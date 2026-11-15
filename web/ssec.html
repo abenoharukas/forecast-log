@@ -19,25 +19,24 @@
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; overflow: hidden; }
-    main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; }
+    main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; position: relative; }
     header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; min-block-size: 57px; }
     /* Always own row: the question text arrives later and must not move it. */
     #build { flex-basis: 100%; }
     h1 { margin: 0; font-weight: 480; font-size: clamp(1.3rem, 1rem + 1vw, 1.75rem); letter-spacing: -0.03em; text-wrap: balance; }
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
     .sub a { color: var(--blue); }
-    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
+    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; position: relative; }
     .pane { flex: 1; min-width: 0; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; }
     .pane-head {
       display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 7px 12px;
       border-bottom: 1px solid var(--rule); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
     }
     .pane-head .name { font-size: 15px; font-weight: 500; }
-    .board { position: relative; }
     .pane-head .toggle {
       font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
       background: transparent; border: 1px solid var(--control); border-radius: 2px;
-      padding: 1px 7px; min-block-size: 24px; cursor: pointer; margin-left: auto;
+      padding: 1px 7px; min-block-size: 24px; cursor: pointer;
     }
     .pane-head .toggle:hover { background: var(--paper); }
     aside.hidden { display: none; }
@@ -65,48 +64,6 @@
       body { overflow: auto; } main { height: auto; }
       .board { flex-direction: column; } .pane { min-height: 340px; } aside { width: auto; }
     }
-    .ctxbar { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 12px; padding: 9px 11px; background: var(--sheet); border: 1px solid var(--rule); }
-    .ctxbar-top { display: grid; grid-template-columns: 150px minmax(0, 1fr) 176px; gap: 14px; align-items: start; }
-    .ctxbar-head { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
-    .ctxbar-title { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
-    .ctxbar-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0 20px; }
-    .ctxbar-actions { display: flex; flex-direction: column; gap: 4px; }
-    .ctxbar-status { font-size: 10px; color: var(--muted); min-height: 13px; }
-    .ctxbar-result { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; padding-top: 6px; border-top: 1px solid var(--rule); }
-    .ctxbar-result table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    .ctxbar-result td, .ctxbar-result th { padding: 1px 6px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
-    .ctxbar-result td:first-child, .ctxbar-result th:first-child { text-align: left; color: var(--muted); }
-    .ctx { display: flex; flex-direction: column; gap: 4px; }
-    .ctxbar-boxes label { font-size: 11px; color: var(--ink); display: flex; gap: 6px; align-items: baseline; cursor: pointer; }
-    .ctxbar-boxes label .kind { color: var(--muted); font-size: 10px; }
-    .ctxbar-boxes label.required span { font-weight: 500; }
-    .ctxbar-boxes label.required input { cursor: not-allowed; opacity: .65; }
-    #ctx-reset, #ctx-all { font: inherit; font-size: 11px; padding: 3px 8px; min-block-size: 24px; cursor: pointer; background: var(--sheet); border: 1px solid var(--control); color: var(--ink); }
-    .ctxbar.collapsed { padding: 9px 11px; }
-    .ctxbar.collapsed .ctxbar-head { display: none; }
-    .ctxbar.collapsed .ctxbar-top,
-    .ctxbar.collapsed .ctxbar-boxes,
-    .ctxbar.collapsed .ctxbar-actions,
-    .ctxbar.collapsed .ctxbar-result,
-    .ctxbar.collapsed .ctxbar-body { display: none; }
-    .ctxbar.collapsed .ctxbar-top { grid-template-columns: 150px; gap: 0; }
-    .ctxbar.collapsed .ctxbar-head .sub { display: none; }
-    .ctxbar.collapsed .ctxbar-title { margin: 0; }
-    /* 顶部一条横杠，中间一个三角。位置固定，内容只往下展。 */
-    .ctxbar-bar {
-      display: flex; align-items: center; justify-content: center; width: 100%; min-block-size: 24px;
-      background: transparent; border: 0;
-      border-bottom: 1px solid var(--rule); padding: 0; margin: 0;
-      font: inherit; font-size: 10px; line-height: 1; color: var(--muted);
-      cursor: pointer;
-    }
-    .ctxbar-bar:hover { color: var(--ink); }
-    @media (max-width: 1100px) { .ctxbar-top { grid-template-columns: 1fr; } .ctxbar-result { grid-template-columns: 1fr; } }
-    /* Reserve the panel's final height so the chart does not jump down when the
-       factor list arrives. Tuned to the two-column layout. */
-    @media (min-width: 1101px) and (max-width: 1680px) {
-      .ctxbar:not(.collapsed) { min-block-size: 240px; }
-    }
   </style>
 </head>
 <body>
@@ -116,24 +73,29 @@
       <span class="sub" id="question">—</span>
       <span class="sub" id="build">r1 · the US composite, unchanged · <a href="/web/points.html">NDX page →</a> · <a href="/web/qqq.html">QQQ →</a></span>
     </header>
-    <section class="ctxbar" aria-label="Context factors">
-      <button class="ctxbar-bar" id="ctx-toggle" type="button" aria-label="Context factors" aria-expanded="true">&#9650;</button>
-      <div class="ctxbar-top">
-        <div class="ctxbar-head">
-          <span class="ctxbar-title">Context</span>
-          <span class="sub">pick what the model may use</span>
+    <section class="ctxbar collapsed" id="ctxbar" aria-label="Context factors">
+      <div class="ctxbar-header">
+        <div class="ctxbar-title-group">
+          <span class="ctxbar-title">Model Context Factors</span>
+          <span class="ctxbar-status-badge" id="ctx-status" role="status"></span>
         </div>
-        <div id="ctx-picker" class="ctxbar-boxes"></div>
-        <div class="ctxbar-actions">
-          <button type="button" id="ctx-reset">Price factors only</button>
-          <button type="button" id="ctx-all">Everything available</button>
-          <span class="ctxbar-status" id="ctx-status" role="status"></span>
+        <div class="ctxbar-header-actions">
+          <button type="button" class="ctxbar-btn" id="ctx-reset" title="Keep only base composite factor">Price factors only</button>
+          <button type="button" class="ctxbar-btn" id="ctx-all" title="Select all available factors">Everything available</button>
+          <button type="button" class="ctxbar-close" id="ctx-close" aria-label="Close factor panel" title="Close factors panel">✕</button>
         </div>
       </div>
-      <div class="ctxbar-body">
-        <div class="ctxbar-result">
-          <table id="ctx-table" aria-label="Signal statistics for the current context selection"></table>
-          <div class="note" id="ctx-note"></div>
+      <div class="ctxbar-content">
+        <div class="ctxbar-picker-col">
+          <div class="ctx-section-title">Factors & Filters (Triggers / Vetoes)</div>
+          <div id="ctx-picker" class="ctxbar-boxes"></div>
+        </div>
+        <div class="ctxbar-stats-col">
+          <div class="ctx-section-title">Performance vs Baseline</div>
+          <div class="ctxbar-result">
+            <table id="ctx-table" aria-label="Signal statistics for the current context selection"></table>
+            <div class="ctxbar-note" id="ctx-note"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -141,10 +103,13 @@
       <div class="pane">
         <div class="pane-head">
           <span class="name">Same signal → day-5 A-share close above the basis close</span>
-          <span class="sub" id="rule">—</span>
+          <span class="sub" id="rule" title="Click to configure context factors">—</span>
           <span class="sub">marker = the signal day · basis = that day's close · <b style="color:var(--green)">▲ green</b> = day-3 close above it · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 still below · hover for the numbers</span>
           <span class="sub" id="readout">hover a session: its close, then the day-3 and day-5 closes</span>
-          <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
+          <div class="pane-toggles">
+            <button class="toggle" id="ctx-toggle" type="button" aria-controls="ctxbar" aria-expanded="false" title="Configure model context factors">factors &#9662;</button>
+            <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
+          </div>
         </div>
         <div class="chart" id="chart" role="img" aria-label="Shanghai composite close with risk-on signal markers. The side tables list the same signals as data."></div>
       </div>

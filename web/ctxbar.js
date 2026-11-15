@@ -97,35 +97,113 @@
     }
 
     const active = data.contexts.filter((item) => selected.has(item.key) || item.required);
-    document.querySelector("#ctx-status").textContent =
-      active.length + "/" + data.contexts.length + " contexts · " + now.signals + " signals";
-    document.querySelector("#ctx-note").textContent = active.length
-      ? "Using: " + active.map((item) => item.label).join(" · ") +
-        " | any random day " + pct(data.summary.base_rate ?? (data.summary.all || {}).base_rate) +
-        (now.signals < 60 ? " | fewer than 60 signals: treat the precision as noise" : "")
-      : "Nothing selected: no signals at all.";
+    const statusElem = document.querySelector("#ctx-status");
+    if (statusElem) {
+      statusElem.textContent = active.length + "/" + data.contexts.length + " contexts · " + now.signals + " signals";
+    }
+    const noteElem = document.querySelector("#ctx-note");
+    if (noteElem) {
+      noteElem.textContent = active.length
+        ? "Using: " + active.map((item) => item.label).join(" · ") +
+          " | any random day " + pct(data.summary.base_rate ?? (data.summary.all || {}).base_rate) +
+          (now.signals < 60 ? " | fewer than 60 signals: treat the precision as noise" : "")
+        : "Nothing selected: no signals at all.";
+    }
+
+    const panel = document.querySelector(".ctxbar");
+    const isOpen = panel && !panel.classList.contains("collapsed");
+    updateToggleUI(isOpen);
+  }
+
+  function updateToggleUI(isOpen) {
+    const toggleBtn = document.querySelector("#ctx-toggle");
+    if (!toggleBtn || !data) return;
+    const active = data.contexts.filter((item) => selected.has(item.key) || item.required);
+    toggleBtn.textContent = "factors (" + active.length + "/" + data.contexts.length + ") " + (isOpen ? "\u25B4" : "\u25BE");
+    toggleBtn.setAttribute("aria-expanded", String(isOpen));
+    toggleBtn.classList.toggle("active", isOpen);
+    toggleBtn.title = isOpen ? "Close the factors panel" : "Configure model context factors";
+  }
+
+  function setOpen(open) {
+    const panel = document.querySelector(".ctxbar");
+    if (!panel) return;
+    panel.classList.toggle("collapsed", !open);
+    updateToggleUI(open);
   }
 
   function buildPicker() {
     const holder = document.querySelector("#ctx-picker");
     holder.textContent = "";
-    data.contexts.forEach((item) => {
+
+    function option(item) {
       const label = document.createElement("label");
+      label.className = "ctx-item";
       const box = document.createElement("input");
-      box.type = "checkbox";
-      box.checked = item.required || selected.has(item.key);
-      box.disabled = Boolean(item.required);
-      if (item.required) label.classList.add("required");
+      const required = Boolean(item.required);
+      box.type = item.group ? "radio" : "checkbox";
+      if (item.group) box.name = "group-" + item.group;
+      box.checked = required || selected.has(item.key);
+      box.disabled = required;
+      if (required) label.classList.add("required");
       box.onchange = () => {
-        if (box.checked) selected.add(item.key); else selected.delete(item.key);
+        if (item.group) {
+          groups[item.group].forEach((key) => selected.delete(key));
+          if (box.checked) selected.add(item.key);
+          buildPicker();
+        } else if (box.checked) {
+          selected.add(item.key);
+        } else {
+          selected.delete(item.key);
+        }
         render();
       };
       const text = document.createElement("span");
       text.innerHTML = item.label + ' <span class="kind">· ' + item.kind +
-        (item.required ? " · always on (base trigger)" : "") + " · " + item.note + "</span>";
+        (required ? ' <span class="badge">always on</span>' : "") + " · " + item.note + "</span>";
       label.appendChild(box);
       label.appendChild(text);
-      holder.appendChild(label);
+      return label;
+    }
+
+    // 同一个 group 里的选项互斥：新闻源只能选一个，或一个都不选。
+    const groups = {};
+    data.contexts.filter((item) => item.group).forEach((item) => {
+      (groups[item.group] = groups[item.group] || []).push(item.key);
+    });
+
+    const standalone = document.createElement("div");
+    standalone.className = "ctx-standalone";
+    data.contexts.filter((item) => !item.group).forEach((item) => standalone.appendChild(option(item)));
+    holder.appendChild(standalone);
+
+    Object.entries(groups).forEach(([name, keys]) => {
+      const members = data.contexts.filter((item) => item.group === name);
+      const field = document.createElement("fieldset");
+      field.className = "ctx-group";
+      const legend = document.createElement("legend");
+      legend.textContent = (members[0].group_label || name) + " · 三选一";
+      field.appendChild(legend);
+
+      const offLabel = document.createElement("label");
+      offLabel.className = "ctx-item";
+      const offBox = document.createElement("input");
+      offBox.type = "radio";
+      offBox.name = "group-" + name;
+      offBox.checked = keys.every((key) => !selected.has(key));
+      offBox.onchange = () => {
+        keys.forEach((key) => selected.delete(key));
+        buildPicker();
+        render();
+      };
+      const offText = document.createElement("span");
+      offText.innerHTML = 'None <span class="kind">· off · 不撤任何信号</span>';
+      offLabel.appendChild(offBox);
+      offLabel.appendChild(offText);
+      field.appendChild(offLabel);
+
+      members.forEach((item) => field.appendChild(option(item)));
+      holder.appendChild(field);
     });
   }
 
@@ -135,23 +213,74 @@
     selected = new Set(DEFAULT(data));
     REQUIRED(data).forEach((key) => selected.add(key));
     buildPicker();
-    document.querySelector("#ctx-reset").onclick = () => {
-      selected = new Set(["composite"]);
-      buildPicker();
-      render();
-    };
-    document.querySelector("#ctx-all").onclick = () => {
-      selected = new Set(data.contexts.map((item) => item.key));
-      buildPicker();
-      render();
-    };
-    document.querySelector("#ctx-toggle").onclick = (event) => {
+
+    const resetBtn = document.querySelector("#ctx-reset");
+    if (resetBtn) {
+      resetBtn.onclick = () => {
+        selected = new Set(["composite"]);
+        buildPicker();
+        render();
+      };
+    }
+
+    const allBtn = document.querySelector("#ctx-all");
+    if (allBtn) {
+      allBtn.onclick = () => {
+        selected = new Set(data.contexts.map((item) => item.key));
+        buildPicker();
+        render();
+      };
+    }
+
+    const toggleBtn = document.querySelector("#ctx-toggle");
+    if (toggleBtn) {
+      toggleBtn.onclick = (e) => {
+        e.stopPropagation();
+        const panel = document.querySelector(".ctxbar");
+        const isOpen = panel && !panel.classList.contains("collapsed");
+        setOpen(!isOpen);
+      };
+    }
+
+    const closeBtn = document.querySelector("#ctx-close");
+    if (closeBtn) {
+      closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        setOpen(false);
+      };
+    }
+
+    const ruleElem = document.querySelector("#rule");
+    if (ruleElem) {
+      ruleElem.onclick = (e) => {
+        e.stopPropagation();
+        const panel = document.querySelector(".ctxbar");
+        const isOpen = panel && !panel.classList.contains("collapsed");
+        setOpen(!isOpen);
+      };
+    }
+
+    // Light dismiss: clicking outside the floating panel closes it
+    document.addEventListener("click", (e) => {
       const panel = document.querySelector(".ctxbar");
-      const hidden = panel.classList.toggle("collapsed");
-      event.target.textContent = hidden ? "\u25BC" : "\u25B2";
-      event.target.title = hidden ? "Show the factor panel" : "Collapse the factor panel";
-      event.target.setAttribute("aria-expanded", String(!hidden));
-    };
+      if (!panel || panel.classList.contains("collapsed")) return;
+      if (panel.contains(e.target)) return;
+      if (toggleBtn && toggleBtn.contains(e.target)) return;
+      if (ruleElem && ruleElem.contains(e.target)) return;
+      setOpen(false);
+    });
+
+    // Escape key dismisses the panel
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        const panel = document.querySelector(".ctxbar");
+        if (panel && !panel.classList.contains("collapsed")) {
+          setOpen(false);
+          if (toggleBtn) toggleBtn.focus();
+        }
+      }
+    });
+
     render();
   };
 })();

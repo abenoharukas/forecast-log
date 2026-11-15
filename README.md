@@ -4,7 +4,19 @@
 
 这三道题只做金融。数据用 Yahoo Finance 的免费日线收盘，不调用搜索 API，也不做地缘和政治题。它练习的是招聘要求里的这一段：题目事先写死，证据带时间，概率锁定后不改，结算后打分。底下那层是一个带闸门的 agent（见「agent 那一层」）；真正的新闻源和政策模拟仍然不在范围内。
 
+## 目的
+
+一句话：**每个条件、每路 AI 都是彼此独立的开关，靠开关组合找出最好的一组。**
+
+具体三条：
+
+1. **条件独立**：复合分数、CPI 窗口、NFP 窗口、FOMC 否决、新闻否决，各自一个开关，可单独开、单独关。
+2. **新闻评分按 AI 分开**：DeepSeek 读新闻的结果、Qwen 读新闻的结果，是**两个独立开关**，不是一个。两条各自能开关，也能并排对照。
+3. **比较靠对照，不靠拍脑袋**：同一批历史、同一套判定，只改一个开关，看成绩怎么变。「最好」目前没有定论——候选口径是精确率、精确率与信号数的平衡、扣除成本后的性价比，需要先定一个再下结论。
+
 预测还没有写。下面的规则先冻结，概率以后另文件提交。
+
+被截图、被追问过的日子（2026-06-23 的琥珀点、整个 7 月、2026 年七个信号日的结算、2026-10 的上证综指）单独摊开写在 [`analysis.md`](analysis.md)，不参与打分。
 
 ## 题目
 
@@ -356,7 +368,7 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 界面语言：五个页面（`index.html`、`points.html`、`qqq.html`、`ssec.html`、`agent.html`）的可见文字一律英文，数据键名和本文档保持中文。
 
-**写作规则：任何缩写、代码、简写，第一次出现时必须给出全称和一句人话解释。** 包括但不限于 VIX、VXN、NDX、QQQ、HYG、TLT、DXY、CPI、NFP、FOMC、pp。不要在对话、文档、页面文案里丢一个缩写就走。下表是该项目出现的全部缩写，新增代码请补一行。
+**写作规则：任何缩写、代码、简写，第一次出现时必须给出全称和一句人话解释。** 包括但不限于 VIX、VXN、NDX、QQQ、HYG、TLT、DXY、CPI、NFP、FOMC、pp。不要在对话、文档、页面文案里丢一个缩写就走。**只写在这张表里不算解释过**——对话是独立上下文，第一次在回复里出现就要当场展开，例：`^NDX`（Nasdaq-100 Index，纳斯达克 100 指数，本项目两个结算标的之一）。下表是该项目出现的全部缩写，新增代码请补一行。
 
 ### 术语对照
 
@@ -455,6 +467,8 @@ forecast-log daily --day 2026-11-13 --no-cache   # 重放某一天
 来源是 Wikipedia 的 `Portal:Current events`（每天一页，按 `published_at` 归档，含经济/市场条目）。选择理由写在 `wiki_news.py`：GDELT 的 DOC 接口虽支持按日期查询，但免费额度按 IP 限流，在本机单个窗口需 8 分钟方返回失败、且均为 429，按周补齐 13 年需数十小时；Wikipedia 每日一页、无需 key、按批 40 天一次请求，13 年可在 7 分钟内完成。
 
 代价需说明：它是**世界新闻摘要**，不是行情快讯。用于判断「当日新闻流风险偏好」足够，用于「单只股票的公告」则不足。
+
+把「读新闻」这件事单独拿出来做对比，见 [`docs/news_ab.md`](docs/news_ab.md)：同一批 490 天历史新闻、同一段提示词、同一温度，DeepSeek 与 Qwen 各读一遍。结果是 kappa 0.479、severity 秩相关 0.770，但 15.5% 的天两家对「要不要撤掉多头信号」意见不同（qwen 更爱报警，多撤一倍）。复现命令 `forecast-log news-ab --per-year 20 --models deepseek-flash,qwen3.8-flash`。
 
 三个文件分工：
 
@@ -673,6 +687,38 @@ forecast-log agent-eval --limit 96 --stride 60 --workers 6 --model deepseek-v4-p
 2. **差异体现在标定与成本**。chat 的 ECE 0.037 最优（预测 0.8 的档位实际发生率即为 0.8）；v4-pro 延迟增加 4 倍、成本增加 2 倍，准确性并未提高。
 3. **移除工具后 Brier 上升 0.044**（0.2273 对 0.1830），即工具的边际贡献。
 
+### 换一家供应商：DeepSeek 与 Qwen 在同一批题上
+
+```bash
+# 先跑 DeepSeek（会建新文件，不动上面那张四模型的表）
+forecast-log agent-eval --limit 96 --stride 60 --workers 4 \
+  --model deepseek-flash --out artifacts/agent_eval_qwen.json
+# 再并进 Qwen。key 只存在 .env 里，脚本负责导出成 FORECAST_LOG_*
+scripts/with-qwen.sh forecast-log agent-eval --limit 96 --stride 60 --workers 3 \
+  --out artifacts/agent_eval_qwen.json --merge
+```
+
+为什么另起一张表而不是并进上面那张：`data/raw/vxn.json` 重新取过（2001-01-23 起，6490 根），题池变大，均衡抽样选出的锚点跟着变，现在是 96 道、旧表是 84 道。**不同题集不能放一张表**，所以新表另存 `artifacts/agent_eval_qwen.json`。
+
+结果（2026-11-15，`^VXN`，96 道题，两家都答上的交集 **87** 道）：
+
+| 预测者 | Brier | ECE | 方向 | n | $/条 | p50 | 工具调用 | 失败 |
+|---|---|---|---|---|---|---|---|---|
+| agent deepseek-flash | **0.1610** | 0.072 | **77.0%** | 87 | $0.0024 | 19.3s | 7.7 | 6 |
+| 类比模型（无 LLM） | 0.1671 | **0.058** | 71.3% | 87 | 0 | 0.02s | 1 | 0 |
+| agent qwen3.8-flash | 0.1671 | 0.080 | 74.7% | 87 | $0.0040 | 43.1s | 7.3 | 4 |
+| 常数 0.5 | 0.2500 | 0.075 | 42.5% | 87 | 0 | — | 0 | 0 |
+| 基率 | 0.2551 | 0.155 | 57.5% | 87 | 0 | — | 1 | 0 |
+
+87 道题，实际发生率 42.4%。两家都跑同一套工具与闸门，唯一区别是 base URL、模型名和价格。
+
+四点结论：
+
+1. **分不出高低。** 逐题配对相减（flash 的 Brier 减 qwen 的），均值 −0.0061，95% 区间 **[−0.0165, +0.0031]**，跨 0；flash 只在 41% 的题上更好。按这道题集的分辨力，不能说哪家更准。
+2. **两家都赢过常数 0.5 和基率，但没有一家明显赢过类比模型**（不用 LLM 的统计模型）：flash 0.1610 对 0.1671，qwen 0.1671 对 0.1671。这与上一张表的结论一致：分数来自工具与闸门，不来自模型。
+3. **差价与延迟差是真实且稳定的。** qwen3.8-flash 单价 ¥0.8/¥2.7 每百万 token（约 $0.11/$0.37），实测 $0.0040/条，是 flash 的 1.7 倍；p50 43.1 秒，是 flash 的 2.2 倍（思考型模型，推理 token 也计费）。
+4. **失败率接近。** 96 道里 qwen 有 4 道没给出答案、flash 6 道；两家都满足「答不上来就报错，不猜」。`--merge` 在交集上重算，所以上表的每个数都对应同一批 87 道题。
+
 ### 思考型模型在该层遇到的四类问题
 
 切换到 `deepseek-flash` / `deepseek-v4-pro` 后，评测台完成数一度从「96 题全部作答」降至「13 题」。四类原因均已修复，并有测试覆盖：
@@ -687,6 +733,20 @@ forecast-log agent-eval --limit 96 --stride 60 --workers 6 --model deepseek-v4-p
 仍有 6–12 道题未能作答（表中 `失败` 列），原因是步数预算与该类模型的推理长度相互挤压，未继续压缩——如实记录，不记为 0。
 
 价格表仅登记 `deepseek-chat` / `deepseek-reasoner`。使用价目表未收录的模型时，成本列显示 `$0.00`——此为缺省值而非免费，token 数仍照常记录。如需准确成本，通过 `FORECAST_LOG_PRICE_INPUT` / `FORECAST_LOG_PRICE_OUTPUT` 显式传入。
+
+## 每一项单独测，产物分开存
+
+一次只改一个变量。「组合」只发生在 `cross.py` 的最终规则里，对比实验里不允许混。
+
+| 被测什么 | 单独的实验 | 单独的产物 |
+|---|---|---|
+| 四个跨资产因子（各自分桶，不取平均） | `experiments/cross_asset_lab.py` | 只打印表 |
+| 价格自身特征 | `experiments/direction_lab.py` | 只打印表 |
+| 单个新闻关键字／词频 | `experiments/news_keywords.py` | `artifacts/news_keywords.json` |
+| LLM 把新闻读成标签（一次一个模型） | `forecast-log news-ab --models <一个模型> --label-only` | `artifacts/news_ab/<模型>/<日期>.json` |
+| 两个模型的新闻解读差别 | `forecast-log news-ab --models A,B` | `artifacts/news_ab/report.{json,md}` |
+| agent 层：一个模型一次评测 | `forecast-log agent-eval --model <一个>` | `artifacts/agent_eval_qwen.json`（换 `--out` 另存） |
+| 新闻否决用哪一路（关 / A / B / 两家） | `forecast-log news-veto` | `artifacts/news_veto/report.json` |
 
 ## 已排除的尝试
 
@@ -907,6 +967,8 @@ pytest tests/test_agent.py             # 19 个测试，不联网、不需要 ke
 - 职位页：<https://moledao.io/jobs/moledaoofficial/ai-agent-engineer-forecasting/2471vt/>
 - 帖子：<https://x.com/phoebe_mole/status/2120449710087356533>
 - 帖子写月薪 SGD 8,000–14,000。职位页写薪资面议。
+
+逐条对照（哪条算「有」、哪条算「半」、哪条是「无」，以及「更用上 LLM」具体该加在哪四件事）写在 [`docs/goals.md`](docs/goals.md)。
 
 **职位：** AI Agent 工程师 · 预测方向（AI Agent Engineer, Forecasting）
 

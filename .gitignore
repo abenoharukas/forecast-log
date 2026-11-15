@@ -7,3 +7,6 @@ data/news/
 data/daily.jsonl
 artifacts/news_labels/
 artifacts/surprise/
+.claude/
+.codegraph/
+

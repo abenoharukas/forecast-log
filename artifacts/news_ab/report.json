@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-11-15T12:38:30+00:00",
+  "protocol": {
+    "prompt_version": "news-label-v1",
+    "temperature": 0.1,
+    "max_tokens": 8000,
+    "max_titles_per_day": 25,
+    "batch_days": 10,
+    "veto_threshold": 0.6,
+    "sample": "每个自然年等量抽取，随机种子写进报告",
+    "scored_on": "两家都成功标出标签的那些天（交集）",
+    "decision_metric": "一致性与决策影响为主；下游相关性只报数，不参与选择"
+  },
+  "slugs": [
+    "deepseek-flash",
+    "qwen3.8-flash"
+  ],
+  "shared_days": 490,
+  "first_day": "2002-01-03",
+  "last_day": "2026-11-10",
+  "per_labeler": {
+    "deepseek-flash": {
+      "model": "deepseek-flash",
+      "days": 490,
+      "severity_mean": 0.413,
+      "severity_ge_0.6": 75,
+      "risk_off": 278,
+      "cost_usd": 1.7718,
+      "per_day_usd": 0.003616,
+      "latency_p50_s": 32.46,
+      "sev_vs_abs_move": 0.039,
+      "risk_off_up_rate": 0.57,
+      "risk_off_days_with_move": 277
+    },
+    "qwen3.8-flash": {
+      "model": "qwen3.8-flash",
+      "days": 490,
+      "severity_mean": 0.428,
+      "severity_ge_0.6": 105,
+      "risk_off": 241,
+      "cost_usd": 2.1663,
+      "per_day_usd": 0.004421,
+      "latency_p50_s": 136.91,
+      "sev_vs_abs_move": 0.055,
+      "risk_off_up_rate": 0.592,
+      "risk_off_days_with_move": 240
+    }
+  },
+  "pairs": {
+    "deepseek-flash vs qwen3.8-flash": {
+      "days": 490,
+      "regime_agreement": 0.731,
+      "kappa": 0.479,
+      "severity_mae": 0.092,
+      "severity_spearman": 0.77,
+      "event_type_jaccard": 0.681,
+      "veto_same_days": 52,
+      "veto_only_left": 23,
+      "veto_only_right": 53,
+      "veto_union": 128
+    }
+  }
+}

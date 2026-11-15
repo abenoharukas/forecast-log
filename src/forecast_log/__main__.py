@@ -60,6 +60,18 @@ def main(argv: list[str] | None = None) -> None:
     bench.add_argument("--workers", type=int, default=1, help="并发跑几道题")
     bench.add_argument("--merge", action="store_true", help="把新模型并进上一次同题集的结果，做多模型对比")
 
+    ab = sub.add_parser("news-ab", help="两家模型读同一批历史新闻，只比新闻解读能力")
+    ab.add_argument("--per-year", type=int, default=30, help="每个自然年抽几天")
+    ab.add_argument("--seed", type=int, default=7)
+    ab.add_argument("--models", default="deepseek-flash,qwen3.8-flash", help="逗号分隔，至少两个")
+    ab.add_argument("--workers", type=int, default=4)
+    ab.add_argument("--sample-only", action="store_true", help="只抽样本、打印日期，不发请求")
+    ab.add_argument("--label-only", action="store_true", help="只标注不比较（可只给一个模型，便于两家并行跑）")
+
+    veto = sub.add_parser("news-veto", help="新闻否决用哪一路：off / 单模型 / 两家都同意")
+    veto.add_argument("--models", default="deepseek-flash,qwen3.8-flash")
+    veto.add_argument("--threshold", type=float, default=0.6, help="强利空的严重度门槛")
+
     report = sub.add_parser("agent-report", help="把 agent_eval.json 打成 markdown 表")
     report.add_argument("--path", default="artifacts/agent_eval.json")
 
@@ -123,6 +135,24 @@ def main(argv: list[str] | None = None) -> None:
         agent_forecast_command(
             root, runs=args.runs, model=args.model, temperature=args.temperature, force=args.force
         )
+    elif args.command == "news-ab":
+        from forecast_log.news_ab import command as news_ab_command
+
+        news_ab_command(
+            root,
+            per_year=args.per_year,
+            seed=args.seed,
+            models=args.models,
+            workers=args.workers,
+            sample_only=args.sample_only,
+            label_only=args.label_only,
+        )
+
+    elif args.command == "news-veto":
+        from forecast_log.news_veto import command as news_veto_command
+
+        news_veto_command(root, models=args.models, threshold=args.threshold)
+
     elif args.command == "agent-report":
         agent_report_command(root, args.path)
     elif args.command == "agent-eval":

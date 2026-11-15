@@ -374,3 +374,29 @@ def test_a_missing_key_fails_before_the_network() -> None:
 
     with pytest.raises(LLMError, match="api key is empty"):
         OpenAICompatLLM.from_env({})
+
+
+def test_a_bench_where_every_agent_failed_still_renders() -> None:
+    """Brier is None when no run answered. Sorting None against a float used to crash."""
+    from forecast_log.agent.eval import render
+
+    report = {
+        "n": 2,
+        "predictors": {
+            "agent qwen": {
+                "brier": None, "log_loss": None, "ece": None, "hit_direction": None,
+                "cost_usd_per_forecast": 0.0, "latency_p50_s": 1.0, "tool_calls_mean": 0.0,
+                "failures": 2, "by_family": {},
+            },
+            "constant 0.5": {
+                "brier": 0.25, "log_loss": 0.69, "ece": 0.0, "hit_direction": 0.5,
+                "cost_usd_per_forecast": 0.0, "latency_p50_s": 0.0, "tool_calls_mean": 0.0,
+                "failures": 0, "by_family": {},
+            },
+        },
+        "references": {},
+    }
+    text = render(report)
+    assert "agent qwen" in text
+    assert text.index("constant 0.5") < text.index("agent qwen")  # the scored row comes first
+    assert "2 次没有给出答案" in text

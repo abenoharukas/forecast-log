@@ -20,7 +20,9 @@ from forecast_log.agent.eval import (
     BaseRatePredictor,
     ConstantPredictor,
     build_questions,
+    cell,
     evaluate,
+    rank,
     render,
     settlement_questions,
     write_report,
@@ -284,12 +286,12 @@ def markdown_table(report: dict) -> str:
         f"| 预测者 | Brier | LogLoss | ECE | 方向 | $/条 | p50 秒 | 工具 |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    for name, row in sorted(rows.items(), key=lambda pair: pair[1]["brier"]):
-        lines.append(
-            f"| {name} | {row['brier']:.4f} | {row['log_loss']:.4f} | {row['ece']:.3f} | "
-            f"{row['hit_direction']:.1%} | {row['cost_usd_per_forecast']:.5f} | "
-            f"{row['latency_p50_s']:.2f} | {row['tool_calls_mean']:.2f} |"
-        )
+    for name, row in sorted(rows.items(), key=lambda pair: rank(pair[1])):
+        cells = [cell(row.get(key), spec) for key, spec in (
+            ("brier", ".4f"), ("log_loss", ".4f"), ("ece", ".3f"), ("hit_direction", ".1%"),
+            ("cost_usd_per_forecast", ".5f"), ("latency_p50_s", ".2f"), ("tool_calls_mean", ".2f"),
+        )]
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
     reference = report.get("references") or {}
     if reference:
         lines.append(
@@ -308,7 +310,7 @@ def markdown_table(report: dict) -> str:
         for family in families:
             counts = [rows[name]["by_family"][family]["n"] for name in names if family in rows[name].get("by_family", {})]
             cells = [
-                f"{rows[name]['by_family'][family]['brier']:.4f}"
+                cell(rows[name]["by_family"][family].get("brier"), ".4f")
                 if family in rows[name].get("by_family", {})
                 else "—"
                 for name in names

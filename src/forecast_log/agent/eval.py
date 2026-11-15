@@ -493,16 +493,34 @@ def evaluate(
     return report
 
 
+def rank(row: dict) -> tuple[bool, float]:
+    """A predictor that answered nothing sorts last, not first.
+
+    `brier` is None when no run produced an answer; comparing None with a float used
+    to raise inside `sorted`, so a bench where every agent failed crashed instead of
+    printing the failure.
+    """
+    brier = row.get("brier")
+    return (brier is None, 0.0 if brier is None else brier)
+
+
+def cell(value, spec: str, width: int | None = None) -> str:
+    """Format a score, or print a dash when the predictor never produced one."""
+    text = "—" if value is None else format(value, spec)
+    return text if width is None else f"{text:>{width}}"
+
+
 def render(report: dict) -> str:
     if not report.get("predictors"):
         return "没有可比的预测者。"
     header = f"{'预测者':<34}{'Brier':>8}{'LogLoss':>9}{'ECE':>8}{'方向':>7}{'$/条':>8}{'p50 s':>8}{'工具':>6}"
     lines = [f"{report['n']} 道已结算的历史题（同一批题，所有预测者都必须作答）", "", header, "-" * len(header)]
-    for name, row in sorted(report["predictors"].items(), key=lambda pair: pair[1]["brier"]):
+    for name, row in sorted(report["predictors"].items(), key=lambda pair: rank(pair[1])):
         lines.append(
-            f"{name[:33]:<34}{row['brier']:>8.4f}{row['log_loss']:>9.4f}{row['ece']:>8.3f}"
-            f"{row['hit_direction']:>7.1%}{row['cost_usd_per_forecast']:>8.4f}"
-            f"{row['latency_p50_s']:>8.2f}{row['tool_calls_mean']:>6.2f}"
+            f"{name[:33]:<34}{cell(row['brier'], '.4f', 8)}{cell(row['log_loss'], '.4f', 9)}"
+            f"{cell(row['ece'], '.3f', 8)}"
+            f"{cell(row['hit_direction'], '.1%', 7)}{cell(row['cost_usd_per_forecast'], '.4f', 8)}"
+            f"{cell(row['latency_p50_s'], '.2f', 8)}{cell(row['tool_calls_mean'], '.2f', 6)}"
         )
     reference = report.get("references") or {}
     if "constant_0.5" in reference:
@@ -528,7 +546,7 @@ def render(report: dict) -> str:
                 entry = report["predictors"][name].get("by_family", {}).get(family)
                 if entry:
                     counts.append(entry["n"])
-                    cells += f"{entry['brier']:>18.4f}"
+                    cells += cell(entry.get("brier"), ".4f", 18)
                 else:
                     cells += f"{'-':>18}"
             lines.append(f"{label.get(family, family):<12}{max(counts, default=0):>5}" + cells)

@@ -1,0 +1,43 @@
+{
+  "generated_at": "2026-11-15T14:26:01+00:00",
+  "question": "新闻否决用哪一路：off / 单模型 / 两家都同意？其它条件固定",
+  "threshold": 0.6,
+  "shared_days": 490,
+  "first_day": "2002-01-03",
+  "last_day": "2026-11-10",
+  "base_signals": 58,
+  "variants": {
+    "off": {
+      "signals": 58,
+      "vetoed": 0,
+      "kept": 58,
+      "hits": 38,
+      "precision": 0.6552,
+      "vetoed_days_would_have_hit": 0
+    },
+    "deepseek-flash": {
+      "signals": 58,
+      "vetoed": 21,
+      "kept": 37,
+      "hits": 26,
+      "precision": 0.7027,
+      "vetoed_days_would_have_hit": 12
+    },
+    "qwen3.8-flash": {
+      "signals": 58,
+      "vetoed": 22,
+      "kept": 36,
+      "hits": 26,
+      "precision": 0.7222,
+      "vetoed_days_would_have_hit": 12
+    },
+    "both": {
+      "signals": 58,
+      "vetoed": 15,
+      "kept": 43,
+      "hits": 30,
+      "precision": 0.6977,
+      "vetoed_days_would_have_hit": 8
+    }
+  }
+}

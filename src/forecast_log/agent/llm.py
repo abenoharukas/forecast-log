@@ -42,6 +42,8 @@ class Price:
 PRICES = {
     "deepseek-chat": Price(0.28, 0.42, 0.028),
     "deepseek-reasoner": Price(0.28, 0.42, 0.028),
+    "deepseek-flash": Price(0.28, 0.42, 0.028),
+    "qwen3.8-flash": Price(0.110, 0.370),
 }
 DEFAULT_PRICE = Price(0.0, 0.0, 0.0)  # unknown model: report tokens, not pretend dollars
 

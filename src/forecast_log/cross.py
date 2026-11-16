@@ -263,6 +263,21 @@ CONTEXTS: list[dict] = [
         "group": "news",
         "group_label": "News source",
     },
+    {
+        "key": "news_bullish",
+        "label": "News score — Strong bullish surprise",
+        "kind": "boost",
+        "note": "LLM reads a strong bullish surprise; adds a signal when price triggers did not fire",
+        "available_from": "2002-01-01",
+    },
+    {
+        "key": "riskoff_hits",
+        "label": "Keyword scan — Risk-off headlines (≥ 2)",
+        "kind": "veto",
+        "threshold": 2,
+        "note": "regex scan hits 2 or more risk-off concepts in daily headlines",
+        "available_from": "2002-01-01",
+    },
 ]
 
 
@@ -554,6 +569,41 @@ def document(
     news_provenance["vetoed_signals"] = sum(row.news_veto for row in resolved)
     news_columns, news_contexts = _news_providers(root, [row.date for row in rows])
 
+    extra_columns: dict[str, list[int]] = {}
+    extra_contexts: list[dict] = []
+    if target is not None:
+        closes_arr = np.array([row.close for row in rows], dtype=float)
+        below_ma20: list[int] = []
+        gap_veto: list[int] = []
+        for idx, row in enumerate(rows):
+            if idx >= 19 and np.all(np.isfinite(closes_arr[idx - 19 : idx + 1])):
+                ma20 = float(np.mean(closes_arr[idx - 19 : idx + 1]))
+                below_ma20.append(int(closes_arr[idx] < ma20))
+            else:
+                below_ma20.append(0)
+            if row.entry is not None and row.close and np.isfinite(row.close):
+                gap_veto.append(int((row.entry / row.close - 1.0) > 0.015))
+            else:
+                gap_veto.append(0)
+        extra_columns["qqq_below_ma20"] = below_ma20
+        extra_columns["qqq_gap_veto"] = gap_veto
+        extra_contexts.extend([
+            {
+                "key": "qqq_below_ma20",
+                "label": f"{label} trend filter — Below 20-day MA",
+                "kind": "veto",
+                "note": f"veto signal when {label} closes below its 20-session moving average",
+                "available_from": rows[0].date if rows else None,
+            },
+            {
+                "key": "qqq_gap_veto",
+                "label": f"{label} overnight gap > +1.5%",
+                "kind": "veto",
+                "note": f"veto entry when {label} next-session open gaps up more than 1.5% above signal close",
+                "available_from": rows[0].date if rows else None,
+            },
+        ])
+
     return {
         "instrument": label,
         "question": {
@@ -608,6 +658,7 @@ def document(
             "news_bullish": [row.news_bullish for row in rows],
             "riskoff_hits": [row.riskoff_hits for row in rows],
             **news_columns,
+            **extra_columns,
         },
         "contexts": [
             {**item, "available_from": item.get("available_from") or rows[0].date}
@@ -615,7 +666,8 @@ def document(
             else item
             for item in CONTEXTS
         ]
-        + news_contexts,
+        + news_contexts
+        + extra_contexts,
         "news_veto": [row.news_veto for row in rows],
         "outcome": [row.outcome for row in rows],
         "target": [row.target for row in rows],

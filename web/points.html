@@ -4,39 +4,39 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Nasdaq-100 five-session risk-on signal: cross-asset composite triggers, hit rates and out-of-sample precision.">
+  <meta name="description" content="Unified cross-asset risk-on signal dashboard for Nasdaq-100 (^NDX), QQQ, and Shanghai Composite (000001.SS).">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <title>Nasdaq-100 — 5-day risk-on signals</title>
+  <title>Cross-asset risk-on signals — NDX / QQQ / A-shares</title>
   <link rel="preload" href="/web/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/web/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/web/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/web/theme.css">
   <script src="/web/vendor/lightweight-charts.standalone.production.js" defer></script>
   <script src="/web/theme.js" defer></script>
+  <script src="/web/ctxbar.js" defer></script>
   <style>
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; overflow: hidden; }
     main { height: 100%; display: flex; flex-direction: column; padding: 16px 20px 12px; position: relative; }
-    header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; min-block-size: 57px; }
-    /* Always own row: the question text arrives later and must not move it. */
+    header { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; min-block-size: 57px; }
+    .header-top { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; width: 100%; }
     #build { flex-basis: 100%; }
     h1 { margin: 0; font-weight: 480; font-size: clamp(1.3rem, 1rem + 1vw, 1.75rem); letter-spacing: -0.03em; text-wrap: balance; }
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
     .sub a { color: var(--blue); }
-    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; }
+    .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; position: relative; }
     .pane { flex: 1; min-width: 0; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; }
     .pane-head {
       display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 7px 12px;
       border-bottom: 1px solid var(--rule); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
     }
     .pane-head .name { font-size: 15px; font-weight: 500; }
-    .board { position: relative; }
     .pane-head .toggle {
       font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
       background: transparent; border: 1px solid var(--control); border-radius: 2px;
-      padding: 1px 7px; min-block-size: 24px; cursor: pointer; margin-left: auto;
+      padding: 1px 7px; min-block-size: 24px; cursor: pointer;
     }
     .pane-head .toggle:hover { background: var(--paper); }
     aside.hidden { display: none; }
@@ -55,24 +55,14 @@
     th { font-weight: 500; font-size: 10.5px; color: var(--muted); text-align: right; padding: 0 5px 3px; }
     th:first-child, td:first-child { text-align: left; }
     th[scope="row"] { font-weight: 400; text-align: left; color: var(--muted); }
-    td { padding: 0 5px; text-align: right; white-space: nowrap; }
+    td { padding: 0 5px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .block + .block { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--rule); }
-    .note { color: var(--muted); font-size: 11px; line-height: 1.55; }
-    .pane-head .toggle {
-      font: inherit; font-size: 11px; line-height: 1.2; color: var(--ink);
-      background: transparent; border: 1px solid var(--control); border-radius: 2px;
-      padding: 1px 7px; min-block-size: 24px; cursor: pointer;
-    }
-    .pane-head .toggle:hover { background: var(--paper); }
-    .ctx-table td, .ctx-table th { font-variant-numeric: tabular-nums; }
-    .ctxbar-status.busy { color: var(--blue); }
-    .ctxbar-result.loading { opacity: .45; transition: opacity .12s; }
-    .spinner {
-      display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: -1px;
-      border: 1.5px solid currentColor; border-top-color: transparent; border-radius: 50%;
-      animation: spin .7s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .note { color: var(--muted); font-size: 11px; line-height: 1.55; white-space: pre-line; }
+    .verdict { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .weak { color: var(--muted); }
+    .bands { table-layout: fixed; font-size: 10px; }
+    .bands th, .bands td { padding: 0 1px; text-align: center; }
+    .bands th:first-child, .bands td:first-child { text-align: center; color: var(--muted); font-size: 9.5px; }
     ul { margin: 2px 0 0; padding-left: 16px; }
     li { margin: 1px 0; }
     @media (max-width: 900px) {
@@ -84,18 +74,25 @@
 <body>
   <main>
     <header>
-      <h1>Nasdaq-100 — 5-day risk-on signals</h1>
-      <span class="sub" id="question">—</span>
-      <span class="sub" id="build">r2 · cross-asset risk-on composite · follows the OS colour scheme · <a href="/web/qqq.html">QQQ check →</a> · <a href="/web/ssec.html">A-shares →</a></span>
+      <div class="header-top">
+        <h1 id="page-title">Nasdaq-100 — 5-day risk-on signals</h1>
+        <div class="market-tabs" id="market-tabs" role="tablist" aria-label="Select stock market index">
+          <button type="button" class="market-tab active" role="tab" data-market="ndx" aria-selected="true">Nasdaq-100 (^NDX)</button>
+          <button type="button" class="market-tab" role="tab" data-market="qqq" aria-selected="false">QQQ (ETF)</button>
+          <button type="button" class="market-tab" role="tab" data-market="ssec" aria-selected="false">A股 · 上证综指 (000001.SS)</button>
+        </div>
+        <span class="sub" id="question">—</span>
+      </div>
+      <span class="sub" id="build">r3 · unified multi-market view · <a href="/web/">VXN Fear Index →</a> · <a href="/web/agent.html">Agent scoreboard →</a></span>
     </header>
+
     <section class="ctxbar collapsed" id="ctxbar" aria-label="Context factors">
       <div class="ctxbar-header">
         <div class="ctxbar-title-group">
-          <span class="ctxbar-title">Model Context Factors</span>
+          <span class="ctxbar-title" id="ctxbar-title">Model Context Factors</span>
           <span class="ctxbar-status-badge" id="ctx-status" role="status"></span>
         </div>
         <div class="ctxbar-header-actions">
-          <button type="button" class="ctxbar-btn primary" id="ctx-run">Run estimate</button>
           <button type="button" class="ctxbar-btn" id="ctx-reset" title="Keep only base composite factor">Price factors only</button>
           <button type="button" class="ctxbar-btn" id="ctx-all" title="Select all available factors">Everything available</button>
           <button type="button" class="ctxbar-close" id="ctx-close" aria-label="Close factor panel" title="Close factors panel">✕</button>
@@ -103,7 +100,7 @@
       </div>
       <div class="ctxbar-content">
         <div class="ctxbar-picker-col">
-          <div class="ctx-section-title">Factors & Filters (Triggers / Vetoes)</div>
+          <div class="ctx-section-title" id="ctx-picker-title">Factors &amp; Decision Rule (Triggers / Boosts / Vetoes)</div>
           <div id="ctx-picker" class="ctxbar-boxes"></div>
         </div>
         <div class="ctxbar-stats-col">
@@ -115,12 +112,13 @@
         </div>
       </div>
     </section>
+
     <div class="board">
       <div class="pane">
         <div class="pane-head">
-          <span class="name">Risk-on composite → day-5 close above the signal-day close</span>
+          <span class="name" id="pane-name">Risk-on composite → day-5 close above the signal-day close</span>
           <span class="sub" id="rule" title="Click to configure context factors">—</span>
-          <span class="sub">marker = the signal day · basis = that day's close · <b style="color:var(--green)">▲ green</b> = day-3 close above it · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 still below · hover for the numbers</span>
+          <span class="sub">marker = entry session · basis = signal close · <b style="color:var(--green)">▲ green</b> = day-3 above · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 below · hover for numbers</span>
           <span class="sub" id="readout">hover a session: its close, then the day-3 and day-5 closes</span>
           <div class="pane-toggles">
             <button class="toggle" id="ctx-toggle" type="button" aria-controls="ctxbar" aria-expanded="false" title="Configure model context factors">factors &#9662;</button>
@@ -129,669 +127,464 @@
         </div>
         <div class="chart" id="chart" role="img" aria-label="Close price with risk-on signal markers. The side tables list the same signals as data."></div>
       </div>
-      <aside id="side-panel">
-        <div class="block">
-          <h2>Signal construction (fixed ex ante)</h2>
-          <div class="note">
-            Four cross-asset factors. Each is standardised to a z-score on an expanding window (mean and standard
-            deviation computed from all history up to that session; no look-ahead). The composite is the equal-weighted
-            average of the four. A signal is triggered when the composite exceeds its 90th percentile on that same
-            expanding window. Two conditional triggers are added: within 3 calendar days of a CPI release, or 3-7
-            days of an NFP release, with the composite at or above its expanding median. No signal on the FOMC
-            decision day. A signal is issued on a close, and that close is the basis of the call: the call is a
-            hit when the close five sessions later is above it. Green = day 3 already above the basis, amber = day
-            3 below but day 5 above, grey = day 5 still below. The next session's open is stored separately as
-            <code>entry</code>, the price you could actually pay; it carries an overnight gap and does not decide
-            the call. Hover any session for the basis, day 3 and day 5. Factors:
-            <ul id="factors"></ul>
-          </div>
-        </div>
-        <div class="block">
-          <h2>Out-of-sample performance</h2>
-          <table id="stats" aria-label="Out-of-sample performance"></table>
-        </div>
-        <div class="block">
-          <h2>News factor: with vs without</h2>
-          <table id="news-stat" aria-label="News factor with and without"></table>
-          <div class="note" id="news-note"></div>
-        </div>
-        <div class="block">
-          <h2>Latest observation</h2>
-          <div class="note" id="latest"></div>
-          <div class="note" id="agent-read"></div>
-        </div>
-        <div class="block note" id="note"></div>
-      </aside>
+      <aside id="side-panel"></aside>
     </div>
   </main>
+
   <script>
     document.addEventListener("DOMContentLoaded", () => {
-    const palette = fcTheme.palette();
-    const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
-      autoSize: true,
-      layout: { background: { type: "solid", color: palette.sheet }, textColor: palette.muted,
-        fontFamily: '"IBM Plex Mono", ui-monospace, monospace' },
-      grid: { vertLines: { color: palette.grid }, horzLines: { color: palette.grid } },
-      rightPriceScale: { borderColor: palette.rule, minimumWidth: 64,
-        mode: LightweightCharts.PriceScaleMode.Logarithmic,
-        scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: palette.rule, rightOffset: 0, minBarSpacing: 0.04,
-        fixLeftEdge: true, fixRightEdge: true },
-      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
-    });
-    const line = chart.addLineSeries({ color: palette.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
-
-    function percent(value) { return value == null ? "—" : Math.round(value * 100) + "%"; }
-
-    // ---------------------------------------------------------------- context selector
-    //
-    // 前端不写死任何信息源：勾选框由 cross.json 的 `contexts` 生成，规则按 `kind` 套用。
-    //   trigger → 任一选中即触发
-    //   veto    → 命中则撤销当天信号
-    //   boost   → 命中则在分数不低于中位时补一个信号
-    // 加新上下文只改 cross.py 的 CONTEXTS，这个函数不用动。
-    let crossData = null;
-    const selected = new Set();
-    // buildContextPicker 定义在顶层，runEstimate 是 fetch 回调里的内部函数：作用域不通，
-    // 所以这里先放一个占位，等数据到了再赋值。否则勾选框一点就 ReferenceError。
-    let runEstimate = () => {};
-
-    function applyContexts(picked) {
-      const c = crossData.components;
-      // 基础触发项无条件参与：即使有人用脚本把它从选择里摘掉，也不会出现「0 个信号」的空集。
-      const active = new Set(picked);
-      crossData.contexts.filter((item) => item.required).forEach((item) => active.add(item.key));
-      const contexts = crossData.contexts.filter((item) => active.has(item.key));
-      const triggers = contexts.filter((item) => item.kind === "trigger");
-      const vetoes = contexts.filter((item) => item.kind === "veto");
-      const boosts = contexts.filter((item) => item.kind === "boost");
-      const n = crossData.time.length;
-      const flags = new Array(n).fill(0);
-      for (let i = 0; i < n; i += 1) {
-        let flag = 0;
-        for (const item of triggers) {
-          if (c[item.key][i]) { flag = 1; break; }
-        }
-        if (!flag) {
-          for (const item of boosts) {
-            if (c[item.key][i]) { flag = 1; break; }
-          }
-        }
-        if (flag) {
-          for (const item of vetoes) {
-            const value = c[item.key][i];
-            const hit = item.key === "riskoff_hits" ? value >= 2 : Boolean(value);
-            if (hit) { flag = 0; break; }
-          }
-        }
-        flags[i] = flag;
-      }
-      return flags;
-    }
-
-    function summarise(flags) {
-      let signals = 0, hits = 0, hits3 = 0, hits45 = 0, held = 0, heldHits = 0;
-      const holdout = crossData.summary.holdout_from;
-      crossData.time.forEach((day, index) => {
-        const outcome = crossData.outcome[index];
-        if (outcome === null || outcome === undefined) return;
-        if (!flags[index]) return;
-        signals += 1;
-        hits += outcome;
-        if (crossData.hit3[index] === 1) hits3 += 1;
-        else if (outcome === 1) hits45 += 1;
-        if (day >= holdout) { held += 1; heldHits += outcome; }
-      });
-      return {
-        signals,
-        precision: signals ? hits / signals : null,
-        // 三天内 / 只有第 4–5 天：互斥，加起来等于五天命中率。
-        precision3: signals ? hits3 / signals : null,
-        precision45: signals ? hits45 / signals : null,
-        holdoutSignals: held,
-        holdoutPrecision: held ? heldHits / held : null,
+      const MARKETS = {
+        ndx: {
+          key: "ndx",
+          file: "/artifacts/cross.json",
+          title: "Nasdaq-100 — 5-day risk-on signals",
+          docTitle: "Nasdaq-100 — 5-day risk-on signals",
+          paneName: "Risk-on composite → day-5 NDX close above the signal-day close",
+          panelTitle: "Nasdaq-100 (^NDX) — Factors & Decision Rule",
+          markerOnEntryAt: true,
+        },
+        qqq: {
+          key: "qqq",
+          file: "/artifacts/cross_qqq.json",
+          title: "QQQ — same signals, a tradable instrument",
+          docTitle: "QQQ — same risk-on signals, a tradable instrument",
+          paneName: "Risk-on composite → day-5 QQQ close above the signal-day close",
+          panelTitle: "QQQ (ETF) — Factors & Decision Rule",
+          markerOnEntryAt: true,
+        },
+        ssec: {
+          key: "ssec",
+          file: "/artifacts/cross_ssec.json",
+          title: "Shanghai composite — A股跨市场信号检验",
+          docTitle: "Shanghai composite — A-shares risk-on signals",
+          paneName: "Same signal → day-5 A-share close above the basis close",
+          panelTitle: "A股 · 上证综指 (000001.SS) — Factors & Decision Rule",
+          markerOnEntryAt: false,
+        },
       };
-    }
 
-    function renderContextTable() {
-      const flags = applyContexts(selected);
-      const now = summarise(flags);
-      const baseline = summarise(applyContexts(new Set(["composite"])));
-      const latest = crossData.time.length - 1;
-      const todayFlag = flags[latest];
-      const pctOrDash = (value) => (value === null ? "—" : (value * 100).toFixed(1) + "%");
-      const rows = [
-        ["Signals", String(now.signals), String(baseline.signals)],
-        ["Hit within 3 sessions", pctOrDash(now.precision3), pctOrDash(baseline.precision3)],
-        ["Hit only on day 4-5", pctOrDash(now.precision45), pctOrDash(baseline.precision45)],
-        ["Precision (5 sessions)", pctOrDash(now.precision), pctOrDash(baseline.precision)],
-        ["Out-of-sample signals", String(now.holdoutSignals), String(baseline.holdoutSignals)],
-        ["Out-of-sample precision", pctOrDash(now.holdoutPrecision), pctOrDash(baseline.holdoutPrecision)],
-        ["Latest day", todayFlag ? "signal" : "no signal",
-          crossData.components.composite[latest] ? "signal" : "no signal"],
-      ];
-      const table = document.querySelector("#ctx-table");
-      table.textContent = "";
-      const head = document.createElement("tr");
-      ["", "This selection", "Composite only"].forEach((text) => {
-        const th = document.createElement("th");
-        th.scope = "col";
-        th.textContent = text;
-        head.appendChild(th);
+      const palette = fcTheme.palette();
+      const chart = LightweightCharts.createChart(document.querySelector("#chart"), {
+        autoSize: true,
+        layout: {
+          background: { type: "solid", color: palette.sheet },
+          textColor: palette.muted,
+          fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+        },
+        grid: { vertLines: { color: palette.grid }, horzLines: { color: palette.grid } },
+        rightPriceScale: {
+          borderColor: palette.rule,
+          minimumWidth: 64,
+          mode: LightweightCharts.PriceScaleMode.Logarithmic,
+          scaleMargins: { top: 0.08, bottom: 0.08 },
+        },
+        timeScale: {
+          borderColor: palette.rule,
+          rightOffset: 0,
+          minBarSpacing: 0.04,
+          fixLeftEdge: true,
+          fixRightEdge: true,
+        },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+        handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
       });
-      table.appendChild(head);
-      rows.forEach((row) => {
-        const tr = document.createElement("tr");
-        row.forEach((value, column) => {
-          const cell = document.createElement(column === 0 ? "th" : "td");
-          if (column === 0) cell.scope = "row";
-          cell.textContent = value;
-          tr.appendChild(cell);
+      const line = chart.addLineSeries({
+        color: palette.blue,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+      });
+
+      const cache = new Map();
+      let activeMarket = "ndx";
+      let currentData = null;
+      let shown = { flags: [], data: null, market: "ndx" };
+      let entryOf = {};
+      let indexOf = {};
+
+      const percent = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
+      const percentInt = (v) => (v == null ? "—" : Math.round(v * 100) + "%");
+      const points = (v) => (v == null ? "—" : (v >= 0 ? "+" : "−") + Math.abs(v * 100).toFixed(1) + " pt");
+      const basisPoints = (move) => {
+        const value = move * 10000;
+        const size = Math.abs(value) < 10 ? Math.abs(value).toFixed(1) : Math.abs(value).toFixed(0);
+        return (value >= 0 ? "+" : "−") + size + " bp";
+      };
+
+      function applyMarkers(flags, data, marketKey) {
+        const cfg = MARKETS[marketKey];
+        const p = fcTheme.palette();
+        const markers = [];
+        entryOf = {};
+        flags.forEach((flag, index) => {
+          if (!flag || data.outcome[index] === null || data.outcome[index] === undefined) return;
+          const when = cfg.markerOnEntryAt ? data.entry_at[index] : data.time[index];
+          if (!when) return;
+          entryOf[when] = index;
+          const hit = data.outcome[index] === 1;
+          const fast = hit && data.hit3[index] === 1;
+          markers.push({
+            time: when,
+            position: "belowBar",
+            shape: fast ? "arrowUp" : hit ? "circle" : "square",
+            size: !hit ? 0.65 : fast ? 1 : 0.9,
+            color: !hit ? p.grey : fast ? p.green : p.amber,
+          });
         });
-        table.appendChild(tr);
+        markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+        line.setMarkers(markers);
+        shown = { flags, data, market: marketKey };
+      }
+
+      fcTheme.subscribe((p) => {
+        chart.applyOptions(fcTheme.chartOptions(p));
+        line.applyOptions({ color: p.blue });
+        if (shown.data) applyMarkers(shown.flags, shown.data, shown.market);
       });
 
-      applyFlagsToChart(flags);
-      document.querySelector("#rule").textContent =
-        now.signals + " signals · 1-3 days " + pctOrDash(now.precision3) +
-        " · 4-5 days " + pctOrDash(now.precision45) +
-        " · " + (selected.size ? selected.size + " of " + crossData.contexts.length + " contexts" : "no contexts");
-
-      const chosenKeys = new Set(crossData.contexts.filter((item) => item.required).map((item) => item.key));
-      selected.forEach((key) => chosenKeys.add(key));
-      const starts = crossData.contexts.filter((item) => chosenKeys.has(item.key))
-        .map((item) => item.available_from || "0000-00-00");
-      const effectiveFrom = starts.length ? starts.sort().slice(-1)[0] : "—";
-      const triggers = crossData.contexts.filter((item) => chosenKeys.has(item.key) && item.kind === "trigger");
-      document.querySelector("#ctx-status").textContent =
-        chosenKeys.size + "/" + crossData.contexts.length + " contexts · " + now.signals +
-        " signals · from " + effectiveFrom +
-        (triggers.length ? "" : " · NO TRIGGER SELECTED");
-
-      const toggleFactors = document.querySelector("#ctx-toggle");
-      const panel = document.querySelector(".ctxbar");
-      const isOpen = panel && !panel.classList.contains("collapsed");
-      if (toggleFactors) {
-        toggleFactors.textContent = "factors (" + chosenKeys.size + "/" + crossData.contexts.length + ") " + (isOpen ? "\u25B4" : "\u25BE");
-        toggleFactors.setAttribute("aria-expanded", String(isOpen));
-        toggleFactors.classList.toggle("active", isOpen);
-      }
-
-      const chosen = crossData.contexts.filter((item) => selected.has(item.key));
-      const base = crossData.summary.base_rate;
-      document.querySelector("#ctx-note").textContent = chosen.length
-        ? "Using: " + chosen.map((item) => item.label).join(" · ") +
-          " | any random day " + pctOrDash(base) +
-          (now.signals < 60 ? " | fewer than 60 signals: treat the precision as noise" : "") +
-          (chosen.some((item) => item.key.startsWith("news"))
-            ? " | news sources only exist from 2002 onwards, so signals before that can only come from prices"
-            : "")
-        : "Nothing selected: no signals at all. Turn on at least one trigger.";
-    }
-
-    function buildContextPicker() {
-      const holder = document.querySelector("#ctx-picker");
-      holder.textContent = "";
-
-      function option(item, extra) {
-        const label = document.createElement("label");
-        label.className = "ctx-item" + (item.required ? " required" : "");
-        const box = document.createElement("input");
-        const required = Boolean(item.required);
-        box.type = item.group ? "radio" : "checkbox";
-        if (item.group) box.name = "group-" + item.group;
-        box.checked = required || selected.has(item.key);
-        box.disabled = required;
-        box.dataset.required = String(required);
-        if (required) label.classList.add("required");
-        box.onchange = () => {
-          if (item.group) {
-            groups[item.group].forEach((key) => selected.delete(key));
-            if (box.checked) selected.add(item.key);
-            buildContextPicker();
-          } else {
-            box.checked ? selected.add(item.key) : selected.delete(item.key);
-          }
-          runEstimate("selection changed");
-        };
-        const text = document.createElement("span");
-        text.innerHTML = item.label + ' <span class="kind">· ' + item.kind +
-          (required ? ' <span class="badge">always on</span>' : "") +
-          " · " + item.note + "</span>";
-        label.appendChild(box);
-        label.appendChild(text);
-        return label;
-      }
-
-      // 同组互斥：一次只能选一个，或者选「不用」。
-      const groups = {};
-      crossData.contexts.filter((item) => item.group).forEach((item) => {
-        (groups[item.group] = groups[item.group] || []).push(item.key);
-      });
-
-      const standalone = document.createElement("div");
-      standalone.className = "ctx-standalone";
-      crossData.contexts.filter((item) => !item.group).forEach((item) => standalone.appendChild(option(item, 0)));
-      holder.appendChild(standalone);
-
-      Object.entries(groups).forEach(([name, keys]) => {
-        const members = crossData.contexts.filter((item) => item.group === name);
-        const field = document.createElement("fieldset");
-        field.className = "ctx-group";
-        const legend = document.createElement("legend");
-        legend.textContent = (members[0].group_label || name) + " · 三选一";
-        field.appendChild(legend);
-
-        const offLabel = document.createElement("label");
-        offLabel.className = "ctx-item";
-        const offBox = document.createElement("input");
-        offBox.type = "radio";
-        offBox.name = "group-" + name;
-        offBox.checked = keys.every((key) => !selected.has(key));
-        offBox.onchange = () => {
-          keys.forEach((key) => selected.delete(key));
-          buildContextPicker();
-          runEstimate("selection changed");
-        };
-        const offText = document.createElement("span");
-        offText.innerHTML = 'None <span class="kind">· off · 不撤任何信号</span>';
-        offLabel.appendChild(offBox);
-        offLabel.appendChild(offText);
-        field.appendChild(offLabel);
-
-        members.forEach((item) => field.appendChild(option(item, 1)));
-        holder.appendChild(field);
-      });
-    }
-
-    function renderAgentRead(context, latest) {
-      const box = document.querySelector("#agent-read");
-      if (!context) {
-        box.textContent = "Runtime LLM read: none recorded yet (run `forecast-log daily` after the close).";
-        return;
-      }
-      const lines = [];
-      const lag = context.as_of === latest.date ? "" : (context.as_of > latest.date
-        ? "note: this read is newer than the latest composite, because the price feed lags the news feed."
-        : "note: this read predates the latest composite, so it is not about the current signal.");
-      lines.push("Runtime LLM read · " + context.as_of + " · " + context.model);
-      lines.push("tone " + context.tone + " · confidence " + Number(context.confidence || 0).toFixed(2) +
-        " · headlines " + (context.headlines_used ?? 0) + "/" + (context.headlines_retrieved ?? 0) +
-        " · $" + Number(context.cost_usd || 0).toFixed(5));
-      if (context.drivers && context.drivers.length) {
-        lines.push("drivers: " + context.drivers.join(" · "));
-      }
-      if (context.keywords && context.keywords.items) {
-        const hits = context.keywords.hits || [];
-        lines.push("keyword scan · " + context.keywords.items + " headlines · " + hits.length +
-          " concepts" + (hits.length ? ": " + hits.join(", ") : "") +
-          " · risk-off " + (context.keywords.risk_off_hits || []).length +
-          " / risk-on " + (context.keywords.risk_on_hits || []).length);
-      }
-      if (context.veto_watch) {
-        lines.push("veto watch: this would be a signal day with >= 2 risk-off concepts. " +
-          "Historically such signals resolved 61.4% vs 69.5% (n=236 vs 118, ~1.4 sigma), " +
-          "so it is logged, not acted on.");
-      }
-      if (context.contested) {
-        lines.push("contested: the LLM read is risk-off at high confidence while the price-side signal fired. " +
-          "The signal is kept and counted; the disagreement is logged, not acted on.");
-      }
-      if (lag) {
-        lines.push(lag);
-      }
-      if (context.errors && context.errors.length) {
-        lines.push("retrieval error: " + context.errors.join("; "));
-      }
-      box.textContent = lines.join("\n");
-    }
-
-    function draw(data) {
-      line.setData(data.time.map((time, index) => ({ time, value: data.close[index] })));
-      chart.timeScale().fitContent();
-      applyFlagsToChart(data.flag, data);
-    }
-
-    // 勾选变了以后，图上那些点必须跟着变。否则表格说 505，图上还是 629 个箭头。
-    //
-    // 箭头画在**真正能成交的那一天**：信号在 D 收盘后成立，D+1 开盘才买得到。
-    // 画在 D 日就是拿「信号才成立时的那个收盘」当成交价 —— 那个价已经过去了。
-    // 到期只在对账读数里出现。
-    function applyFlagsToChart(flags, data) {
-      const source = data || crossData;
-      const p = fcTheme.palette();
-      const markers = [];
-      entry_of = {};
-      flags.forEach((flag, index) => {
-        if (!flag || source.outcome[index] === null || !source.entry_at[index]) return;
-        const when = source.entry_at[index];
-        entry_of[when] = index;
-        // 三天内做到 = 绿箭头；只有第 4–5 天才做到 = 琥珀圆圈；五天都没做到 = 灰方块。
-        // 形状和颜色双重编码，色弱的人也能区分三种结果。
-        const hit = source.outcome[index] === 1;
-        const fast = hit && source.hit3[index] === 1;
-        markers.push({ time: when, position: "belowBar",
-          shape: fast ? "arrowUp" : hit ? "circle" : "square",
-          size: !hit ? 0.65 : fast ? 1 : 0.9,
-          color: !hit ? p.grey : fast ? p.green : p.amber });
-      });
-      markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-      line.setMarkers(markers);
-      shown = { flags, data: source };
-    }
-
-    // 悬停读数：成交日是信号之后的第一个交易日，成交价是那天的开盘价。
-    let shown = { flags: [], data: null };
-    let entry_of = {};
-
-    // 画布拿不到 CSS 变量：系统配色一变，重新上色并重画箭头。
-    fcTheme.subscribe((p) => {
-      chart.applyOptions(fcTheme.chartOptions(p));
-      line.applyOptions({ color: p.blue });
-      if (shown.data) applyFlagsToChart(shown.flags, shown.data);
-    });
-
-    function dayOf(time) {
-      if (time == null) return null;
-      if (typeof time === "string") return time;
-      if (typeof time === "object" && time.year) {
-        return time.year + "-" + String(time.month).padStart(2, "0") + "-" + String(time.day).padStart(2, "0");
-      }
-      return null;
-    }
-
-    function describeDay(day) {
-      const data = shown.data;
-      if (!data) return "";
-      const index = data.time.indexOf(day);
-      if (index < 0) return "";
-      const sig = entry_of[day];
-      if (sig !== undefined) {
-        const base = data.base_close[sig];
-        const c3 = data.close3 ? data.close3[sig] : null;
-        const c5 = data.close5 ? data.close5[sig] : null;
-        const parts = [day, "signal close " + base.toFixed(2), "signal from " + data.time[sig]];
-        if (c3 !== null && c3 !== undefined && c5 !== null && c5 !== undefined) {
-          const m = (value) => (value / base - 1 >= 0 ? "+" : "−") + Math.abs((value / base - 1) * 100).toFixed(2) + "%";
-          parts.push("day 3 " + c3.toFixed(2) + " (" + m(c3) + ")",
-                     "day 5 " + c5.toFixed(2) + " (" + m(c5) + ")" +
-                     (c3 > base ? " → green" : c5 > base ? " → amber" : " → grey"));
-        } else {
-          parts.push("check pending");
+      function dayOf(time) {
+        if (time == null) return null;
+        if (typeof time === "string") return time;
+        if (typeof time === "object" && time.year) {
+          return time.year + "-" + String(time.month).padStart(2, "0") + "-" + String(time.day).padStart(2, "0");
         }
-        return parts.join(" · ");
+        return null;
       }
-      if (shown.flags[index] === 1) {
-        const next = data.entry[index];
-        return [day, "SIGNAL at this close", "it can only be filled at the next open" +
-          (next != null ? ": " + next.toFixed(2) + " on " + data.entry_at[index] : "")].join(" · ");
+
+      function describeDay(day) {
+        const data = shown.data;
+        if (!data || !day) return "";
+        const index = indexOf[day];
+        if (index === undefined) return "";
+        const sig = entryOf[day];
+        if (sig !== undefined) {
+          const base = data.base_close[sig];
+          const c3 = data.close3 ? data.close3[sig] : null;
+          const c5 = data.close5 ? data.close5[sig] : null;
+          const srcDate = shown.market === "ssec" ? data.us_date[sig] : data.time[sig];
+          const parts = [day, "basis close " + base.toFixed(2), "signal from " + srcDate];
+          if (c3 !== null && c3 !== undefined && c5 !== null && c5 !== undefined) {
+            const m = (val) => (val / base - 1 >= 0 ? "+" : "−") + Math.abs((val / base - 1) * 100).toFixed(2) + "%";
+            parts.push(
+              "day 3 " + c3.toFixed(2) + " (" + m(c3) + ")",
+              "day 5 " + c5.toFixed(2) + " (" + m(c5) + ")" +
+                (c3 > base ? " → green" : c5 > base ? " → amber" : " → grey")
+            );
+          } else {
+            parts.push("check pending");
+          }
+          return parts.join(" · ");
+        }
+        if (shown.flags[index] === 1 && MARKETS[shown.market].markerOnEntryAt) {
+          const next = data.entry[index];
+          return [day, "SIGNAL at this close", "filled at next open" +
+            (next != null ? ": " + next.toFixed(2) + " on " + data.entry_at[index] : "")].join(" · ");
+        }
+        return [day, "no signal · close " + data.close[index].toFixed(2)].join(" · ");
       }
-      return [day, "no signal · close " + data.close[index].toFixed(2)].join(" · ");
-    }
 
-    const IDLE_READOUT = "hover a session: its close, then the day-3 and day-5 closes";
-    chart.subscribeCrosshairMove((param) => {
-      const text = describeDay(dayOf(param && param.time));
-      document.querySelector("#readout").textContent = text || IDLE_READOUT;
-    });
+      const IDLE_READOUT = "hover a session: its close, then the day-3 and day-5 closes";
+      chart.subscribeCrosshairMove((param) => {
+        const text = describeDay(dayOf(param && param.time));
+        document.querySelector("#readout").textContent = text || IDLE_READOUT;
+      });
 
-    fetch("/artifacts/cross.json?t=" + Date.now())
-      .then((response) => { if (!response.ok) throw new Error(String(response.status)); return response.json(); })
-      .then((data) => {
+      function makeTable(rows, headers) {
+        const table = document.createElement("table");
+        const head = document.createElement("tr");
+        headers.forEach((text) => {
+          const th = document.createElement("th");
+          th.scope = "col";
+          th.textContent = text;
+          head.appendChild(th);
+        });
+        table.appendChild(head);
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          row.forEach((value, col) => {
+            const cell = document.createElement(col === 0 ? "th" : "td");
+            if (col === 0) cell.scope = "row";
+            cell.textContent = value;
+            if (value === "—") cell.className = "weak";
+            tr.appendChild(cell);
+          });
+          table.appendChild(tr);
+        });
+        return table;
+      }
+
+      function addBlock(aside, titleText) {
+        const div = document.createElement("div");
+        div.className = "block";
+        if (titleText) {
+          const h2 = document.createElement("h2");
+          h2.textContent = titleText;
+          div.appendChild(h2);
+        }
+        aside.appendChild(div);
+        return div;
+      }
+
+      function renderNdxAside(aside, data) {
         const s = data.summary;
-        document.querySelector("#question").textContent = data.question.text;
-        document.querySelector("#rule").textContent =
-          s.flagged + " signals · 1-3 days " + percent(s.hit3) + " · 4-5 days " + percent(s.hit45);
-        document.querySelector("#factors").textContent = "";
+        const b1 = addBlock(aside, "Signal construction (fixed ex ante)");
+        const intro = document.createElement("div");
+        intro.className = "note";
+        intro.textContent =
+          "Four cross-asset factors standardised on an expanding window (no look-ahead). " +
+          "Default rule combines composite ≥ 90th percentile, CPI/NFP calendar windows, FOMC veto, and LLM news veto. " +
+          "Use the floating Factors panel to toggle signals or customize the decision rule:";
+        const ul = document.createElement("ul");
         (data.question.factors || []).forEach((text) => {
           const li = document.createElement("li");
           li.textContent = text;
-          document.querySelector("#factors").appendChild(li);
+          ul.appendChild(li);
         });
-        draw(data);
+        intro.appendChild(ul);
+        b1.appendChild(intro);
 
-        const stats = document.querySelector("#stats");
-        stats.textContent = "";
-        const performanceRows = [
-          ["", "Full sample", "Out-of-sample 2015+"],
+        const b2 = addBlock(aside, "Out-of-sample performance");
+        b2.appendChild(makeTable([
           ["Observations", String(s.n), String(s.holdout_n)],
           ["Signals", String(s.flagged), String(s.holdout_flagged)],
-          ["Precision", percent(s.hit), percent(s.holdout_hit)],
-          ["Any random day", percent(s.base_rate), percent(s.holdout_base_rate)],
+          ["Precision", percentInt(s.hit), percentInt(s.holdout_hit)],
+          ["Any random day", percentInt(s.base_rate), percentInt(s.holdout_base_rate)],
           ["Lift vs base", ((s.hit - s.base_rate) * 100).toFixed(1) + " pp", ((s.holdout_hit - s.holdout_base_rate) * 100).toFixed(1) + " pp"],
-        ];
-        performanceRows.forEach((row, rowIndex) => {
-          const tr = document.createElement("tr");
-          row.forEach((value, column) => {
-            const cell = document.createElement(rowIndex === 0 || column === 0 ? "th" : "td");
-            if (rowIndex === 0) cell.scope = "col";
-            else if (column === 0) cell.scope = "row";
-            cell.textContent = value;
-            tr.appendChild(cell);
-          });
-          stats.appendChild(tr);
-        });
+        ], ["", "Full sample", "Out-of-sample 2015+"]));
 
-        document.querySelector("#latest").textContent =
+        const b3 = addBlock(aside, "News factor: with vs without");
+        const priceOnly = data.summary_price_only;
+        const news = data.news || {};
+        b3.appendChild(makeTable([
+          ["Signals", String(s.flagged), String(priceOnly.flagged)],
+          ["Precision", percentInt(s.hit), percentInt(priceOnly.hit)],
+          ["Out-of-sample signals", String(s.holdout_flagged), String(priceOnly.holdout_flagged)],
+          ["Out-of-sample precision", percentInt(s.holdout_hit), percentInt(priceOnly.holdout_hit)],
+        ], ["", "With news", "Price only"]));
+        const newsNote = document.createElement("div");
+        newsNote.className = "note";
+        newsNote.textContent =
+          "Veto: " + (news.vetoed_signals ?? 0) + " signals removed on strong bearish surprise days (" +
+          (news.days ?? 0) + " labelled days, " + (news.veto_days ?? 0) + " veto days total).";
+        b3.appendChild(newsNote);
+
+        const b4 = addBlock(aside, "Latest observation");
+        const latestDiv = document.createElement("div");
+        latestDiv.className = "note";
+        latestDiv.textContent =
           data.latest.date + " · composite " + data.latest.score.toFixed(3) +
           ", trigger " + data.latest.threshold.toFixed(3) +
           " → " + (data.latest.flag ? "signal (risk-on)" : "no signal");
+        b4.appendChild(latestDiv);
 
-        crossData = data;
-        const defaults = ["composite", "cal_cpi", "cal_nfp", "fomc_day", "news_bearish"];
-        selected.clear();
-        defaults.forEach((key) => selected.add(key));
-        buildContextPicker();
-        renderContextTable();
-        const runButton = document.querySelector("#ctx-run");
-        const resetButton = document.querySelector("#ctx-reset");
-        const allButton = document.querySelector("#ctx-all");
-        const statusBox = document.querySelector("#ctx-status");
-        const resultBox = document.querySelector(".ctxbar-result");
-
-        // 运行状态机：
-        //   idle → running（所有控件锁住）→ idle
-        // 运行中再点按钮：直接忽略，不排队、不叠加。
-        // 令牌（runToken）用来挡住「上一轮的 setTimeout 回来把这一轮的状态冲掉」。
-        let running = false;
-        let runToken = 0;
-        let queuedTrigger = null;   // 运行中又改了勾选：跑完补一次，保证界面和选择一致
-        const MIN_VISIBLE_MS = 400;
-
-        // 运行中锁的是按钮，不是勾选框：用户可以继续调整，多出来的变更合并成一次补跑。
-        function controls() {
-          return [resetButton, allButton];
+        const agentDiv = document.createElement("div");
+        agentDiv.className = "note";
+        agentDiv.style.marginTop = "6px";
+        const ctx = data.context;
+        if (!ctx) {
+          agentDiv.textContent = "Runtime LLM read: none recorded yet (run `forecast-log daily`).";
+        } else {
+          const lines = [
+            "Runtime LLM read · " + ctx.as_of + " · " + ctx.model,
+            "tone " + ctx.tone + " · confidence " + Number(ctx.confidence || 0).toFixed(2) +
+              " · headlines " + (ctx.headlines_used ?? 0) + "/" + (ctx.headlines_retrieved ?? 0) +
+              " · $" + Number(ctx.cost_usd || 0).toFixed(5),
+          ];
+          if (ctx.drivers && ctx.drivers.length) lines.push("drivers: " + ctx.drivers.join(" · "));
+          if (ctx.keywords && ctx.keywords.items) {
+            const hits = ctx.keywords.hits || [];
+            lines.push("keyword scan · " + hits.length + " concepts" + (hits.length ? ": " + hits.join(", ") : ""));
+          }
+          if (ctx.contested) lines.push("contested: LLM risk-off at high confidence while price signal fired.");
+          agentDiv.textContent = lines.join("\n");
         }
+        b4.appendChild(agentDiv);
 
-        function setBusy(busy, label) {
-          running = busy;
-          runButton.disabled = busy;
-          runButton.setAttribute("aria-busy", busy ? "true" : "false");
-          runButton.dataset.state = busy ? "running" : "idle";
-          runButton.innerHTML = busy ? '<span class="spinner"></span>' + label : "Run estimate";
-          controls().forEach((control) => {
-            control.disabled = busy;
-          });
-          resultBox.classList.toggle("loading", busy);
-        }
+        const b5 = addBlock(aside, "");
+        const foot = document.createElement("div");
+        foot.className = "note";
+        foot.textContent =
+          "Out-of-sample (2015+): " + s.holdout_flagged + " signals, precision " +
+          percentInt(s.holdout_hit) + " vs " + percentInt(s.holdout_base_rate) + " random baseline.";
+        b5.appendChild(foot);
+      }
 
-        runEstimate = function (trigger) {
-          if (running) {                  // 重入保护 + 合并：不叠加，只记一笔「跑完再来一次」
-            queuedTrigger = trigger;
+      function renderQqqAside(aside, data) {
+        const rows = data.comparison.rows;
+        const b1 = addBlock(aside, "Same signals, two instruments");
+        b1.appendChild(makeTable([
+          ["Signals", ...rows.map((r) => String(r.signals))],
+          ["Precision", ...rows.map((r) => percent(r.precision))],
+          ["Any random day", ...rows.map((r) => percent(r.base_rate))],
+          ["Lift", ...rows.map((r) => points(r.lift))],
+          ["Out-of-sample signals", ...rows.map((r) => String(r.holdout_signals))],
+          ["Out-of-sample precision", ...rows.map((r) => percent(r.holdout_precision))],
+          ["Out-of-sample base", ...rows.map((r) => percent(r.holdout_base_rate))],
+          ["Out-of-sample lift", ...rows.map((r) => points(r.holdout_lift))],
+        ], ["", ...rows.map((r) => r.instrument)]));
+        const same = data.comparison.same_flags && data.comparison.same_days;
+        const n1 = document.createElement("div");
+        n1.className = "note";
+        n1.textContent =
+          (same
+            ? "Both columns use the identical " + rows[0].signals + " signal days; "
+            : "WARNING: documents do not flag the same days. ") +
+          "only the closes being measured change. " + data.first_session + " → " + data.last_session + ".";
+        b1.appendChild(n1);
+
+        const b2 = addBlock(aside, "Days they disagree");
+        const dis = data.comparison.disagreements;
+        const disRows = dis.map((r) => [
+          r.date.slice(2),
+          r.target.slice(2),
+          basisPoints(r.a_return) + (r.a_hit ? " ✓" : " ✗"),
+          basisPoints(r.b_return) + (r.b_hit ? " ✓" : " ✗"),
+        ]);
+        b2.appendChild(makeTable(disRows, ["Signal", "Exit", data.comparison.a, data.comparison.b]));
+        const n2 = document.createElement("div");
+        n2.className = "note";
+        n2.textContent = dis.length
+          ? "All " + dis.length + " are moves of a few tenths of a percent — tracking noise on flat calls."
+          : "No disagreement: both instruments resolved every signal the same way.";
+        b2.appendChild(n2);
+
+        const b3 = addBlock(aside, "");
+        const n3 = document.createElement("div");
+        n3.className = "note";
+        n3.textContent =
+          "Closes are unadjusted, so QQQ drops by its dividend four times a year while NDX does not. " +
+          "The Factors panel also exposes QQQ-specific filters (20-day MA trend & overnight gap veto).";
+        b3.appendChild(n3);
+      }
+
+      function renderSsecAside(aside, d) {
+        const a = d.summary.all, h = d.summary.holdout, r = d.reference;
+        const b1 = addBlock(aside, "");
+        const v = document.createElement("div");
+        v.className = "verdict";
+        v.textContent = "The signal points the right way here too, at a third of the size: " +
+          points(a.lift) + " against " + points(r.lift) + " on the Nasdaq 100.";
+        const vn = document.createElement("div");
+        vn.className = "note";
+        vn.textContent = percent(a.hit) + " of " + a.signals + " signals beat the " + percent(a.base_rate) +
+          " random baseline. Since " + d.summary.holdout_from + " it is " + points(h.lift) + " on " + h.signals + " signals.";
+        b1.appendChild(v);
+        b1.appendChild(vn);
+
+        const b2 = addBlock(aside, "One signal, two markets");
+        b2.appendChild(makeTable([
+          ["Signals", String(a.signals), String(r.signals)],
+          ["Precision", percent(a.hit), percent(r.hit)],
+          ["Any random day", percent(a.base_rate), percent(r.base_rate)],
+          ["Lift", points(a.lift), points(r.lift)],
+          ["Since " + d.summary.holdout_from, String(h.signals), String(r.holdout_signals)],
+          ["Precision", percent(h.hit), percent(r.holdout_hit)],
+          ["Any random day", percent(h.base_rate), percent(r.holdout_base_rate)],
+          ["Lift", points(h.lift), points(r.holdout_lift)],
+        ], ["", d.instrument, r.instrument]));
+        const n2 = document.createElement("div");
+        n2.className = "note";
+        n2.textContent = "Same flag on the same US session in both columns; only the market the bet settles in changes.";
+        b2.appendChild(n2);
+
+        const b3 = addBlock(aside, "Bands of the composite (low → high)");
+        const bandsTable = makeTable(
+          [["hit", ...d.bands.map((b) => (b.hit * 100).toFixed(0))]],
+          ["", ...d.bands.map((b) => String(b.band))]
+        );
+        bandsTable.className = "bands";
+        b3.appendChild(bandsTable);
+        const n3 = document.createElement("div");
+        n3.className = "note";
+        n3.textContent = "Tenths of the US composite scored on A-share outcomes.";
+        b3.appendChild(n3);
+
+        const b4 = addBlock(aside, "What changed, what did not");
+        const n4 = document.createElement("div");
+        n4.className = "note";
+        n4.textContent =
+          "A US signal dated D is known at 04:00 Beijing the next morning and filled at the 09:30 A-share open. " +
+          "In the Factors panel, you can toggle A-share specific filters (20-day MA trend, >1% open gap veto, 5-day pullback boost).";
+        b4.appendChild(n4);
+      }
+
+      function renderAside(marketKey, data) {
+        const aside = document.querySelector("#side-panel");
+        aside.textContent = "";
+        if (marketKey === "ndx") renderNdxAside(aside, data);
+        else if (marketKey === "qqq") renderQqqAside(aside, data);
+        else renderSsecAside(aside, data);
+        aside.scrollTop = 0;
+      }
+
+      async function loadMarket(marketKey) {
+        const cfg = MARKETS[marketKey] || MARKETS.ndx;
+        activeMarket = cfg.key;
+
+        document.querySelectorAll("#market-tabs .market-tab").forEach((btn) => {
+          const isCurrent = btn.dataset.market === cfg.key;
+          btn.classList.toggle("active", isCurrent);
+          btn.setAttribute("aria-selected", String(isCurrent));
+        });
+
+        const url = new URL(window.location.href);
+        url.searchParams.set("market", cfg.key);
+        window.history.replaceState({}, "", url.toString());
+
+        document.title = cfg.docTitle;
+        document.querySelector("#page-title").textContent = cfg.title;
+        document.querySelector("#pane-name").textContent = cfg.paneName;
+        document.querySelector("#ctxbar-title").textContent = cfg.panelTitle;
+        document.querySelector("#readout").textContent = IDLE_READOUT;
+
+        let data = cache.get(cfg.key);
+        if (!data) {
+          document.querySelector("#question").textContent = "Loading " + cfg.file + "…";
+          try {
+            const response = await fetch(cfg.file + "?t=" + Date.now());
+            if (!response.ok) throw new Error(String(response.status));
+            data = await response.json();
+            cache.set(cfg.key, data);
+          } catch (err) {
+            document.querySelector("#question").textContent = cfg.file + " not available";
             return;
           }
-          const token = ++runToken;
-          setBusy(true, "Running…");
-          statusBox.className = "ctxbar-status busy";
-          statusBox.textContent = "scoring " + data.time.length.toLocaleString() + " sessions — " +
-            selected.size + " of " + data.contexts.length + " contexts · " + trigger;
-          const began = performance.now();
-
-          // 先让浏览器把 Running… 画出来，再算；计算本身在个位数毫秒。
-          requestAnimationFrame(() => setTimeout(() => {
-            if (token !== runToken) return;
-            const started = performance.now();
-            renderContextTable();
-            const ms = Math.max(Math.round(performance.now() - started), 1);
-            // 算得太快反而看不见状态，所以最短显示 400ms。
-            const wait = Math.max(0, MIN_VISIBLE_MS - (performance.now() - began));
-            setTimeout(() => {
-              if (token !== runToken) return;   // 过期的一轮不许改状态
-              setBusy(false);
-              statusBox.className = "ctxbar-status";
-              statusBox.textContent = "done in " + ms + " ms · " + trigger + " · " +
-                new Date().toLocaleTimeString();
-              if (queuedTrigger) {        // 期间变过选择：把最新状态再算一次
-                const next = queuedTrigger;
-                queuedTrigger = null;
-                runEstimate(next);
-              }
-            }, wait);
-          }, 0));
-        };
-
-        // 调试用：控制台里 __ctxState() 能看到真实状态，排查「点了没反应」
-        window.__ctxState = () => ({
-          running, runToken, queuedTrigger, selected: [...selected], signals: runButton.disabled,
-        });
-
-        runButton.onclick = () => runEstimate("manual run");
-        resetButton.onclick = () => {
-          if (running) { queuedTrigger = "price factors only"; return; }
-          selected.clear();
-          selected.add("composite");
-          buildContextPicker();
-          runEstimate("price factors only");
-        };
-        allButton.onclick = () => {
-          if (running) { queuedTrigger = "everything available"; return; }
-          selected.clear();
-          data.contexts.forEach((item) => selected.add(item.key));
-          buildContextPicker();
-          runEstimate("everything available");
-        };
-
-        const withNews = data.summary;
-        const priceOnly = data.summary_price_only;
-        const news = data.news || {};
-        const rows = [
-          ["", "With news", "Price only"],
-          ["Signals", String(withNews.flagged), String(priceOnly.flagged)],
-          ["Precision", percent(withNews.hit), percent(priceOnly.hit)],
-          ["Out-of-sample signals", String(withNews.holdout_flagged), String(priceOnly.holdout_flagged)],
-          ["Out-of-sample precision", percent(withNews.holdout_hit), percent(priceOnly.holdout_hit)],
-        ];
-        const newsTable = document.querySelector("#news-stat");
-        newsTable.textContent = "";
-        rows.forEach((row, rowIndex) => {
-          const tr = document.createElement("tr");
-          row.forEach((value, column) => {
-            const cell = document.createElement(rowIndex === 0 || column === 0 ? "th" : "td");
-            if (rowIndex === 0) cell.scope = "col";
-            else if (column === 0) cell.scope = "row";
-            cell.textContent = value;
-            tr.appendChild(cell);
-          });
-          newsTable.appendChild(tr);
-        });
-        document.querySelector("#news-note").textContent =
-          "Veto: " + (news.vetoed_signals ?? 0) + " signals removed on days the LLM read a strong bearish surprise (" +
-          (news.days ?? 0) + " labelled days, " + (news.veto_days ?? 0) + " veto days total). " +
-          "This rule was picked after looking at the same data, and the out-of-sample gap it buys is +0.3 pt — " +
-          "the 96 vetoed signals are 85.4% on their own, so the difference is inside noise. " +
-          "Both columns are shown so the trade is visible: fewer signals, about the same precision.";
-
-        renderAgentRead(data.context, data.latest);
-
-        document.querySelector("#note").textContent =
-          "Out-of-sample (thresholds calibrated on pre-2015 data only): " + s.holdout_flagged + " signals, precision " +
-          percent(s.holdout_hit) + " against " + percent(s.holdout_base_rate) + " for any random session. " +
-          "That is roughly " + Math.round(s.holdout_flagged / 5) + " non-overlapping 5-session windows, so the edge is " +
-          "marginal rather than robust. The signal is issued on a close, so the fill is the next session's open " +
-          "and the window is the five closes from that session onwards; a hit does not say how far or how long " +
-          "the move lasted.";
-      })
-      .catch(() => { document.querySelector("#question").textContent = "cross.json not available"; });
-    });
-  </script>
-  <script>
-    document.addEventListener("DOMContentLoaded", () => {
-      // 因素面板收起来 / 展开。三个页面同一套。
-      const toggleFactors = document.querySelector("#ctx-toggle");
-      const closeFactors = document.querySelector("#ctx-close");
-      const ruleElem = document.querySelector("#rule");
-
-      function setOpen(open) {
-        const panel = document.querySelector(".ctxbar");
-        if (!panel) return;
-        panel.classList.toggle("collapsed", !open);
-        const chosenKeys = crossData ? new Set(crossData.contexts.filter((item) => item.required).map((item) => item.key)) : new Set();
-        if (typeof selected !== "undefined") selected.forEach((key) => chosenKeys.add(key));
-        const total = crossData ? crossData.contexts.length : 0;
-        if (toggleFactors) {
-          toggleFactors.textContent = "factors (" + chosenKeys.size + "/" + total + ") " + (open ? "\u25B4" : "\u25BE");
-          toggleFactors.setAttribute("aria-expanded", String(open));
-          toggleFactors.classList.toggle("active", open);
         }
+
+        currentData = data;
+        indexOf = {};
+        data.time.forEach((day, idx) => { indexOf[day] = idx; });
+
+        document.querySelector("#question").textContent = data.question.text;
+        line.setData(data.time.map((time, idx) => ({ time, value: data.close[idx] })));
+        chart.timeScale().fitContent();
+
+        renderAside(cfg.key, data);
+        initCtxbar(
+          data,
+          (flags) => applyMarkers(flags, data, cfg.key),
+          { marketKey: cfg.key }
+        );
       }
 
-      if (toggleFactors) {
-        toggleFactors.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const panel = document.querySelector(".ctxbar");
-          const isOpen = panel && !panel.classList.contains("collapsed");
-          setOpen(!isOpen);
-        });
-      }
-
-      if (closeFactors) {
-        closeFactors.addEventListener("click", (e) => {
-          e.stopPropagation();
-          setOpen(false);
-        });
-      }
-
-      if (ruleElem) {
-        ruleElem.addEventListener("click", (e) => {
-          e.stopPropagation();
-          const panel = document.querySelector(".ctxbar");
-          const isOpen = panel && !panel.classList.contains("collapsed");
-          setOpen(!isOpen);
-        });
-      }
-
-      document.addEventListener("click", (e) => {
-        const panel = document.querySelector(".ctxbar");
-        if (!panel || panel.classList.contains("collapsed")) return;
-        if (panel.contains(e.target)) return;
-        if (toggleFactors && toggleFactors.contains(e.target)) return;
-        if (ruleElem && ruleElem.contains(e.target)) return;
-        setOpen(false);
+      document.querySelector("#market-tabs").addEventListener("click", (e) => {
+        const btn = e.target.closest(".market-tab");
+        if (!btn || btn.dataset.market === activeMarket) return;
+        loadMarket(btn.dataset.market);
       });
 
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") {
-          const panel = document.querySelector(".ctxbar");
-          if (panel && !panel.classList.contains("collapsed")) {
-            setOpen(false);
-            if (toggleFactors) toggleFactors.focus();
-          }
-        }
-      });
-
-      // 右侧面板收起来 / 展开。三个页面同一套。
       const togglePanel = document.querySelector("#toggle-panel");
-      if (togglePanel) {
-        togglePanel.addEventListener("click", () => {
-          const panel = document.querySelector("aside");
-          const hidden = panel.classList.toggle("hidden");
-          togglePanel.textContent = hidden ? "panel ‹" : "panel ›";
-          togglePanel.title = hidden ? "Show the side panel" : "Collapse the side panel";
-          togglePanel.setAttribute("aria-expanded", String(!hidden));
-        });
-      }
+      togglePanel.addEventListener("click", () => {
+        const panel = document.querySelector("aside");
+        const hidden = panel.classList.toggle("hidden");
+        togglePanel.textContent = hidden ? "panel ‹" : "panel ›";
+        togglePanel.title = hidden ? "Show the side panel" : "Collapse the side panel";
+        togglePanel.setAttribute("aria-expanded", String(!hidden));
+      });
+
+      const initialMarket = new URLSearchParams(window.location.search).get("market");
+      loadMarket(MARKETS[initialMarket] ? initialMarket : "ndx");
     });
   </script>
 </body>

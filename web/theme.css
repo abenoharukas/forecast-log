@@ -443,3 +443,95 @@ th[scope="row"] { font-weight: 400; }
   text-decoration-color: var(--ink);
 }
 
+
+/* ==========================================================================
+   Market Switcher (.market-tabs) & Decision Rule Controls (.ctx-rule-bar)
+   ========================================================================== */
+.market-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.market-tab {
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.2;
+  padding: 4px 10px;
+  min-block-size: 26px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.market-tab:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.market-tab.active {
+  background: var(--ink);
+  color: var(--sheet);
+  border-color: var(--ink);
+  font-weight: 500;
+}
+
+.ctx-rule-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 4px;
+  padding: 8px 10px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+}
+
+@media (max-width: 640px) {
+  .ctx-rule-bar {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ctx-rule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ctx-rule-field label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ctx-rule-field select {
+  font: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  background: var(--sheet);
+  border: 1px solid var(--control);
+  border-radius: 2px;
+  padding: 3px 6px;
+  min-block-size: 24px;
+  cursor: pointer;
+}
+
+.ctxbar-boxes label .badge {
+  display: inline-block;
+  font-size: 9.5px;
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--muted);
+  margin-left: 4px;
+}

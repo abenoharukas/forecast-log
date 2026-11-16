@@ -270,10 +270,62 @@ def document(root: Path) -> dict:
         # 必须是「上一根 A 股 K 线之后新产生的」——美股休市那天没有新信号，
         # 同一份美股收盘不能在连续两个 A 股交易日各下一次单。否则前端重算会多数出几笔。
         "components": {
-            key: [_component_row(signal_doc, dates, kept, i)[key] for i in kept]
-            for key in signal_doc["components"]
+            **{
+                key: [_component_row(signal_doc, dates, kept, i)[key] for i in kept]
+                for key in signal_doc["components"]
+            },
+            "ssec_below_ma20": [
+                int(
+                    i >= 19
+                    and np.all(np.isfinite(closes[i - 19 : i + 1]))
+                    and closes[i] < float(np.mean(closes[i - 19 : i + 1]))
+                )
+                for i in kept
+            ],
+            "ssec_gap_veto": [
+                int(
+                    i > 0
+                    and np.isfinite(opens[i])
+                    and np.isfinite(closes[i - 1])
+                    and closes[i - 1] > 0
+                    and (opens[i] / closes[i - 1] - 1.0) > 0.010
+                )
+                for i in kept
+            ],
+            "ssec_oversold_boost": [
+                int(
+                    i >= 5
+                    and np.isfinite(closes[i])
+                    and np.isfinite(closes[i - 5])
+                    and closes[i - 5] > 0
+                    and (closes[i] / closes[i - 5] - 1.0) < -0.030
+                )
+                for i in kept
+            ],
         },
-        "contexts": signal_doc["contexts"],
+        "contexts": signal_doc["contexts"] + [
+            {
+                "key": "ssec_below_ma20",
+                "label": "A-share trend filter — Below 20-day MA",
+                "kind": "veto",
+                "note": "上证综指收盘低于 20 日均线时否决买入（本土趋势过滤）",
+                "available_from": dates[first] if kept else None,
+            },
+            {
+                "key": "ssec_gap_veto",
+                "label": "A-share open gap > +1.0%",
+                "kind": "veto",
+                "note": "A 股次日高开超过 +1.0% 时否决追高",
+                "available_from": dates[first] if kept else None,
+            },
+            {
+                "key": "ssec_oversold_boost",
+                "label": "A-share 5-day pullback < -3%",
+                "kind": "boost",
+                "note": "上证综指 5 日跌幅超 3% 时补一个超跌反弹信号",
+                "available_from": dates[first] if kept else None,
+            },
+        ],
         "bands": bands,
         "reference": {
             "instrument": "^NDX",

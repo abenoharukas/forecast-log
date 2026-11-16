@@ -181,7 +181,7 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 ## 第二个页面：第 5 个交易日收盘是否高于基准收盘
 
-`web/points.html`，检验对象为指数本身：**跨资产风险偏好偏多时，第 5 个交易日的收盘是否高于基准收盘**。纵轴为指数点位，三角标记画在信号那几天；颜色按第 3 天、第 5 天两根收盘判定：绿 = 第 3 天就高于基准，琥珀 = 第 3 天没到、第 5 天到了，灰 = 第 5 天仍不高于基准。悬停显示信号日、基准收盘、第 3 天与第 5 天收盘及各自相对基准的涨跌幅。同一套信号换到 QQQ 的对照见下一节（`web/qqq.html`），换到 A 股的对照在再下一节（`web/ssec.html`）。
+`web/points.html`，检验对象为指数本身：**跨资产风险偏好偏多时，第 5 个交易日的收盘是否高于基准收盘**。纵轴为指数点位，三角标记画在信号那几天；颜色按第 3 天、第 5 天两根收盘判定：绿 = 第 3 天就高于基准，琥珀 = 第 3 天没到、第 5 天到了，灰 = 第 5 天仍不高于基准。悬停显示信号日、基准收盘、第 3 天与第 5 天收盘及各自相对基准的涨跌幅。同一套信号换到 QQQ 的对照见下一节，换到 A 股的对照在再下一节；两者都是本页顶部的标签页（`points.html?market=qqq` / `?market=ssec`），旧地址 `web/qqq.html`、`web/ssec.html` 只剩一个跳转。
 
 ### 判定基准是收盘，成交价另存一列
 
@@ -311,7 +311,7 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 ### 换成 QQQ：同一套信号，换一只能下单的基金
 
-指数本身不可交易，ETF 可交易。`web/qqq.html` 用**同一条规则、同一批信号日**，只把基准收盘和窗口内的收盘换成 QQQ 的：复合分数、日历触发、新闻否决都不读被预测标的自己的价格，所以信号日一个不差（629 = 629），交易日历也对齐（2008-06-18 → 2026-11-13，4626 个共同交易日）。
+指数本身不可交易，ETF 可交易。`points.html?market=qqq`（QQQ 标签页）用**同一条规则、同一批信号日**，只把基准收盘和窗口内的收盘换成 QQQ 的：复合分数、日历触发、新闻否决都不读被预测标的自己的价格，所以信号日一个不差（629 = 629），交易日历也对齐（2008-06-18 → 2026-11-13，4626 个共同交易日）。
 
 | | 信号 | 精确率 | 基率 | 超额 | 样本外信号 | 样本外精确率 | 样本外超额 |
 |---|---|---|---|---|---|---|---|
@@ -342,7 +342,7 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 ### 同一套信号，换到上证综指结算
 
-`web/ssec.html`。**信号一个字不改**：四个因子、90 分位、CPI / NFP / FOMC、新闻否决，全部是 `cross.json` 里那一份。换掉的只有「拿哪个市场的收盘做尺子」，而且只跟下单有关：
+`points.html?market=ssec`（A 股标签页）。**信号一个字不改**：四个因子、90 分位、CPI / NFP / FOMC、新闻否决，全部是 `cross.json` 里那一份。换掉的只有「拿哪个市场的收盘做尺子」，而且只跟下单有关：
 
 - **判定基准**：美股 D 日收盘 = 北京 D+1 日 04:00，A 股 09:30 开盘前就知道。基准收盘 = D 之后**第一个 A 股交易日**的收盘；成交价 = 同一交易日的开盘价，记在 `entry`，只用于算「能拿到多少」，不参与判定。
 - **窗口**：基准日之后第 3 天、第 5 天两根收盘；第 5 天那根高于基准算命中（`outcome`）。
@@ -366,7 +366,7 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 `forecast-log fetch` 获取 `000001.SS`，`forecast-log cross` 同时生成 `artifacts/cross_ssec.json`（含 `open`、`entry`、`bands`、`reference`；对照行直接取自 `cross.json` 的汇总，不重算）。
 
-界面语言：五个页面（`index.html`、`points.html`、`qqq.html`、`ssec.html`、`agent.html`）的可见文字一律英文，数据键名和本文档保持中文。
+界面语言：三个页面（`index.html`、`points.html`、`agent.html`）的可见文字一律英文，数据键名和本文档保持中文。`points.html` 一页装三个市场（`^NDX` / QQQ / 上证综指），靠顶部标签页切换；`qqq.html`、`ssec.html` 现在只是跳到 `points.html?market=…` 的存根，避免旧链接 404。
 
 **写作规则：任何缩写、代码、简写，第一次出现时必须给出全称和一句人话解释。** 包括但不限于 VIX、VXN、NDX、QQQ、HYG、TLT、DXY、CPI、NFP、FOMC、pp。不要在对话、文档、页面文案里丢一个缩写就走。**只写在这张表里不算解释过**——对话是独立上下文，第一次在回复里出现就要当场展开，例：`^NDX`（Nasdaq-100 Index，纳斯达克 100 指数，本项目两个结算标的之一）。下表是该项目出现的全部缩写，新增代码请补一行。
 
@@ -572,7 +572,12 @@ forecast-log news-coverage        # 按年 / 按交易日看覆盖率
 
 ## 上下文选择器：用户自己决定给模型看什么
 
-`points.html` 右侧有一块 **Context selector**：勾选哪些信息，点「Run estimate」，当场重算信号数、精确率、样本外精确率，以及最后一天的结论。三个预设按钮：`Price factors only`、`Everything available`。
+`points.html` 顶部有 **Model Context Factors** 面板：勾选哪些信息，信号数、精确率、样本外精确率、最后一个交易日的结论当场重算（不用点按钮）。两个预设按钮：`Price factors only`、`Everything available`。每个市场（`^NDX` / QQQ / A 股）各自记住自己的勾选与规则，切标签页不会互相覆盖。
+
+面板底部还能换**判定函数**（把「任一命中」改成「多因子共振」或「全票通过」），也就是同一个因子集合用不同聚合方式跑：
+
+- 触发：`Any selected trigger (OR)`（默认）/ `Multi-factor consensus (≥ 2)` / `All selected triggers (AND)`。
+- 否决：`Strict veto (any 1 hit cancels)`（默认）/ `Double-confirm veto (≥ 2 hits)`。
 
 现在的上下文清单：
 
@@ -583,6 +588,14 @@ forecast-log news-coverage        # 按年 / 按交易日看覆盖率
 | NFP window (3-7 days before) | 触发 | 分数 ≥ 中位且在非农前 3–7 天 |
 | FOMC decision day | 否决 | 决议当天不出信号 |
 | News (LLM) | 否决 | 每天一次 LLM 读完当天标题；判为强利空意外就撤掉那天信号（1520 天标注） |
+| News score — Strong bullish surprise | 加成 | 同一批标注里判为强利多意外的日子；只在价格侧没触发时补一个信号 |
+| Keyword scan — Risk-off headlines（≥ 2） | 否决 | 正则扫当天标题，命中 2 个及以上避险关键词就撤信号 |
+| `^NDX`/QQQ：Below 20-day MA | 否决 | 收盘低于 20 日均线时不出信号（趋势过滤） |
+| `^NDX`/QQQ：overnight gap > +1.5% | 否决 | 次日开盘比信号收盘高 1.5% 以上，不追 |
+| A 股：Below 20-day MA / gap > +1.0% | 否决 | 上证综指版本的同一对过滤，阈值按 A 股调 |
+| A 股：5-day pullback < −3% | 加成 | 上证综指 5 日跌幅超 3% 时补一个超跌反弹信号 |
+
+后五项是**默认关闭**的候选开关：加进去是为了能在页面上一个个单独试（一次只动一个），不是已经验证过的结论。默认勾选没变，所以上文所有数字都还是默认组合算出来的。
 
 
 ### 三层逻辑须区分
@@ -591,7 +604,7 @@ forecast-log news-coverage        # 按年 / 按交易日看覆盖率
 |---|---|---|
 | **触发**（composite / CPI / NFP） | 价格侧 | 能。`composite` 是唯一必选的基础项 |
 | **否决**（FOMC 当天 / News） | 日历、LLM | 不能。只能撤掉已有信号 |
-| 加成 | — | 已删除（利多意外仅 18 天，缺乏证据） |
+| 加成（bullish 新闻 / A 股超跌） | LLM、A 股价格 | 不能单独出信号；只在没有触发时补一个，默认关闭 |
 
 因此「不选择任何触发条件」= 0 个信号；界面会锁定 composite，状态行同时显示该组上下文的**数据起点**（`from 2011-01-01`），因为新闻数据始于 2002 年、日历始于 2011 年。
 
@@ -600,9 +613,9 @@ forecast-log news-coverage        # 按年 / 按交易日看覆盖率
 `cross.py` 把每个信息源导出成**独立的一列 0/1 标签**（`cross.json` 的 `components`），外加一份 `contexts` 清单。页面按 `kind` 套用规则：
 
 ```js
-trigger → 任一选中即触发
-boost   → 命中且分数 ≥ 中位时补信号
-veto    → 命中则撤销当天信号
+trigger → 按所选模式：任一命中 / ≥ 2 个共振 / 全部命中
+boost   → 触发没成立时按同一套模式补信号
+veto    → 命中则撤销当天信号；可选「≥ 2 个否决才撤销」
 ```
 
 默认勾选（composite + CPI + NFP + FOMC + news bearish）在前端重算得到 **629 个信号 / 66.5%，样本外 505 / 67.3%**，与 `forecast-log cross` 的输出完全一致——前端与命令行为同一套规则，并非两套实现。
@@ -805,7 +818,7 @@ PYTHONPATH=src:experiments .venv/bin/python experiments/cross_asset_lab.py
 
 `fetch` 把 Yahoo 日线收盘写到 `data/raw/`：两个结算品种（`^VXN`、`^NDX`）、三个前瞻输入（`^VIX9D`、`^VIX3M`、`^VVIX`）、第二个页面用的跨资产行情（`^TNX`、`DX-Y.NYB`、`HYG`、`TLT`、`SPY`、`RSP`、`GC=F`、`^VIX`），QQQ 对照页用的 `QQQ`，以及 A 股那一份的 `000001.SS`。取不到的会跳过并打印原因，不会中断。输入取不到时模型自动只用价格自身。`backtest` 从历史上每一个已完成的交易日出发，只用那天及以前的收盘做概率，再和后来的实际收盘对照。概率不会等于单次的 0 或 1。对齐的是：报 20% 的那些日子里，后来大约有两成越过门槛。`backtest` 同时写出 `artifacts/timeline.json`（含 7 日对账的每一行）和 `artifacts/backtest_report.json`（含分步长的那张表）。
 
-图在 `web/index.html`（fear index）、`web/points.html`（5 个交易日内的多头信号点）、`web/qqq.html`（同一批信号在 QQQ 上结算）和 `web/ssec.html`（同一套信号在上证综指上结算）。仓库根目录运行：
+图在 `web/index.html`（fear index）和 `web/points.html`（5 个交易日内的多头信号点；顶部标签页切换 `^NDX` / QQQ / 上证综指三个结算标的）。仓库根目录运行：
 
 ```bash
 python3 serve.py 8731

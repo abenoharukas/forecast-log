@@ -14,18 +14,21 @@ CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 RETRY_STATUS = {429, 500, 502, 503, 504}
 RETRY_ATTEMPTS = 5
 NY = ZoneInfo("America/New_York")
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 # `range=max` silently returns monthly or quarterly bars. Ask for explicit windows instead.
 WINDOW_YEARS = 5
 HISTORY_START = date(1985, 1, 1)
 
 
 def fetch_daily(symbol: str, timeout: float = 60) -> Series:
-    """Daily Close from the Yahoo chart API. This is the only price source."""
+    """Daily OHLCV from the Yahoo chart API. This is the only price source."""
     quoted = urllib.parse.quote(symbol, safe="")
-    by_date: dict[date, tuple[float | None, float]] = {}
+    by_date: dict[date, tuple[float | None, float | None, float | None, float, int | None]] = {}
     tz_name = "America/New_York"
     start = HISTORY_START
-    stop = datetime.now(NY).date() + timedelta(days=1)
+    # Take the later of NY and Beijing dates so A-share morning sessions are never cut off
+    # when New York is still on the previous calendar day.
+    stop = max(datetime.now(NY).date(), datetime.now(SHANGHAI).date()) + timedelta(days=2)
     while start < stop:
         end = min(_add_years(start, WINDOW_YEARS), stop)
         query = (
@@ -43,8 +46,8 @@ def fetch_daily(symbol: str, timeout: float = 60) -> Series:
         by_date.update(rows)
         start = end
     bars = tuple(
-        Bar(date=day, close=close, open=open_)
-        for day, (open_, close) in sorted(by_date.items())
+        Bar(date=day, close=close, open=open_, high=high, low=low, volume=volume)
+        for day, (open_, high, low, close, volume) in sorted(by_date.items())
     )
     if not bars:
         raise RuntimeError(f"Yahoo returned no closes for {symbol}")
@@ -82,7 +85,9 @@ def _load(query: str, symbol: str, timeout: float) -> dict:
     raise RuntimeError(f"Yahoo chart error for {symbol}: out of attempts")
 
 
-def _read_chart(symbol: str, payload: dict) -> tuple[str | None, dict[date, tuple[float | None, float]]]:
+def _read_chart(
+    symbol: str, payload: dict
+) -> tuple[str | None, dict[date, tuple[float | None, float | None, float | None, float, int | None]]]:
     chart = payload["chart"]
     if chart.get("error"):
         raise RuntimeError(f"Yahoo chart error for {symbol}: {chart['error']}")
@@ -94,14 +99,21 @@ def _read_chart(symbol: str, payload: dict) -> tuple[str | None, dict[date, tupl
     zone = ZoneInfo(tz_name)
     stamps = result.get("timestamp") or []
     quote = result["indicators"]["quote"][0]
-    closes, opens = quote["close"], quote["open"]
+    closes = quote.get("close") or []
+    opens = quote.get("open") or [None] * len(stamps)
+    highs = quote.get("high") or [None] * len(stamps)
+    lows = quote.get("low") or [None] * len(stamps)
+    volumes = quote.get("volume") or [None] * len(stamps)
     rows = {}
-    for stamp, close, open_ in zip(stamps, closes, opens):
+    for stamp, close, open_, high, low, volume in zip(stamps, closes, opens, highs, lows, volumes):
         if close is None:
             continue
         rows[datetime.fromtimestamp(int(stamp), zone).date()] = (
             None if open_ is None else round(float(open_), 4),
+            None if high is None else round(float(high), 4),
+            None if low is None else round(float(low), 4),
             round(float(close), 4),
+            None if volume is None else int(volume),
         )
     return tz_name, rows
 

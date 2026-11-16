@@ -13,9 +13,11 @@ NY = ZoneInfo("America/New_York")
 class Bar:
     date: date
     close: float
-    # 开盘价。只有「照着信号下单」的标的才必须存（^NDX、QQQ、000001.SS）；
-    # 因子和结算只用收盘，所以旧文件缺这一列仍然能读。
+    # 开盘价、最高价、最低价、成交量。旧缓存文件缺这些列时仍然能读。
     open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: int | None = None
 
 
 @dataclass(frozen=True)
@@ -36,11 +38,20 @@ def validate_bars(bars: tuple[Bar, ...] | list[Bar]) -> None:
         raise ValueError("duplicate session dates")
     if any(bar.close <= 0 or bar.close != bar.close for bar in bars):
         raise ValueError("closes must be finite and positive")
+    for field in ("open", "high", "low"):
+        if any(
+            getattr(bar, field) is not None
+            and (getattr(bar, field) <= 0 or getattr(bar, field) != getattr(bar, field))
+            for bar in bars
+        ):
+            raise ValueError(f"{field}s must be finite and positive when present")
     if any(
-        bar.open is not None and (bar.open <= 0 or bar.open != bar.open)
+        bar.high is not None and bar.low is not None and bar.low > bar.high
         for bar in bars
     ):
-        raise ValueError("opens must be finite and positive when present")
+        raise ValueError("low must not exceed high")
+    if any(bar.volume is not None and bar.volume < 0 for bar in bars):
+        raise ValueError("volumes must be non-negative when present")
 
 
 def save_series(path: Path, series: Series) -> None:
@@ -51,7 +62,14 @@ def save_series(path: Path, series: Series) -> None:
         "timezone": series.timezone,
         "fetched_at": series.fetched_at,
         "bars": [
-            {"date": bar.date.isoformat(), "open": bar.open, "close": bar.close}
+            {
+                "date": bar.date.isoformat(),
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume,
+            }
             for bar in series.bars
         ],
     }
@@ -65,6 +83,9 @@ def load_series(path: Path) -> Series:
             date=date.fromisoformat(row["date"]),
             close=float(row["close"]),
             open=float(row["open"]) if row.get("open") is not None else None,
+            high=float(row["high"]) if row.get("high") is not None else None,
+            low=float(row["low"]) if row.get("low") is not None else None,
+            volume=int(row["volume"]) if row.get("volume") is not None else None,
         )
         for row in payload["bars"]
     )

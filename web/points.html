@@ -81,6 +81,7 @@
           <button type="button" class="market-tab" role="tab" data-market="qqq" aria-selected="false">QQQ (ETF)</button>
           <button type="button" class="market-tab" role="tab" data-market="ssec" aria-selected="false">A股 · 上证综指 (000001.SS)</button>
         </div>
+        <button type="button" class="ctxbar-btn" id="refresh-btn" title="拉取最新行情（含北京时间当日 A 股）并重算信号">↻ 刷新行情</button>
         <span class="sub" id="question">—</span>
       </div>
       <span class="sub" id="build">r3 · unified multi-market view · <a href="/web/">VXN Fear Index →</a> · <a href="/web/agent.html">Agent scoreboard →</a></span>
@@ -117,15 +118,22 @@
       <div class="pane">
         <div class="pane-head">
           <span class="name" id="pane-name">Risk-on composite → day-5 close above the signal-day close</span>
+          <span class="sub" id="live-call" style="font-weight:500;">—</span>
           <span class="sub" id="rule" title="Click to configure context factors">—</span>
-          <span class="sub">marker = entry session · basis = signal close · <b style="color:var(--green)">▲ green</b> = day-3 above · <b style="color:var(--amber-text)">● amber</b> = day-3 below, day-5 above · <b style="color:var(--grey-text)">■ grey</b> = day-5 below · hover for numbers</span>
-          <span class="sub" id="readout">hover a session: its close, then the day-3 and day-5 closes</span>
+          <span class="sub">marker = entry session · basis = signal close · <b style="color:#00c853">▲ green</b> = day-3 above · <b style="color:#ff9100">● amber</b> = day-3 below, day-5 above · <b style="color:#64748b">■ grey</b> = day-5 below · <b style="color:#0091ea">▲ blue</b> = pending BUY · hover for numbers</span>
+          <span class="sub" id="readout">hover a candle: open / high / low / close, plus day-3 and day-5 outcomes</span>
           <div class="pane-toggles">
+            <span class="group" id="ranges" role="group" aria-label="Time range" style="display:inline-flex;gap:4px;">
+              <button class="toggle" type="button" data-span="90" aria-pressed="false">3M</button>
+              <button class="toggle active" type="button" data-span="365" aria-pressed="true">1Y</button>
+              <button class="toggle" type="button" data-span="1825" aria-pressed="false">5Y</button>
+              <button class="toggle" type="button" data-span="0" aria-pressed="false">All</button>
+            </span>
             <button class="toggle" id="ctx-toggle" type="button" aria-controls="ctxbar" aria-expanded="false" title="Configure model context factors">factors &#9662;</button>
             <button class="toggle" id="toggle-panel" type="button" aria-controls="side-panel" aria-expanded="true" title="Collapse the side panel">panel &#8250;</button>
           </div>
         </div>
-        <div class="chart" id="chart" role="img" aria-label="Close price with risk-on signal markers. The side tables list the same signals as data."></div>
+        <div class="chart" id="chart" role="img" aria-label="Candlestick K-line chart with risk-on signal markers. The side tables list the same signals as data."></div>
       </div>
       <aside id="side-panel"></aside>
     </div>
@@ -176,7 +184,7 @@
           borderColor: palette.rule,
           minimumWidth: 64,
           mode: LightweightCharts.PriceScaleMode.Logarithmic,
-          scaleMargins: { top: 0.08, bottom: 0.08 },
+          scaleMargins: { top: 0.08, bottom: 0.14 },
         },
         timeScale: {
           borderColor: palette.rule,
@@ -189,9 +197,13 @@
         handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
         handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true } },
       });
-      const line = chart.addLineSeries({
-        color: palette.blue,
-        lineWidth: 1,
+      const candles = chart.addCandlestickSeries({
+        upColor: palette.green,
+        downColor: palette.red,
+        borderUpColor: palette.green,
+        borderDownColor: palette.red,
+        wickUpColor: palette.green,
+        wickDownColor: palette.red,
         priceLineVisible: false,
         lastValueVisible: false,
       });
@@ -199,6 +211,9 @@
       const cache = new Map();
       let activeMarket = "ndx";
       let currentData = null;
+      let span = 365;
+      let autoRefreshed = false;
+      let refreshing = false;
       let shown = { flags: [], data: null, market: "ndx" };
       let entryOf = {};
       let indexOf = {};
@@ -212,15 +227,62 @@
         return (value >= 0 ? "+" : "−") + size + " bp";
       };
 
+      function shiftIso(iso, days) {
+        const date = new Date(iso + "T00:00:00Z");
+        date.setUTCDate(date.getUTCDate() + days);
+        return date.toISOString().slice(0, 10);
+      }
+
+      function barIndexOnOrAfter(times, iso) {
+        let from = 0;
+        let lo = 0;
+        let hi = times.length - 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (times[mid] < iso) lo = mid + 1;
+          else { from = mid; hi = mid - 1; }
+        }
+        return from;
+      }
+
+      function applySpan() {
+        if (!currentData || !currentData.time.length) return;
+        const times = currentData.time;
+        if (!span) {
+          chart.timeScale().fitContent();
+          return;
+        }
+        const from = barIndexOnOrAfter(times, shiftIso(times[times.length - 1], -span));
+        chart.timeScale().setVisibleLogicalRange({ from, to: times.length - 1 });
+      }
+
+      function markerPalette(p) {
+        return p.dark
+          ? { fast: "#00e676", hit: "#ffab00", miss: "#94a3b8", pending: "#40c4ff" }
+          : { fast: "#00c853", hit: "#ff9100", miss: "#64748b", pending: "#0091ea" };
+      }
+
       function applyMarkers(flags, data, marketKey) {
         const cfg = MARKETS[marketKey];
-        const p = fcTheme.palette();
+        const mp = markerPalette(fcTheme.palette());
         const markers = [];
         entryOf = {};
         flags.forEach((flag, index) => {
-          if (!flag || data.outcome[index] === null || data.outcome[index] === undefined) return;
-          const when = cfg.markerOnEntryAt ? data.entry_at[index] : data.time[index];
+          if (!flag) return;
+          const resolved = data.outcome[index] !== null && data.outcome[index] !== undefined;
+          const when = cfg.markerOnEntryAt ? (data.entry_at[index] || data.time[index]) : data.time[index];
           if (!when) return;
+          if (!resolved) {
+            markers.push({
+              time: when,
+              position: "belowBar",
+              shape: "arrowUp",
+              size: 1.5,
+              color: mp.pending,
+              text: "BUY",
+            });
+            return;
+          }
           entryOf[when] = index;
           const hit = data.outcome[index] === 1;
           const fast = hit && data.hit3[index] === 1;
@@ -228,18 +290,31 @@
             time: when,
             position: "belowBar",
             shape: fast ? "arrowUp" : hit ? "circle" : "square",
-            size: !hit ? 0.65 : fast ? 1 : 0.9,
-            color: !hit ? p.grey : fast ? p.green : p.amber,
+            size: !hit ? 1.0 : fast ? 1.4 : 1.2,
+            color: !hit ? mp.miss : fast ? mp.fast : mp.hit,
           });
         });
         markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-        line.setMarkers(markers);
+        candles.setMarkers(markers);
         shown = { flags, data, market: marketKey };
+      }
+
+      function candleOptions(p, marketKey) {
+        const up = marketKey === "ssec" ? p.red : p.green;
+        const down = marketKey === "ssec" ? p.green : p.red;
+        return {
+          upColor: up,
+          downColor: down,
+          borderUpColor: up,
+          borderDownColor: down,
+          wickUpColor: up,
+          wickDownColor: down,
+        };
       }
 
       fcTheme.subscribe((p) => {
         chart.applyOptions(fcTheme.chartOptions(p));
-        line.applyOptions({ color: p.blue });
+        candles.applyOptions(candleOptions(p, activeMarket));
         if (shown.data) applyMarkers(shown.flags, shown.data, shown.market);
       });
 
@@ -252,39 +327,63 @@
         return null;
       }
 
+      function formatVol(v) {
+        if (v == null || !Number.isFinite(v)) return null;
+        if (v >= 1e9) return (v / 1e9).toFixed(2) + "B";
+        if (v >= 1e6) return (v / 1e6).toFixed(2) + "M";
+        if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+        return String(v);
+      }
+
       function describeDay(day) {
         const data = shown.data;
         if (!data || !day) return "";
         const index = indexOf[day];
         if (index === undefined) return "";
+
+        const c = data.close[index];
+        const o = data.open && data.open[index] != null ? data.open[index] : c;
+        const h = data.high && data.high[index] != null ? data.high[index] : Math.max(o, c);
+        const l = data.low && data.low[index] != null ? data.low[index] : Math.min(o, c);
+        const prevC = index > 0 && data.close[index - 1] != null ? data.close[index - 1] : o;
+        const chgPct = prevC ? ((c - prevC) / prevC) * 100 : 0;
+        const chgStr = (chgPct >= 0 ? "+" : "−") + Math.abs(chgPct).toFixed(2) + "%";
+        const ohlcParts = [
+          day,
+          "O " + o.toFixed(2) + " H " + h.toFixed(2) + " L " + l.toFixed(2) + " C " + c.toFixed(2) + " (" + chgStr + ")",
+        ];
+        const volStr = data.volume ? formatVol(data.volume[index]) : null;
+        if (volStr) ohlcParts.push("Vol " + volStr);
+
         const sig = entryOf[day];
         if (sig !== undefined) {
           const base = data.base_close[sig];
           const c3 = data.close3 ? data.close3[sig] : null;
           const c5 = data.close5 ? data.close5[sig] : null;
           const srcDate = shown.market === "ssec" ? data.us_date[sig] : data.time[sig];
-          const parts = [day, "basis close " + base.toFixed(2), "signal from " + srcDate];
+          ohlcParts.push("basis " + base.toFixed(2) + " (sig " + srcDate + ")");
           if (c3 !== null && c3 !== undefined && c5 !== null && c5 !== undefined) {
             const m = (val) => (val / base - 1 >= 0 ? "+" : "−") + Math.abs((val / base - 1) * 100).toFixed(2) + "%";
-            parts.push(
-              "day 3 " + c3.toFixed(2) + " (" + m(c3) + ")",
-              "day 5 " + c5.toFixed(2) + " (" + m(c5) + ")" +
+            ohlcParts.push(
+              "d3 " + c3.toFixed(2) + " (" + m(c3) + ")",
+              "d5 " + c5.toFixed(2) + " (" + m(c5) + ")" +
                 (c3 > base ? " → green" : c5 > base ? " → amber" : " → grey")
             );
           } else {
-            parts.push("check pending");
+            ohlcParts.push("check pending");
           }
-          return parts.join(" · ");
+          return ohlcParts.join(" · ");
         }
         if (shown.flags[index] === 1 && MARKETS[shown.market].markerOnEntryAt) {
           const next = data.entry[index];
-          return [day, "SIGNAL at this close", "filled at next open" +
-            (next != null ? ": " + next.toFixed(2) + " on " + data.entry_at[index] : "")].join(" · ");
+          ohlcParts.push("SIGNAL at close" +
+            (next != null ? " → next open " + next.toFixed(2) + " (" + data.entry_at[index] + ")" : ""));
+          return ohlcParts.join(" · ");
         }
-        return [day, "no signal · close " + data.close[index].toFixed(2)].join(" · ");
+        return ohlcParts.join(" · ");
       }
 
-      const IDLE_READOUT = "hover a session: its close, then the day-3 and day-5 closes";
+      const IDLE_READOUT = "hover a candle: open / high / low / close, plus day-3 and day-5 outcomes";
       chart.subscribeCrosshairMove((param) => {
         const text = describeDay(dayOf(param && param.time));
         document.querySelector("#readout").textContent = text || IDLE_READOUT;
@@ -518,6 +617,65 @@
         aside.scrollTop = 0;
       }
 
+      function beijingTodayInfo() {
+        const parts = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Shanghai",
+          year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
+        }).formatToParts(new Date());
+        const get = (t) => parts.find((p) => p.type === t).value;
+        const iso = get("year") + "-" + get("month") + "-" + get("day");
+        const isWeekday = !["Sat", "Sun"].includes(get("weekday"));
+        return { iso, isWeekday };
+      }
+
+      function updateLiveCall(flags, data, marketKey) {
+        const el = document.querySelector("#live-call");
+        if (!el || !data || !data.time.length) return;
+        const idx = data.time.length - 1;
+        const day = data.time[idx];
+        const sig = flags[idx] === 1;
+        const usRef = marketKey === "ssec" && data.latest && data.latest.us_date
+          ? " (依据美股 " + data.latest.us_date + ")"
+          : "";
+        el.style.color = sig ? "var(--green-text)" : "var(--muted)";
+        el.textContent = day + usRef + " → " + (sig ? "▲ 今日信号: 买入 (BUY)" : "今日信号: 观望 (NO SIGNAL)");
+      }
+
+      function beijingDateOf(isoTimestamp) {
+        if (!isoTimestamp) return null;
+        const d = new Date(isoTimestamp);
+        if (Number.isNaN(d.getTime())) return null;
+        const parts = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Shanghai",
+          year: "numeric", month: "2-digit", day: "2-digit",
+        }).formatToParts(d);
+        const get = (t) => parts.find((p) => p.type === t).value;
+        return get("year") + "-" + get("month") + "-" + get("day");
+      }
+
+      async function triggerRefresh(force) {
+        if (refreshing) return;
+        refreshing = true;
+        const btn = document.querySelector("#refresh-btn");
+        if (btn) { btn.disabled = true; btn.textContent = "刷新中…"; }
+        try {
+          const url = force ? "/api/refresh?force=1" : "/api/refresh";
+          const res = await fetch(url, { method: "POST" });
+          if (res.ok) {
+            const payload = await res.json();
+            if (!payload.cached) {
+              cache.clear();
+              await loadMarket(activeMarket);
+            }
+          }
+        } catch (_) {
+          // Static server without /api/refresh: ignore gracefully
+        } finally {
+          refreshing = false;
+          if (btn) { btn.disabled = false; btn.textContent = "↻ 刷新行情"; }
+        }
+      }
+
       async function loadMarket(marketKey) {
         const cfg = MARKETS[marketKey] || MARKETS.ndx;
         activeMarket = cfg.key;
@@ -557,16 +715,54 @@
         data.time.forEach((day, idx) => { indexOf[day] = idx; });
 
         document.querySelector("#question").textContent = data.question.text;
-        line.setData(data.time.map((time, idx) => ({ time, value: data.close[idx] })));
-        chart.timeScale().fitContent();
+        candles.applyOptions(candleOptions(fcTheme.palette(), cfg.key));
+        const ohlc = [];
+        data.time.forEach((time, idx) => {
+          const close = data.close[idx];
+          if (close == null) return;
+          const open = data.open && data.open[idx] != null ? data.open[idx] : close;
+          const high = data.high && data.high[idx] != null ? data.high[idx] : Math.max(open, close);
+          const low = data.low && data.low[idx] != null ? data.low[idx] : Math.min(open, close);
+          ohlc.push({ time, open, high, low, close });
+        });
+        candles.setData(ohlc);
+        requestAnimationFrame(applySpan);
 
         renderAside(cfg.key, data);
         initCtxbar(
           data,
-          (flags) => applyMarkers(flags, data, cfg.key),
+          (flags) => {
+            applyMarkers(flags, data, cfg.key);
+            updateLiveCall(flags, data, cfg.key);
+          },
           { marketKey: cfg.key }
         );
+
+        const bj = beijingTodayInfo();
+        const fetchedDay = beijingDateOf(data.fetched_at);
+        if (!autoRefreshed && (!fetchedDay || fetchedDay < bj.iso)) {
+          autoRefreshed = true;
+          triggerRefresh(false);
+        }
       }
+
+      const rangesEl = document.querySelector("#ranges");
+      if (rangesEl) {
+        rangesEl.addEventListener("click", (e) => {
+          const btn = e.target.closest("button");
+          if (!btn) return;
+          span = Number(btn.dataset.span);
+          rangesEl.querySelectorAll("button").forEach((b) => {
+            const isActive = b === btn;
+            b.classList.toggle("active", isActive);
+            b.setAttribute("aria-pressed", String(isActive));
+          });
+          applySpan();
+        });
+      }
+
+      const refreshBtn = document.querySelector("#refresh-btn");
+      if (refreshBtn) refreshBtn.addEventListener("click", () => triggerRefresh(true));
 
       document.querySelector("#market-tabs").addEventListener("click", (e) => {
         const btn = e.target.closest(".market-tab");

@@ -181,6 +181,10 @@ class Call:
     flag: int
     outcome: int | None
     target: str | None
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: int | None = None
     # 真正能成交的那个价：信号成立之后第一个交易日的开盘价。
     entry: float | None = None
     entry_at: str | None = None
@@ -362,11 +366,27 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
         opens = np.array(
             [np.nan if bar.open is None else bar.open for bar in series.bars], dtype=float
         )
+        highs = np.array(
+            [np.nan if bar.high is None else bar.high for bar in series.bars], dtype=float
+        )
+        lows = np.array(
+            [np.nan if bar.low is None else bar.low for bar in series.bars], dtype=float
+        )
+        volumes = [bar.volume for bar in series.bars]
     else:
         # 精确按日期取价：缺的那天就是「测不了」，不拿前一天的收盘顶替。
-        price = {bar.date.isoformat(): (bar.open, bar.close) for bar in target.bars}
-        opens = np.array([price.get(day, (np.nan, np.nan))[0] for day in dates], dtype=float)
-        closes = np.array([price.get(day, (np.nan, np.nan))[1] for day in dates], dtype=float)
+        def _num(val: float | None) -> float:
+            return np.nan if val is None else float(val)
+
+        price = {
+            bar.date.isoformat(): (bar.open, bar.high, bar.low, bar.close, bar.volume)
+            for bar in target.bars
+        }
+        opens = np.array([_num(price.get(day, (None,) * 5)[0]) for day in dates], dtype=float)
+        highs = np.array([_num(price.get(day, (None,) * 5)[1]) for day in dates], dtype=float)
+        lows = np.array([_num(price.get(day, (None,) * 5)[2]) for day in dates], dtype=float)
+        closes = np.array([_num(price.get(day, (None,) * 5)[3]) for day in dates], dtype=float)
+        volumes = [price.get(day, (None,) * 5)[4] for day in dates]
     calendar = _calendar_distance(root, dates)
     news, _ = _news_labels(root)
     keyword_features = _keyword_features(root, dates)
@@ -443,7 +463,11 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
         out.append(
             Call(
                 date=dates[i],
+                open=float(opens[i]) if np.isfinite(opens[i]) else None,
+                high=float(highs[i]) if np.isfinite(highs[i]) else None,
+                low=float(lows[i]) if np.isfinite(lows[i]) else None,
                 close=float(closes[i]),
+                volume=volumes[i],
                 entry=float(entry[i]) if resolved else None,
                 entry_at=entry_at[i],
                 base_close=float(base_close[i]) if resolved else None,
@@ -638,7 +662,11 @@ def document(
         "calendar": _calendar_provenance(root),
         "news": news_provenance,
         "time": [row.date for row in rows],
-        "close": [round(row.close, 2) for row in rows],
+        "open": [round(row.open, 2) if row.open is not None else None for row in rows],
+        "high": [round(row.high, 2) if row.high is not None else None for row in rows],
+        "low": [round(row.low, 2) if row.low is not None else None for row in rows],
+        "close": [round(row.close, 2) if np.isfinite(row.close) else None for row in rows],
+        "volume": [row.volume for row in rows],
         "entry": [round(row.entry, 2) if row.entry is not None else None for row in rows],
         "entry_at": [row.entry_at for row in rows],
         "base_close": [round(row.base_close, 2) if row.base_close is not None else None for row in rows],
@@ -678,7 +706,11 @@ def document(
         "context": _runtime_context(root),
         "latest": {
             "date": rows[-1].date,
-            "close": round(rows[-1].close, 2),
+            "open": round(rows[-1].open, 2) if rows[-1].open is not None else None,
+            "high": round(rows[-1].high, 2) if rows[-1].high is not None else None,
+            "low": round(rows[-1].low, 2) if rows[-1].low is not None else None,
+            "close": round(rows[-1].close, 2) if np.isfinite(rows[-1].close) else None,
+            "volume": rows[-1].volume,
             "score": round(rows[-1].score, 4),
             "threshold": round(rows[-1].threshold, 4),
             "flag": rows[-1].flag,

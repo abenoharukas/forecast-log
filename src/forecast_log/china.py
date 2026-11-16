@@ -58,18 +58,23 @@ class Entry:
     peak_at: str | None
 
 
-def _sessions(series: Series) -> tuple[list[str], np.ndarray, np.ndarray]:
+def _sessions(
+    series: Series,
+) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[int | None]]:
     dates = [bar.date.isoformat() for bar in series.bars]
     closes = np.array([bar.close for bar in series.bars], dtype=float)
     opens = np.array([np.nan if bar.open is None else bar.open for bar in series.bars], dtype=float)
-    return dates, opens, closes
+    highs = np.array([np.nan if bar.high is None else bar.high for bar in series.bars], dtype=float)
+    lows = np.array([np.nan if bar.low is None else bar.low for bar in series.bars], dtype=float)
+    volumes = [bar.volume for bar in series.bars]
+    return dates, opens, highs, lows, closes, volumes
 
 
 def entries(root: Path) -> list[Entry]:
     """信号来自 `artifacts/cross.json`（美股日历），只把入场日和窗口换成 A 股的。"""
     signal_doc = json.loads((root / "artifacts" / "cross.json").read_text())
     series = load_series(series_path(root, TARGET))
-    dates, opens, closes = _sessions(series)
+    dates, opens, _highs, _lows, closes, _volumes = _sessions(series)
     n = len(dates)
 
     peak = np.full(n, np.nan)
@@ -147,7 +152,7 @@ def document(root: Path) -> dict:
     """页面用的那一份：信号原封不动，换的只有入场日和窗口。"""
     signal_doc = json.loads((root / "artifacts" / "cross.json").read_text())
     series = load_series(series_path(root, TARGET))
-    dates, opens, closes = _sessions(series)
+    dates, opens, highs, lows, closes, volumes = _sessions(series)
     n = len(dates)
     rows = entries(root)
 
@@ -168,7 +173,8 @@ def document(root: Path) -> dict:
 
     position = {day: index for index, day in enumerate(dates)}
     flagged = {position[row.date] for row in rows if row.outcome is not None}
-    signal_of = {position[row.date]: row.us_date for row in rows if row.outcome is not None}
+    all_flagged = {position[row.date] for row in rows}
+    signal_of = {position[row.date]: row.us_date for row in rows}
     # 只从美股信号文档覆盖的第一天开始画：那之前这条规则对 A 股没有任何发言权。
     first = int(np.searchsorted(np.array(dates), signal_doc["time"][0], side="left"))
     kept = list(range(first, n))
@@ -249,14 +255,17 @@ def document(root: Path) -> dict:
         "first_session": dates[first] if kept else None,
         "last_session": dates[-1],
         "time": [dates[i] for i in kept],
-        "close": [round(float(closes[i]), 2) for i in kept],
         "open": [round(float(opens[i]), 2) if np.isfinite(opens[i]) else None for i in kept],
-        "entry": [round(float(opens[i]), 2) if i in flagged else None for i in kept],
+        "high": [round(float(highs[i]), 2) if np.isfinite(highs[i]) else None for i in kept],
+        "low": [round(float(lows[i]), 2) if np.isfinite(lows[i]) else None for i in kept],
+        "close": [round(float(closes[i]), 2) for i in kept],
+        "volume": [volumes[i] for i in kept],
+        "entry": [round(float(opens[i]), 2) if i in all_flagged else None for i in kept],
         "base_close": [round(float(base_close[i]), 2) if i in flagged else None for i in kept],
         "close3": [round(float(close3[i]), 2) if i in flagged else None for i in kept],
         "close5": [round(float(close5[i]), 2) if i in flagged else None for i in kept],
         "hit3": [int(close3[i] > base_close[i]) if i in flagged else None for i in kept],
-        "flag": [1 if i in flagged else 0 for i in kept],
+        "flag": [1 if i in all_flagged else 0 for i in kept],
         "us_date": [signal_of.get(i) for i in kept],
         "outcome": [int(close5[i] > base_close[i]) if np.isfinite(peak[i]) else None for i in kept],
         "peak": [round(float(peak[i]), 2) if np.isfinite(peak[i]) else None for i in kept],
@@ -340,7 +349,15 @@ def document(root: Path) -> dict:
         },
         "latest": {
             "date": dates[-1],
+            "open": round(float(opens[-1]), 2) if np.isfinite(opens[-1]) else None,
+            "high": round(float(highs[-1]), 2) if np.isfinite(highs[-1]) else None,
+            "low": round(float(lows[-1]), 2) if np.isfinite(lows[-1]) else None,
             "close": round(float(closes[-1]), 2),
+            "volume": volumes[-1],
+            "us_date": signal_doc["time"][int(np.searchsorted(signal_doc["time"], dates[-1], side="left")) - 1]
+            if signal_doc["time"] and int(np.searchsorted(signal_doc["time"], dates[-1], side="left")) > 0
+            else None,
+            "flag": int(kept[-1] in all_flagged) if kept else 0,
         },
         "signals_seen": len(rows),
     }

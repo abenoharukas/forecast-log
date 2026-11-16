@@ -24,7 +24,8 @@ from pathlib import Path
 import numpy as np
 
 from forecast_log.agent.gate import AsOf, LookAheadError, check_bars
-from forecast_log.bars import Series, load_series
+from forecast_log.bars import Series, has_series, load_series
+from forecast_log.db import db_path, list_db_symbols, load_all_news_items
 from forecast_log.estimate import AnalogModel
 from forecast_log.paths import series_path
 
@@ -56,13 +57,15 @@ class ToolOutcome:
 
 
 def available_symbols(root: Path) -> list[str]:
-    found = []
-    for path in sorted((root / "data" / "raw").glob("*.json")):
-        try:
-            found.append(str(json.loads(path.read_text())["symbol"]))
-        except (json.JSONDecodeError, KeyError):
-            continue
-    return found
+    found = set(list_db_symbols(root))
+    raw_dir = root / "data" / "raw"
+    if raw_dir.is_dir():
+        for path in sorted(raw_dir.glob("*.json")):
+            try:
+                found.add(str(json.loads(path.read_text())["symbol"]))
+            except (json.JSONDecodeError, KeyError):
+                continue
+    return sorted(found)
 
 
 @dataclass
@@ -109,12 +112,11 @@ class Toolbox:
     def series(self, symbol: str) -> Series:
         symbol = str(symbol)
         if symbol not in self._series:
-            path = series_path(self.root, symbol)
-            if not path.is_file():
+            if not has_series(self.root, symbol):
                 raise UnknownSymbol(
                     f"{symbol!r} is not fetched; available: {', '.join(available_symbols(self.root))}"
                 )
-            self._series[symbol] = load_series(path)
+            self._series[symbol] = load_series(series_path(self.root, symbol))
         return self._series[symbol]
 
     def visible(self, symbol: str) -> tuple[list[date], np.ndarray]:
@@ -294,6 +296,16 @@ class Toolbox:
     # ------------------------------------------------------------------- corpus
 
     def _load_news(self) -> list[dict]:
+        default_dir = self.root / "data" / "news"
+        if self.news_dir == default_dir and db_path(self.root).is_file():
+            rows = load_all_news_items(self.root)
+            if rows:
+                for row in rows:
+                    published = datetime.fromisoformat(row["published_at"])
+                    if published.tzinfo is None:
+                        raise ValueError(f"news {row.get('id', '?')}: published_at needs a timezone")
+                    self.as_of.check_published(published, f"news {row.get('id', '?')}")
+                return rows
         if self.news_dir is None or not self.news_dir.is_dir():
             return []
         documents = []

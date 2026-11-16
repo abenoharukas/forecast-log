@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from forecast_log.bars import Series, load_series
+from forecast_log.bars import Series, has_series, load_series
 from forecast_log.paths import series_path
 
 FEATURE_SYMBOLS = ("^VIX9D", "^VIX3M", "^VVIX")
@@ -26,7 +26,7 @@ LONG_LOOKBACK = 252
 
 
 def missing(root: Path) -> list[str]:
-    return [symbol for symbol in FEATURE_SYMBOLS if not series_path(root, symbol).is_file()]
+    return [symbol for symbol in FEATURE_SYMBOLS if not has_series(root, symbol)]
 
 
 def _aligned(series: Series, dates: list[date]) -> np.ndarray:

@@ -14,7 +14,7 @@ from forecast_log.backtest import (
     timeline_document,
     write_report,
 )
-from forecast_log.bars import bar_on, last_completed_bar, load_series, save_series
+from forecast_log.bars import bar_on, has_series, last_completed_bar, load_series, save_series
 from forecast_log.estimate import STATE_LOOKBACKS, estimate
 from forecast_log.china import CHINA_SYMBOLS, document as china_document
 from forecast_log.cross import CROSS_SYMBOLS, comparison, document as cross_document
@@ -125,7 +125,7 @@ def cross_command(root: Path) -> dict:
     )
     for symbol in COMPARE_SYMBOLS:
         compare_path = series_path(root, symbol)
-        if not compare_path.is_file():
+        if not has_series(root, symbol):
             print(f"{symbol} 还没取，跳过对照（forecast-log fetch）")
             continue
         # 信号还是那一条：只把入场/出场价换成这只标的的收盘。
@@ -154,8 +154,7 @@ def cross_command(root: Path) -> dict:
             f"  判定不一致 {len(other['comparison']['disagreements'])} 天，写在 {other_path}"
         )
     # A 股那一份：信号一个字不改，只换了入场的市场。
-    ssec_path = series_path(root, "000001.SS")
-    if ssec_path.is_file():
+    if has_series(root, "000001.SS"):
         study = china_document(root)
         study_path = root / "artifacts" / "cross_ssec.json"
         write_report(study_path, study, indent=None)
@@ -354,7 +353,7 @@ def reference_text(report: dict) -> str:
 
 
 def _load_both(root: Path):
-    missing = [symbol for symbol in SYMBOLS if not series_path(root, symbol).exists()]
+    missing = [symbol for symbol in SYMBOLS if not has_series(root, symbol)]
     if missing:
         raise SystemExit("还没有日线缓存。先运行 forecast-log fetch")
     return load_series(series_path(root, "^VXN")), load_series(series_path(root, "^NDX"))

@@ -132,11 +132,16 @@ def parse_current_events(wikitext: str) -> list[dict]:
 
 
 def fetch_day(root: Path, day: date, pace: float = 0.0, attempts: int = 4) -> dict:
-    """一天一页，写 `data/news/<day>.json`；文件已经在就直接返回。
+    """一天一页，写入 SQLite；数据库或旧 JSON 已经在就直接返回。
 
-    只有真的取到页面才落盘：429 / 网络错误不写文件，这样下次重跑会重试那一天，
+    只有真的取到页面才落库：429 / 网络错误不写，这样下次重跑会重试那一天，
     不会把「限流」永久记成「这天没新闻」。
     """
+    from forecast_log.db import get_news_fetch, save_news_fetch
+
+    cached = get_news_fetch(root, day)
+    if cached is not None:
+        return cached
     path = day_dir(root) / f"{day.isoformat()}.json"
     if path.is_file():
         return json.loads(path.read_text())
@@ -173,16 +178,18 @@ def fetch_day(root: Path, day: date, pace: float = 0.0, attempts: int = 4) -> di
     }
     if error and not wikitext:
         return record
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(record, ensure_ascii=False))
+    save_news_fetch(root, record)
     if pace:
         time.sleep(pace)
     return record
 
 
 def backfill_batch(root: Path, days: list[date], batch: int = 40, pace: float = 1.5) -> dict:
-    """按批补：一批 40 天一次请求，写完按天落盘。中断重跑只补缺的那些天。"""
-    todo = [day for day in days if not (day_dir(root) / f"{day.isoformat()}.json").is_file()]
+    """按批补：一批 40 天一次请求，写完按天落库。中断重跑只补缺的那些天。"""
+    from forecast_log.db import existing_news_dates, save_news_fetch
+
+    have_db = existing_news_dates(root)
+    todo = [day for day in days if day.isoformat() not in have_db and not (day_dir(root) / f"{day.isoformat()}.json").is_file()]
     stats = {"requested": len(days), "already": len(days) - len(todo), "ok": 0, "empty": 0, "failed": 0, "errors": []}
     for start in range(0, len(todo), batch):
         group = todo[start : start + batch]
@@ -222,17 +229,19 @@ def backfill_batch(root: Path, days: list[date], batch: int = 40, pace: float = 
                 "status": "ok" if items else "empty",
                 "error": "",
             }
-            (day_dir(root) / f"{day.isoformat()}.json").write_text(json.dumps(record, ensure_ascii=False))
+            save_news_fetch(root, record)
             stats["ok" if items else "empty"] += 1
         time.sleep(pace)
     return stats
 
 
 def backfill_days(root: Path, days: list[date], workers: int = 3) -> dict:
-    """并发补多天。按天写文件、按天跳过，中断了重跑只补缺的那几天。"""
+    """并发补多天。按天入库、按天跳过，中断了重跑只补缺的那几天。"""
     from concurrent.futures import ThreadPoolExecutor
+    from forecast_log.db import existing_news_dates
 
-    todo = [day for day in days if not (day_dir(root) / f"{day.isoformat()}.json").is_file()]
+    have_db = existing_news_dates(root)
+    todo = [day for day in days if day.isoformat() not in have_db and not (day_dir(root) / f"{day.isoformat()}.json").is_file()]
     stats = {
         "requested": len(days),
         "already": len(days) - len(todo),
@@ -266,17 +275,21 @@ def trading_days(root: Path, symbol: str = "^NDX") -> list[date]:
 
 def coverage(root: Path, days: list[date] | None = None) -> dict:
     """按年统计有新闻的天数；给了交易日列表，就把缺哪几天也算出来。"""
-    by_year: dict[str, int] = {}
-    for path in sorted(day_dir(root).glob("????-??-??.json")):
-        try:
-            record = json.loads(path.read_text())
-        except json.JSONDecodeError:
-            continue
-        if record.get("documents"):
-            by_year[path.stem[:4]] = by_year.get(path.stem[:4], 0) + 1
+    from forecast_log.db import existing_news_dates, news_coverage_stats
+
+    by_year = news_coverage_stats(root)
+    have = existing_news_dates(root)
+    if not by_year and day_dir(root).is_dir():
+        for path in sorted(day_dir(root).glob("????-??-??.json")):
+            try:
+                record = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            if record.get("documents"):
+                by_year[path.stem[:4]] = by_year.get(path.stem[:4], 0) + 1
+        have = {path.stem for path in day_dir(root).glob("????-??-??.json")}
     out: dict = {"days_with_news": sum(by_year.values()), "by_year": dict(sorted(by_year.items()))}
     if days is not None:
-        have = {path.stem for path in day_dir(root).glob("????-??-??.json")}
         missing = [day.isoformat() for day in days if day.isoformat() not in have]
         out["trading_days"] = len(days)
         out["trading_days_with_news"] = len(days) - len(missing)

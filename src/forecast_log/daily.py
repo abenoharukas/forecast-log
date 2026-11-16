@@ -184,12 +184,18 @@ def _parse_rss_date(text: str) -> date | None:
 def fetch_news(root: Path, day: date, lookback: int = LOOKBACK_DAYS, use_cache: bool = True) -> dict:
     """当天为止的标题。先问 GDELT（能按日期取历史），被限流就退回 RSS。
 
-    缓存到 `data/news/<day>.json`，同一天重跑不发请求。
+    缓存到 SQLite（`data/forecast.db`），同一天重跑不发请求；旧 JSON 目录仍可作回退读取。
     """
-    cache = root / "data" / "news" / f"{day.isoformat()}.json"
-    if use_cache and cache.is_file():
-        record = json.loads(cache.read_text())
-        return {**record, "cached": True}
+    from forecast_log.db import get_news_fetch, save_news_fetch
+
+    if use_cache:
+        cached = get_news_fetch(root, day)
+        if cached is not None:
+            return cached
+        cache = root / "data" / "news" / f"{day.isoformat()}.json"
+        if cache.is_file():
+            record = json.loads(cache.read_text())
+            return {**record, "cached": True}
 
     documents: list[dict] = []
     errors: list[str] = []
@@ -230,8 +236,7 @@ def fetch_news(root: Path, day: date, lookback: int = LOOKBACK_DAYS, use_cache: 
         "errors": errors,
         "cached": False,
     }
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+    save_news_fetch(root, record)
     return record
 
 

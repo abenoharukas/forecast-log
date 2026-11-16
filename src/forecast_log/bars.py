@@ -54,8 +54,29 @@ def validate_bars(bars: tuple[Bar, ...] | list[Bar]) -> None:
         raise ValueError("volumes must be non-negative when present")
 
 
+def _root_from_series_path(path: Path) -> Path | None:
+    if path.parent.name == "raw" and path.parent.parent.name == "data":
+        return path.parent.parent.parent
+    return None
+
+
+def has_series(root: Path, symbol: str) -> bool:
+    from forecast_log.db import has_series_in_db
+    from forecast_log.paths import series_path
+
+    if has_series_in_db(root, symbol):
+        return True
+    return series_path(root, symbol).is_file()
+
+
 def save_series(path: Path, series: Series) -> None:
     validate_bars(series.bars)
+    root = _root_from_series_path(path)
+    if root is not None:
+        from forecast_log.db import upsert_series
+
+        upsert_series(root, series)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "symbol": series.symbol,
@@ -77,6 +98,13 @@ def save_series(path: Path, series: Series) -> None:
 
 
 def load_series(path: Path) -> Series:
+    root = _root_from_series_path(path)
+    if root is not None:
+        from forecast_log.db import get_series_by_slug
+
+        loaded = get_series_by_slug(root, path.stem)
+        if loaded is not None:
+            return loaded
     payload = json.loads(path.read_text())
     bars = tuple(
         Bar(

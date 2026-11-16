@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Forecast-log agent scoreboard: Brier, log loss, calibration and cost for every forecaster on the same resolved questions.">
+  <meta name="description" content="Forecast-log agent scoreboard: every question, every forecast, and the total Brier score on the same resolved questions.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>forecast-log · agent evaluation</title>
@@ -15,11 +15,14 @@
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Newsreader", Palatino, serif; }
-    main { padding: 16px 20px 20px; max-width: 1400px; margin: 0 auto; }
+    main { padding: 16px 20px 20px; max-width: 1500px; margin: 0 auto; }
     header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
     h1 { margin: 0; font-weight: 480; font-size: clamp(1.3rem, 1rem + 1vw, 1.75rem); letter-spacing: -0.03em; text-wrap: balance; }
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
-    .board { margin-top: 14px; display: flex; gap: 12px; align-items: flex-start; }
+    .peer-title { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; font-weight: 500; color: var(--muted); margin: 18px 0 6px; }
+    .board { margin-top: 0; display: flex; gap: 12px; align-items: flex-start; }
+    .table-scroll { overflow-x: auto; }
+    .table-scroll th, .table-scroll td { padding-left: 7px; padding-right: 7px; }
     .pane { flex: 1; min-width: 0; background: var(--sheet); border: 1px solid var(--rule); }
     aside { width: 430px; flex: none; background: var(--sheet); border: 1px solid var(--rule); padding: 10px 12px; overflow: auto; }
     .pane-head, aside h2 {
@@ -50,6 +53,30 @@
     .bar { display: inline-block; height: 7px; background: var(--blue); vertical-align: middle; }
     .bar.over { background: var(--red); }
     .empty { padding: 16px 12px; color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; }
+
+    /* The exam paper: one row per question, one column per forecaster. */
+    .search {
+      width: 100%; max-width: 280px; margin-left: auto; display: block;
+      font: inherit; font-size: 12px; color: var(--ink); background: var(--paper);
+      border: 1px solid var(--rule); padding: 5px 8px;
+    }
+    .exam-scroll { max-height: 70vh; overflow: auto; }
+    .exam { font-size: 12px; }
+    .exam th, .exam td { padding: 4px 8px; }
+    .exam thead th { position: sticky; top: 0; background: var(--sheet); z-index: 1; }
+    .exam th.q, .exam td.q { text-align: left; white-space: normal; min-width: 360px; }
+    .exam td.q .id { display: block; color: var(--muted); font-size: 10.5px; }
+    .nw { white-space: nowrap; }
+    .exam td.q .txt { font-size: 11.5px; line-height: 1.35; }
+    .exam td.p, .exam th.p { text-align: right; }
+    .exam td.best { color: var(--green-text); font-weight: 600; }
+    .exam tr.unscored { color: var(--muted); }
+    .exam tr.unscored td.best { color: var(--muted); }
+    .tag {
+      display: inline-block; margin-left: 6px; padding: 0 4px;
+      border: 1px solid var(--rule); font-size: 9.5px; color: var(--muted);
+    }
+    .exam-foot { padding: 7px 12px; border-top: 1px solid var(--rule); }
     @media (max-width: 1000px) { .board { flex-direction: column; } aside { width: auto; } }
   </style>
 </head>
@@ -60,10 +87,27 @@
       <span class="sub" id="config">loading artifacts/agent_eval_summary.json…</span>
       <span class="sub" id="stamp"></span>
     </header>
+
+    <section class="pane" style="margin-top:14px">
+      <div class="pane-head" style="display:flex;align-items:center;gap:12px">
+        <span id="exam-title">The exam paper · every question, every answer</span>
+        <input class="search" id="search" type="search" placeholder="filter: 2005, quantile, h10…" aria-label="Filter questions">
+      </div>
+      <div class="exam-scroll">
+        <table class="exam">
+          <caption class="visually-hidden">Every question in the bench, with each forecaster's probability, the actual outcome and who was closest</caption>
+          <thead><tr id="exam-head"></tr></thead>
+          <tbody id="exam-rows"></tbody>
+        </table>
+      </div>
+      <div class="note exam-foot" id="exam-foot"></div>
+    </section>
+
+    <h2 class="peer-title" id="total-title">Total score</h2>
     <div class="board">
       <div class="pane">
-        <div class="pane-head">Identical resolved questions; every forecaster answers all of them</div>
-        <table>
+        <div class="pane-head" id="total-head">Identical resolved questions; every forecaster answers all of them</div>
+        <div class="table-scroll"><table>
           <caption class="visually-hidden">Forecast accuracy for every model on the same resolved questions</caption>
           <thead>
             <tr>
@@ -72,7 +116,7 @@
             </tr>
           </thead>
           <tbody id="rows"></tbody>
-        </table>
+        </table></div>
         <div class="empty" id="foot"></div>
       </div>
       <aside>
@@ -94,19 +138,94 @@
       level: "spot level", quantile: "60th percentile",
       band_up: "+5%", band_down: "−5%",
     };
-    let report = null, picked = null;
+    let report = null, picked = null, scored = new Set();
 
-    // Short column labels for the family table; the long names wrap the aside.
+    // Stable column order: baselines first, then the four agent variants.
+    const RANK = (name) => {
+      if (name.startsWith("constant")) return 0;
+      if (name.startsWith("base rate")) return 1;
+      if (name.startsWith("analogue")) return 2;
+      if (name.includes("blind")) return 6;
+      if (name.includes("deepseek-chat")) return 3;
+      if (name.includes("flash")) return 4;
+      if (name.includes("v4-pro")) return 5;
+      return 7;
+    };
     const SHORT = (name) => {
-      if (name.includes("blind")) return "agent blind";
-      if (name.startsWith("agent")) return "agent";
+      if (name.includes("blind")) return "blind";
+      if (name.startsWith("agent ")) return name.replace(/^agent /, "").replace("deepseek-", "").replace("@api.deepseek.com", "");
       if (name.startsWith("analogue")) return "analogue";
       if (name.startsWith("base rate")) return "base rate";
-      if (name.startsWith("constant")) return "constant (0.5)";
-      return name.replace(/^agent /, "").replace("@api.deepseek.com", "");
+      if (name.startsWith("constant")) return "constant 0.5";
+      return name;
     };
     const fmt = (value, digits = 4) => (value === undefined || value === null ? "—" : Number(value).toFixed(digits));
     const pct = (value) => (value === undefined || value === null ? "—" : (value * 100).toFixed(0) + "%");
+    const escapeHtml = (text) => String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    // Keep ISO dates and decimal thresholds on one line; otherwise the cell breaks
+    // "2003-01-28" across two lines and the question becomes hard to read.
+    const wrapTokens = (text) => escapeHtml(text)
+      .replace(/(\d{4}-\d{2}-\d{2})/g, '<span class="nw">$1</span>')
+      .replace(/(?<![\w.])(\d+\.\d+)(?![\w.])/g, '<span class="nw">$1</span>');
+
+    function columnNames() {
+      return Object.keys(report.predictors).sort((a, b) => RANK(a) - RANK(b) || a.localeCompare(b));
+    }
+
+    function drawExam() {
+      const meta = report.question_meta || {};
+      const names = columnNames();
+      const query = (document.querySelector("#search").value || "").trim().toLowerCase();
+      const ids = (report.bench || []).slice().sort((a, b) => {
+        const A = meta[a] || {}, B = meta[b] || {};
+        return String(A.as_of || "").localeCompare(String(B.as_of || ""))
+          || (A.horizon || 0) - (B.horizon || 0)
+          || String(A.family || "").localeCompare(String(B.family || ""))
+          || a.localeCompare(b);
+      });
+
+      document.querySelector("#exam-head").innerHTML =
+        `<th scope="col">#</th><th scope="col" class="q">Question</th><th scope="col">Resolve</th><th scope="col">Truth</th>` +
+        names.map((name) => `<th scope="col" class="p">${escapeHtml(SHORT(name))}</th>`).join("");
+
+      const shown = ids.filter((id) => {
+        if (!query) return true;
+        const row = meta[id] || {};
+        return [id, row.text, row.family, row.as_of, row.resolve_session].join(" ").toLowerCase().includes(query);
+      });
+
+      const body = document.querySelector("#exam-rows");
+      body.innerHTML = shown.map((id, index) => {
+        const row = meta[id] || {};
+        const outcome = row.outcome !== undefined ? row.outcome : report.outcomes[id];
+        const answers = (name) => (report.predictors[name].answers || report.predictors[name].pairs || {});
+        const cells = names.map((name) => {
+          const p = answers(name)[id];
+          if (p === undefined || p === null) return `<td class="p">—</td>`;
+          const brier = (p - outcome) ** 2;
+          const others = names
+            .map((other) => answers(other)[id])
+            .filter((value) => value !== undefined && value !== null)
+            .map((value) => (value - outcome) ** 2);
+          const isBest = brier === Math.min(...others);
+          return `<td class="p ${isBest ? "best" : ""}" title="Brier ${brier.toFixed(3)}">${Number(p).toFixed(2)}</td>`;
+        }).join("");
+        const notScored = !scored.has(id);
+        const text = row.text || id;
+        return `<tr class="${notScored ? "unscored" : ""}">` +
+          `<td>${index + 1}</td>` +
+          `<td class="q"><span class="id">${escapeHtml(id)}</span><span class="txt">${wrapTokens(text)}</span>` +
+          `${notScored ? '<span class="tag">not scored</span>' : ""}</td>` +
+          `<td>${escapeHtml(row.resolve_session || "")}</td>` +
+          `<td>${outcome === 1 ? "yes" : "no"}</td>` +
+          cells +
+          `</tr>`;
+      }).join("");
+
+      document.querySelector("#exam-foot").textContent =
+        `${ids.length} questions asked · ${scored.size} scored in the total below · ` +
+        `showing ${shown.length} · green = closest probability on that question · — = no answer submitted`;
+    }
 
     function drawRows() {
       const body = document.querySelector("#rows");
@@ -137,10 +256,8 @@
       const reference = report.references || {};
       const when = report.generated_at ? new Date(report.generated_at).toLocaleString("zh-CN") : "";
       document.querySelector("#stamp").textContent = when;
-      const shared = report.scored_on_shared;
       document.querySelector("#foot").textContent =
-        `${report.n} questions${shared && shared !== report.n ? " (all rows scored on the same " + shared + ")" : ""}; ` +
-        `realised resolution rate ${pct(reference.observed_rate)}; ` +
+        `${report.n} scored questions; realised resolution rate ${pct(reference.observed_rate)}; ` +
         `constant-0.5 Brier ${fmt((reference["constant_0.5"] || {}).brier)}`;
     }
 
@@ -162,7 +279,7 @@
       let html = "<thead><tr><th scope=\"col\">Probability bin</th><th scope=\"col\">n</th><th scope=\"col\">Mean forecast</th><th scope=\"col\">Realised</th><th scope=\"col\">Bias</th></tr></thead><tbody>";
       (row.reliability || []).forEach((bin) => {
         const gap = Math.abs(bin.mean_predicted - bin.observed);
-        const width = Math.max(1, Math.round(gap * 260));
+        const width = Math.min(90, Math.max(1, Math.round(gap * 160)));
         const cls = bin.mean_predicted > bin.observed ? "over" : "";
         html +=
           `<tr><th scope="row">${bin.bin}</th><td>${bin.n}</td>` +
@@ -216,19 +333,34 @@
       .then((response) => response.json())
       .then((data) => {
         report = data;
-        const names = Object.keys(report.predictors);
-        picked = names.sort((a, b) => report.predictors[a].brier - report.predictors[b].brier)[0];
+        // The total below is computed on questions every forecaster answered.
+        const covered = Object.values(report.predictors)
+          .map((row) => new Set(Object.keys(row.pairs || {})))
+          .filter((set) => set.size);
+        scored = covered.length ? new Set([...covered[0]].filter((id) => covered.every((set) => set.has(id)))) : new Set();
+
+        picked = Object.keys(report.predictors)
+          .sort((a, b) => report.predictors[a].brier - report.predictors[b].brier)[0];
         const config = report.config || {};
         const models = config.models_merged;
-        const modelLabel = models && models.length > 1
-          ? `${models.length} models: ${models.join(", ")}`
+        const modelNames = [...new Set(models || [])];
+        const modelLabel = modelNames.length > 1
+          ? `${modelNames.length} models + blind: ${modelNames.join(", ")}`
           : (config.model || "no model");
         document.querySelector("#config").textContent =
-          `${config.symbol} · ${report.n} questions · ${modelLabel} · ${config.modes.join("/")}`;
+          `${config.symbol} · ${(report.bench || []).length} questions asked · ${report.n} scored · ${modelLabel} · ${config.modes.join("/")}`;
+        document.querySelector("#total-head").textContent =
+          `Every forecaster, same ${report.n} questions`;
+        document.querySelector("#total-title").textContent = `Total score · ${report.n} questions`;
+        document.querySelector("#exam-title").textContent =
+          `The exam paper · ${(report.bench || []).length} questions, one row each`;
+
+        drawExam();
         drawRows();
         drawReliability();
         drawFamilies();
         drawNotes();
+        document.querySelector("#search").addEventListener("input", drawExam);
       })
       .catch(() => {
         document.querySelector("#config").textContent = "agent_eval_summary.json not available: run forecast-log agent-eval";

@@ -428,6 +428,20 @@ def evaluate(
         "n": len(ordered),
         "questions": [row.id for row in ordered],
         "outcomes": {row.id: row.outcome for row in ordered},
+        "question_meta": {
+            row.id: {
+                "text": row.question.text,
+                "symbol": row.question.symbol,
+                "as_of": row.as_of.isoformat(),
+                "as_of_close": round(row.as_of_close, 2),
+                "resolve_session": row.question.resolve_session.isoformat(),
+                "horizon": row.question.horizon_sessions,
+                "threshold": row.question.threshold,
+                "family": row.family,
+                "outcome": int(row.outcome),
+            }
+            for row in questions
+        },
         "predictors": {},
     }
     for name, entry in results.items():

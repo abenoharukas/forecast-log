@@ -174,6 +174,7 @@ def _merge_previous(path: Path, report: dict) -> dict:
         raise SystemExit("拒绝合并：题集不同。用同一个 --symbol/--stride/--limit/--modes 重跑。")
 
     outcomes = {**previous.get("outcomes", {}), **report.get("outcomes", {})}
+    meta = {**previous.get("question_meta", {}), **report.get("question_meta", {})}
     model = str((report.get("config") or {}).get("model") or "agent").split("@")[0]
 
     merged: dict[str, dict] = dict(previous.get("predictors") or {})
@@ -200,6 +201,7 @@ def _merge_previous(path: Path, report: dict) -> dict:
     report["predictors"] = merged
     report["traces"] = traces
     report["outcomes"] = outcomes
+    report["question_meta"] = meta
     report["n"] = len(shared) or report.get("n")
     report["scored_on_shared"] = len(shared)
     report["config"] = {

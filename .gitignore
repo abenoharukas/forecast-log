@@ -9,6 +9,5 @@ artifacts/news_labels/
 artifacts/surprise/
 .claude/
 .codegraph/
-data/forecast.db
 data/forecast.db-wal
 data/forecast.db-shm

@@ -6,11 +6,10 @@ Design notes worth defending in a review:
   transcript, corrects itself, and the trace keeps the evidence that the gate fired.
 - `analogue_forecast` is the old model, demoted from "the answer" to "one input". The
   agent has to decide whether to trust it, which is the actual skill being hired for.
-- News search is behind an interface with a null implementation. The repo has no
-  licensed feed and no search key, so `search_news` returns an empty corpus and says so.
-  The agent then has to say it is pricing from prices alone, instead of inventing a
-  headline. Wiring a real provider is one class; the eval deliberately measures the
-  price-only path.
+- News search reads from `news_items` in `data/forecast.db` (falling back to
+  `data/news/*.json` if the DB is absent) and gates every headline on `published_at`.
+  When no corpus is present (e.g. in isolated tests), `search_news` returns an empty
+  list and says so explicitly so the agent discloses it is pricing from prices alone.
 """
 
 from __future__ import annotations
@@ -238,8 +237,8 @@ class Toolbox:
                 "query": query,
                 "documents": [],
                 "note": (
-                    "no news corpus is configured in this repo (data/news/*.json is absent), "
-                    "so price data is the only evidence available for this question"
+                    "no news corpus is available for this run (neither data/forecast.db nor "
+                    "data/news/*.json has documents), so price data is the only evidence available"
                 ),
             }
         terms = [term for term in str(query).lower().split() if term]

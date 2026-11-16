@@ -90,18 +90,13 @@ Locked versus shadow on the three live questions:
 
 Said plainly, because it is the difference between a demo and a delivery:
 
-- **No licensed news feed.** The retrieval path exists and is gated on `published_at`, but
-  `data/news/` is empty, so the tool returns an empty corpus and the agent has to disclose
-  that it priced from prices alone. A fabricated corpus would have made the eval look
-  better and the system worse.
-- **No policy simulation.** `ensemble.py` is the multi-agent machinery; there is no
-  economic model for the actors to act inside.
-- **No database, queue or service.** `forecasts/` is append-only by convention (`lock`
-  refuses to overwrite), not by a database constraint.
+- **No licensed intraday financial newswire.** `search_news` is backed by 127k+ time-gated headlines in `data/forecast.db` (Wikipedia `Portal:Current events` 2002–2026 plus runtime GDELT/RSS feeds via `forecast-log daily`), rather than an empty corpus. What is still missing is a licensed institutional feed with minute-level timestamps rather than daily world-news summaries.
+- **No policy simulation.** `ensemble.py` is the multi-agent machinery; there is no economic model for the actors to act inside.
+- **No queue, API service, or DB-enforced forecast locks.** Market bars and news live in `data/forecast.db` (SQLite WAL), while `forecasts/` remains append-only JSON files by convention (`lock` refuses to overwrite) with no background worker queue or production service.
 
 ## The part I would actually point at
 
-`README.md` has a table called 「试过、没成的路」: nine approaches that did not survive
+`experiments/` preserves nine approaches that did not survive
 their own backtest — logistic regression at Brier 0.2472 against a constant 0.2410,
 probability shrinkage towards the base rate, twelve cross-asset factors each individually
 inside the base rate's confidence interval, and a sell signal that cannot be built from
@@ -114,11 +109,12 @@ reason to trust anything else the bench says.
 ## Run it
 
 ```bash
+git lfs pull                          # pulls data/forecast.db (15 series, 127k+ headlines)
 pip install -e ".[dev]"
 cp .env.example .env && $EDITOR .env    # DEEPSEEK_API_KEY=... ; git-ignored
 forecast-log fetch
-forecast-log backtest          # 3,700 forecasts, scored against what happened
+forecast-log backtest          # 3,700+ forecasts, scored against what happened
 forecast-log agent-eval --limit 96 --stride 60 --also-blind
-pytest                          # 47 tests, no network, no API key
+pytest                          # 72 tests, no network, no API key
 python3 serve.py 8731           # web/agent.html reads artifacts/agent_eval_summary.json
 ```

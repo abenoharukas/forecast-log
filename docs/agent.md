@@ -65,15 +65,13 @@ forecast. Here it is a tool with a known weakness (it re-states its neighbour po
 cannot see regime change), and the agent has to decide how much to defer to it. That
 decision, written down in the rationale, is the thing a human reviewer actually wants.
 
-### News search is behind a null implementation
+### News search is backed by `data/forecast.db`, not a licensed newswire
 
-`data/news/*.json` does not exist in this repo, so `search_news` returns an empty corpus
-and says so. Wiring a real provider is one class, and the tool already gates on
-`published_at`. It is missing because a licensed feed and a search key were not available
-while this was written, and a fake corpus would make the eval look better than it is — an
-empty result that the model must disclose is more useful than a fabricated one.
-
-The consequence is stated in every trace: **the eval measures the price-only path.**
+`search_news` and `read_doc` read from `news_items` in `data/forecast.db` (127,845
+time-gated headlines across 6,176 trading days from Wikipedia `Portal:Current events`
+plus runtime GDELT/RSS feeds via `forecast-log daily`), falling back to `data/news/*.json`
+only when the database is absent. What is still missing is a licensed institutional feed
+with minute-level timestamps rather than daily world-news summaries.
 
 ## The loop
 
@@ -171,13 +169,14 @@ agent" is not in doubt at all.
 
 Said plainly, because it is the difference between a demo and a delivery:
 
-- **No licensed news feed.** One interface, one null implementation. The retrieval path is
-  built and gated but has no corpus behind it here.
+- **No licensed intraday financial newswire.** `search_news` is backed by daily world-news
+  summaries and post-close RSS/GDELT in `data/forecast.db`, not an institutional wire with
+  minute-level timestamps.
 - **No policy simulation.** Multi-agent policy runs need an economic model to act inside;
   `ensemble.py` is the multi-agent machinery without the domain model.
-- **No queue, no database, no service.** Everything is files and a CLI. `forecasts/` is
-  append-only by convention (`lock` refuses to overwrite), not by a database constraint.
-  That is the next thing to build, not something to claim.
+- **No queue, API service, or DB-enforced forecast locks.** Market bars and news live in
+  `data/forecast.db` (SQLite WAL), while `forecasts/` remains append-only JSON files by
+  convention (`lock` refuses to overwrite) without a task queue or production API service.
 - **The Brier numbers are small-sample.** The `n` in every table is the number of
   questions actually run; a 96-question bench has wide intervals, and the report says so
   rather than rounding to a headline.

@@ -11,3 +11,4 @@ artifacts/surprise/
 .codegraph/
 data/forecast.db-wal
 data/forecast.db-shm
+others.md

@@ -1,122 +1,55 @@
 # forecast-log
 
-事先锁死、事后打分的预测记录。
+**A point-in-time forecasting system that locks probabilities before the outcome is knowable, prevents look-ahead leakage by construction, and scores every call against reality.**
 
-这三道题只做金融。数据用 Yahoo Finance 的免费日线收盘，不调用搜索 API，也不做地缘和政治题。它练习的是招聘要求里的这一段：题目事先写死，证据带时间，概率锁定后不改，结算后打分。底下那层是一个带闸门的 agent（见「agent 那一层」）；真正的新闻源和政策模拟仍然不在范围内。
+> Looking for the concise engineering overview and evaluation summary? See [`SUBMISSION.md`](SUBMISSION.md).
 
-## 目的
+## What This Project Does
 
-一句话：**每个条件、每路 AI 都是彼此独立的开关，靠开关组合找出最好的一组。**
+`forecast-log` combines an immutable lock/resolve/score workflow with three empirical forecasting layers and an interactive local dashboard.
 
-具体三条：
+1. **Immutable Forecast Log ([`questions.json`](questions.json), `forecasts/`, [`resolutions.json`](resolutions.json))**
+   - Questions, data sources (`Yahoo Finance` daily `Close`), and settlement rules are frozen before the event window.
+   - Probabilities and timestamped evidence are written once to append-only files in `forecasts/` (`lock` refuses to overwrite) and scored with Brier score after settlement in `resolutions.json`.
+   - Three live questions are currently locked for `2026-11-20` and `2026-11-30` (`^VXN > 30` and `^NDX > 28374.25`).
 
-1. **条件独立**：复合分数、CPI 窗口、NFP 窗口、FOMC 否决、新闻否决，各自一个开关，可单独开、单独关。
-2. **新闻评分按 AI 分开**：DeepSeek 读新闻的结果、Qwen 读新闻的结果，是**两个独立开关**，不是一个。两条各自能开关，也能并排对照。
-3. **比较靠对照，不靠拍脑袋**：同一批历史、同一套判定，只改一个开关，看成绩怎么变。「最好」目前没有定论——候选口径是精确率、精确率与信号数的平衡、扣除成本后的性价比，需要先定一个再下结论。
+2. **Volatility Analogue & Interval Model (`estimate.py`, `backtest.py`, `web/index.html`)**
+   - Forecasts `^VXN` (CBOE NASDAQ-100 Volatility Index) across 1- to 7-trading-day horizons using non-parametric historical analogues matched on standardized 1-week, 1-month, and 1-year returns, 1-year median deviation, volatility term structure (`^VIX9D / ^VIX3M`), and `^VVIX` (volatility of VIX).
+   - Outputs calibrated 10%–90% probability bands rather than relying on point estimates.
 
-预测还没有写。下面的规则先冻结，概率以后另文件提交。
+3. **Cross-Asset Risk-On Signal & Interactive Context Switchboard (`cross.py`, `china.py`, `web/points.html`)**
+   - Evaluates whether a 4-factor cross-asset risk-on composite (`^TNX` 10-year Treasury yield, `DX-Y.NYB` US Dollar Index, `HYG/TLT` high-yield vs. Treasury ratio, `^VIX` vs. 1-year median) plus macro calendar rules (`CPI`, `NFP`, `FOMC`) predicts a higher close 5 trading days later.
+   - Tested across three markets on a single tabbed candlestick UI (`web/points.html?market=ndx|qqq|ssec`): **`^NDX`** (Nasdaq-100 Index), **`QQQ`** (Invesco QQQ Trust ETF), and **`000001.SS`** (Shanghai Composite Index, settled on the next A-share session).
+   - **Model Context Factors (`web/ctxbar.js`)**: Every factor, calendar window, trend/gap filter, and LLM news switch is exported as an independent binary column so users can toggle switches and aggregation rules (`Any` / `Consensus >= 2` / `All`) live in the browser and see full-sample and post-2015 out-of-sample precision recompute instantly.
+   - **Daily Runtime News Read (`daily.py`)**: After the close, fetches GDELT and three RSS feeds (WSJ Markets, Fed monetary policy, SEC press releases), filters strictly by `published_at <= as_of`, and asks an LLM for a structured risk-tone label (`risk-on` / `neutral` / `risk-off`) logged alongside keyword scans without silently altering the price signal.
 
-被截图、被追问过的日子（2026-06-23 的琥珀点、整个 7 月、2026 年七个信号日的结算、2026-10 的上证综指）单独摊开写在 [`analysis.md`](analysis.md)，不参与打分。
+4. **Gated Research Agent & Multi-Model Benchmark (`src/forecast_log/agent/`, `web/agent.html`)**
+   - A framework-free, 8-step tool-using agent (~120 lines of `urllib` supporting DeepSeek, Qwen, OpenAI, OpenRouter, vLLM, and Ollama) wrapped in a hard point-in-time gate (`gate.py`).
+   - Supports N-run **log-odds ensemble pooling** (`ensemble.py`) with logit spread, and a shared-intersection evaluation harness (`eval.py`) measuring Brier, LogLoss, ECE, directional accuracy, cost per forecast, and p50 latency.
 
-## 题目
+5. **Unified Local Dataset & Live-Refresh Server (`data/forecast.db`, [`serve.py`](serve.py))**
+   - Market bars (15 symbols, 107,560 bars) and historical news (6,176 trading days, 127,845 headlines from Wikipedia `Portal:Current events` and runtime RSS/GDELT) are stored in a single WAL-mode SQLite database (`data/forecast.db`, tracked via Git LFS).
+   - `serve.py` serves `web/` with `Cache-Control: no-store` and exposes `GET/POST /api/refresh` to pull fresh Yahoo OHLCV bars (including intraday/open A-share sessions) and regenerate `artifacts/cross*.json`.
 
-基准价取 2026-11-11 美股日线收盘，2026-11-12 从 Yahoo Finance 读到：`^VXN` 26.74，`^NDX` 28374.25。
+## Our Forecasting Philosophy
 
-恐惧指数用的是纳斯达克 100 的波动率指数 `^VXN`（CBOE NASDAQ-100 Volatility Index），不是标普 500 的 `^VIX`。两道恐惧指数题的门槛是 30，不是这个基准价。纳斯达克那道用这个基准价。
+### 1. Prevent Look-Ahead Leakage by Construction, Not Convention
+In backtesting and agent evaluation, silent data clipping hides bugs. In `src/forecast_log/agent/gate.py`, every tool response, document timestamp, and cited evidence date passes through:
 
-| ID | 结算日（美东当日收盘） | 问题 | 判「是」 |
-|---|---|---|---|
-| `vxn-2026-11-20-gt-30` | 2026-11-20，周五 | VXN 收盘是否高于 30 | `^VXN` 日线 Close > 30 |
-| `vxn-2026-11-30-gt-30` | 2026-11-30，周一 | VXN 收盘是否高于 30 | `^VXN` 日线 Close > 30 |
-| `ndx-2026-11-30-gt-baseline` | 2026-11-30，周一 | 纳斯达克 100 收盘是否高于 28374.25 | `^NDX` 日线 Close > 28374.25 |
+```python
+def check(self, day: date, source: str) -> date:
+    if day > self.session:
+        raise LookAheadError(...)
+    return day
+```
 
-2026-11-26 是美国感恩节，股市休市。11 月不取 26 日，月末用 11 月 30 日这个交易日。11 月 20 日用于流程验证，11 月 30 日为正式结算日。
+- **Hard exceptions over clipping**: If an agent or tool touches a future date or a post-cutoff headline, it raises `LookAheadError` and rejects the submission while preserving the rejected attempt in the execution trace.
+- **Expanding windows**: All z-scores, medians, and 90th-percentile thresholds in `cross.py` are computed recursively using data available up to day `t` only, with threshold design frozen prior to the `2015+` out-of-sample split.
 
-机器可读的同一份定义在 [`questions.json`](questions.json)。
-
-## 结算规则
-
-- 数据源只有 Yahoo Finance chart API 的日线 `Close`。恐惧指数用 `^VXN`，纳斯达克 100 用 `^NDX`。不换源，不用盘中价，不用其他指数。
-- 某一题的结算价，是该交易日收盘之后第一次取到的日线 `Close`。取到就写入 `resolutions.json`，以后即使 Yahoo 修订历史 K 线，也不改这个数。
-- 收盘高于门槛记 1，否则记 0。等于门槛记 0，因为规则写的是「高于」。
-- 某一天没有日线（休市、接口失败），这一题不算结算，记下失败原因，不补一个别的日期。
-
-## 一条预测里有什么
-
-每道题一个文件，放在 `forecasts/`，在对应结算日的美东收盘之前提交：
-
-- `question_id`
-- `locked_at`：写入时间，带时区
-- `probability`：0 到 1，含两端
-- `evidence`：用到的历史收盘，每条有日期、代码、收盘价，以及取数时间
-
-锁定之后不改概率，不改证据。结算结果只写进 `resolutions.json`。
-
-## 打分
-
-结算后计算 Brier 分数：每题 `(probability - outcome)²`，三题再取平均。`outcome` 为 1 或 0。分数越低越好。
-
-对照是三题都回答 0.5。这个对照的 Brier 分数是 0.25。这三道题没有预测市场的价格，所以不设市场价格对照。
-
-若不及 0.25，亦如实保留。
-
-## 怎么算这个概率
-
-不做参数模型，也不搬历史价位。做法是找状态相近的历史类比：
-
-- **状态**：最近 1 周、1 个月、1 年的涨跌，加上离 1 年中位数的偏离。四个数标准化后一起比。
-- **类比池**：只能选结局已经发生、且窗口和今天不重叠的日子（`t + H <= 今天`）。今天之后的数据一概不读。
-- **比对方式**：每个类比按**自己的起点**折成倍数（`t+H 的收盘 / t 的收盘`），不是拿绝对价位。预测路径 = 今天的收盘 × 这批倍数的中位数，所以它从今天的实际点位出发，会自己往回拐，而不是把 7 天前的价位往后搬。
-- **概率**：200 个类比里，倍数超过「门槛 ÷ 今天收盘」的比例。
-- **前瞻输入**（`features.py`，只做输入，不参与结算）：S&P 方差曲线短端 `^VIX9D / ^VIX3M` 的斜率，以及 `^VVIX` 相对自己一年中位的偏离。恐惧指数自己的历史里没有「为什么会涨」的线索，期限结构是唯一在数据里找得到的前瞻信号（与未来 7 日 VXN 变动相关性 −0.29）。
-
-状态和类比数（`estimate.py` 里的 `STATE_LOOKBACKS` / `NEIGHBOURS`）在跑回测之前就写死了，没有按分数调。
-
-同一段窗口（2012-01 起，3722 次预测）的对照：
-
-| | Brier | 变动相关性 | 方向命中 | 20 次最大暴涨里起点叫涨 |
-|---|---|---|---|---|
-| 只用价格自身 | 0.0447 | +0.256 | 60.7% | **2** |
-| 加期限结构 + VVIX | **0.0438** | **+0.286** | **62.0%** | **6** |
-| 旧方法（样本价位中位数） | 0.0583 | +0.006 | ~50% | — |
-
-`^VIX9D` 从 2011-01 才有，所以带前瞻输入的模型从 2012 年起，样本比只用价格短十年。
-
-## 图上画的是区间，不是点位
-
-历史部分每天一组：用 t−1 及以前的数据算 t 日的区间（10%–90%），画在 t 日上，和 t 日的实际收盘比。收盘前无法获知当日收盘，只能使用前一交易日数据，因此该结果可作为每日运行一次的产出。
-
-**点位预测不具备价值，须明确说明**（3958 天，2011-02 起）：
-
-| | 数值 |
-|---|---|
-| 模型点位误差 | 1.038 点 / 中位 3.3% |
-| 随机游走基准（前一日收盘） | 1.063 点 / 中位 3.5% |
-| **模型优于基准** | **2.4%** |
-
-将预测值对前一日收盘做回归，斜率为 **0.98**——实质等同于以昨收作为预测值。VXN 单日波动中位数即为 3.5%，因此「3.3% 误差」并不表示准确，而是该序列本身波动有限。三次波动率骤升事件（2026-11-05、2020-02-24、2018-02-05）中，有两次模型不及以昨收为基准的结果。
-
-**区间具备价值**，是本方法唯一稳健的前瞻能力：
-
-| 检查 | 结果 |
-|---|---|
-| 10%–90% 区间实际覆盖 | **79.6%**（名义 80%） |
-| 区间宽度 vs 当天实际波动 相关性 | **+0.31** |
-| 大波动（涨跌 > 8%）概率：区间窄 / 中 / 宽 | 8.6% / 13.0% / **28.4%**（基准 16.7%） |
-| 同样分组的「昨收已实现波动」基准 | 12.1% / 15.2% / 22.8% |
-
-也就是说：**模型无法给出次日点位，但在区间较宽时可将「次日大幅波动」的概率从 16.7% 提高到 28.4%**，高于「以昨日已实现波动率为基准」的方法（1.70x vs 1.37x）。因此图上以**色带**表示区间（而非两条线），右上角标注明日区间与风险等级，中间的点位线保留为一条极淡的虚线。
-
-色带由两层填充叠加实现（铺满至上沿，再用背景色覆盖下沿以下区域），因此关闭了横向网格线——遮罩会部分覆盖下半区网格线，保留反而影响可读性。
-
-注意区分两种预测：
-
-| | 用在哪 | 前瞻长度 | 图上 |
-|---|---|---|---|
-| 每日预测 | 每日运行一次，读取模型当日输出 | 1 个交易日 | 历史虚线 + 右上角读数 |
-| 题目预测 | 三道题（11-20 / 11-30 结算） | 7 / 12 个交易日 | 只进 `artifacts/`，图上不画 |
-
-三道题的结算日在未来，因此必然是 7 个和 12 个交易日的预测，无法缩短为 1 日。
+### 2. Know What a Model Can and Cannot Predict (Intervals vs. Points)
+Backtesting `^VXN` across ~3,950 trading days shows that **point forecasts have minimal standalone value**:
+- Regressing predicted values against the prior close yields a slope of `0.98`, beating a random walk by only ~2.4% (3.3% vs. 3.5% median 1-day error; 8.5% vs. 8.9% at 7 days).
+- **Interval width is the real signal**: The 10%–90% analogue band achieves **79.6%** empirical coverage (nominal 80%) and separates volatility regimes—when the 1-day band is narrow / medium / wide, the next-day probability of a large move (`|return| > 8%`) jumps from **8.6% -> 13.0% -> 28.4%** (vs. 16.7% unconditional base rate).
 
 ## 7 个交易日的预测与实际对账
 

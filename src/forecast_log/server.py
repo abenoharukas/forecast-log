@@ -74,21 +74,23 @@ ASSET_DIRS = ("/fonts/", "/vendor/")
 
 
 def refresh_cross_data() -> dict:
-    """Fetch latest daily bars for cross-market symbols in parallel and rebuild cross*.json."""
+    """只从 Yahoo 增量拉取数据库中最近日期之后的缺失 K 线，并增量更新数据库信号。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from forecast_log.bars import save_series
     from forecast_log.china import CHINA_SYMBOLS
     from forecast_log.commands import COMPARE_SYMBOLS, cross_command
+    from forecast_log.db import get_series
     from forecast_log.paths import series_path
-    from forecast_log.yahoo import fetch_daily
+    from forecast_log.yahoo import fetch_incremental
 
     symbols = ("^NDX", "^TNX", "DX-Y.NYB", "HYG", "TLT", "^VIX", *COMPARE_SYMBOLS, *CHINA_SYMBOLS)
     updated: dict[str, str] = {}
     errors: dict[str, str] = {}
 
     def _fetch_one(sym: str) -> tuple[str, object]:
-        return sym, fetch_daily(sym)
+        existing = get_series(ROOT, sym)
+        return sym, fetch_incremental(sym, existing)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {pool.submit(_fetch_one, sym): sym for sym in dict.fromkeys(symbols)}
@@ -203,7 +205,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
-        if path == "/api/refresh":
+        if path in ("/api/refresh", "/api/fetch"):
             self._handle_refresh(force="force=1" in query)
             return
 
@@ -254,7 +256,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path, _, query = self.path.partition("?")
-        if path == "/api/refresh":
+        if path in ("/api/refresh", "/api/fetch"):
             self._handle_refresh(force="force=1" in query)
             return
         self.send_error(405, "Method Not Allowed")

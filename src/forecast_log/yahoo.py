@@ -20,40 +20,60 @@ WINDOW_YEARS = 5
 HISTORY_START = date(1985, 1, 1)
 
 
-def fetch_daily(symbol: str, timeout: float = 60) -> Series:
+def fetch_daily(symbol: str, timeout: float = 60, start: date | None = None) -> Series:
     """Daily OHLCV from the Yahoo chart API. This is the only price source."""
     quoted = urllib.parse.quote(symbol, safe="")
     by_date: dict[date, tuple[float | None, float | None, float | None, float, int | None]] = {}
     tz_name = "America/New_York"
-    start = HISTORY_START
+    cursor = start or HISTORY_START
     # Take the later of NY and Beijing dates so A-share morning sessions are never cut off
     # when New York is still on the previous calendar day.
     stop = max(datetime.now(NY).date(), datetime.now(SHANGHAI).date()) + timedelta(days=2)
-    while start < stop:
-        end = min(_add_years(start, WINDOW_YEARS), stop)
+    while cursor < stop:
+        end = min(_add_years(cursor, WINDOW_YEARS), stop)
         query = (
             CHART.format(symbol=quoted)
-            + f"?interval=1d&period1={_unix(start)}&period2={_unix(end)}"
+            + f"?interval=1d&period1={_unix(cursor)}&period2={_unix(end)}"
         )
         try:
             payload = _load(query, symbol, timeout)
         except _NotYetStarted:
             # The series has not started yet. Later windows still count.
-            start = end
+            cursor = end
             continue
         chunk_zone, rows = _read_chart(symbol, payload)
         tz_name = chunk_zone or tz_name
         by_date.update(rows)
-        start = end
+        cursor = end
     bars = tuple(
         Bar(date=day, close=close, open=open_, high=high, low=low, volume=volume)
         for day, (open_, high, low, close, volume) in sorted(by_date.items())
     )
     if not bars:
         raise RuntimeError(f"Yahoo returned no closes for {symbol}")
-    _assert_daily(symbol, bars)
+    if start is None:
+        _assert_daily(symbol, bars)
     fetched_at = datetime.now(NY).isoformat(timespec="seconds")
     return Series(symbol=symbol, timezone=tz_name, fetched_at=fetched_at, bars=bars)
+
+
+def fetch_incremental(symbol: str, existing: Series | None, timeout: float = 60) -> Series:
+    """只拉取数据库中最近日期之后的缺失 K 线并合并，不重拉几十年的历史。"""
+    if existing is None or not existing.bars:
+        return fetch_daily(symbol, timeout=timeout)
+    last_day = existing.bars[-1].date
+    # 往前留 5 天余量，覆盖当日盘中更新或节假日修正
+    start = last_day - timedelta(days=5)
+    delta = fetch_daily(symbol, timeout=timeout, start=start)
+    merged = {bar.date: bar for bar in existing.bars}
+    for bar in delta.bars:
+        if bar.date >= last_day:
+            merged[bar.date] = bar
+        elif bar.date not in merged:
+            merged[bar.date] = bar
+    bars = tuple(merged[d] for d in sorted(merged))
+    _assert_daily(symbol, bars)
+    return Series(symbol=symbol, timezone=delta.timezone or existing.timezone, fetched_at=delta.fetched_at, bars=bars)
 
 
 class _NotYetStarted(Exception):

@@ -1,13 +1,13 @@
 /**
  * Cloudflare Worker for forecast-log.
  *
- * Two jobs:
+ * Three jobs:
  *   1. Serve the pages on clean URLs, with all dashboard data read from D1 (Cloudflare's
  *      SQLite), not from static JSON files.
- *   2. Accept writes from scripts/publish_d1.py at /api/ingest (bearer token).
- *
- * Data layout is described in deploy/schema.sql. Everything here is plain SQL +
- * a path-assembly step, so no artefact is ever stored or served as a JSON blob.
+ *   2. Expose GET/POST /api/refresh (and /api/fetch) to incrementally fetch missing
+ *      daily bars from Yahoo Finance after D1's latest date and upsert only the
+ *      new/unresolved tail rows into D1.
+ *   3. Expose GET /api/state and POST /api/ingest for incremental syncing from publish_d1.py.
  */
 
 const MARKET_BY_SLUG = { ndx: "ndx", qqq: "qqq", ssec: "ssec", "a-shares": "ssec" };
@@ -47,7 +47,6 @@ const LEGACY = {
 const ASSET_FILES = new Set(["/theme.css", "/theme.js", "/ctxbar.js"]);
 const ASSET_DIRS = ["/fonts/", "/vendor/"];
 
-// 每个交易日一行的列；有值的才变成数组，和 Python 产物保持同形
 const ARRAY_COLUMNS = [
   "open",
   "high",
@@ -99,19 +98,18 @@ export default {
       return json(doc);
     }
 
+    if (clean === "/api/state") {
+      return getD1State(env);
+    }
+
     if (clean === "/api/ingest") {
       if (request.method !== "POST") return json({ ok: false, error: "POST only" }, 405);
       return ingest(request, env);
     }
 
-    if (clean === "/api/refresh") {
-      return json(
-        {
-          ok: false,
-          error: "线上 Workers 无法运行 30 秒的 numpy 计算；请在本地执行 make refresh 后运行 scripts/publish_d1.py 同步到 D1。",
-        },
-        501,
-      );
+    if (clean === "/api/refresh" || clean === "/api/fetch") {
+      const force = url.searchParams.get("force") === "1";
+      return refreshFromYahoo(env, force);
     }
 
     if (clean === "/web/points.html" || clean === "/points.html") {
@@ -157,7 +155,6 @@ function cast(kind, value) {
   return value;
 }
 
-/** "bands.0.hit" -> doc.bands[0].hit, creating arrays or objects as needed. */
 function setPath(root, path, value) {
   const parts = path.includes("\x1f") ? path.split("\x1f") : path.split(".");
   let cursor = root;
@@ -170,6 +167,275 @@ function setPath(root, path, value) {
   }
   const last = parts[parts.length - 1];
   cursor[/^\d+$/.test(last) ? Number(last) : last] = value;
+}
+
+async function getD1State(env) {
+  try {
+    const [marketsRes, unresolvedRes, tlRes, agentRes] = await env.DB.batch([
+      env.DB.prepare("SELECT market, last_session, fetched_at FROM market"),
+      env.DB.prepare(
+        "SELECT market, COUNT(*) AS cnt, MAX(date) AS max_date, MIN(CASE WHEN outcome IS NULL THEN date END) AS first_unresolved FROM session GROUP BY market",
+      ),
+      env.DB.prepare("SELECT COUNT(*) AS cnt FROM timeline_close"),
+      env.DB.prepare("SELECT dataset, generated_at, n FROM agent_dataset"),
+    ]);
+
+    const markets = {};
+    for (const r of marketsRes.results ?? []) {
+      markets[r.market] = { last_session: r.last_session, fetched_at: r.fetched_at, count: 0, first_unresolved: null };
+    }
+    for (const r of unresolvedRes.results ?? []) {
+      markets[r.market] = {
+        ...(markets[r.market] || {}),
+        count: r.cnt,
+        max_date: r.max_date,
+        first_unresolved: r.first_unresolved,
+      };
+    }
+    const agents = {};
+    for (const r of agentRes.results ?? []) {
+      agents[r.dataset] = { generated_at: r.generated_at, n: r.n };
+    }
+    return json({
+      ok: true,
+      markets,
+      timeline_count: tlRes.results?.[0]?.cnt ?? 0,
+      agents,
+    });
+  } catch (err) {
+    return json({ ok: true, markets: {}, timeline_count: 0, agents: {}, note: String(err) });
+  }
+}
+
+function beijingDateStr(date = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+async function fetchYahooBars(symbol, startUnix, endUnix) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${startUnix}&period2=${endUnix}`;
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 forecast-log/1.0" } });
+  if (!res.ok) throw new Error(`Yahoo ${symbol} HTTP ${res.status}`);
+  const payload = await res.json();
+  const result = payload?.chart?.result?.[0];
+  if (!result) return [];
+  const tz = result?.meta?.exchangeTimezoneName || "America/New_York";
+  const stamps = result.timestamp || [];
+  const q = result.indicators?.quote?.[0] || {};
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const byDate = new Map();
+  for (let i = 0; i < stamps.length; i += 1) {
+    const close = q.close?.[i];
+    if (close === null || close === undefined) continue;
+    const d = fmt.format(new Date(stamps[i] * 1000));
+    byDate.set(d, {
+      date: d,
+      open: q.open?.[i] != null ? Math.round(q.open[i] * 100) / 100 : null,
+      high: q.high?.[i] != null ? Math.round(q.high[i] * 100) / 100 : null,
+      low: q.low?.[i] != null ? Math.round(q.low[i] * 100) / 100 : null,
+      close: Math.round(close * 100) / 100,
+      volume: q.volume?.[i] != null ? Math.trunc(q.volume[i]) : null,
+    });
+  }
+  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+async function refreshFromYahoo(env, force = false) {
+  try {
+    const todayBj = beijingDateStr();
+    const metaRows = (await env.DB.prepare("SELECT market, instrument, last_session, fetched_at FROM market").all()).results ?? [];
+    if (metaRows.length === 0) {
+      return json({ ok: false, error: "D1 尚未初始化基础数据，请先运行 make cf" }, 404);
+    }
+
+    if (!force) {
+      const allFresh = metaRows.every((m) => m.fetched_at && m.fetched_at.slice(0, 10) >= todayBj);
+      if (allFresh) {
+        const sessions = Object.fromEntries(metaRows.map((m) => [m.market, m.last_session]));
+        return json({ ok: true, cached: true, beijing_date: todayBj, sessions });
+      }
+    }
+
+    const nowSec = Math.floor(Date.now() / 1000) + 172800;
+    const updated = {};
+    const errors = {};
+    const insertedCounts = {};
+
+    for (const meta of metaRows) {
+      const mkt = meta.market;
+      const sym = meta.instrument;
+      try {
+        const tailRows = (
+          await env.DB.prepare("SELECT * FROM session WHERE market = ? ORDER BY date DESC LIMIT 25").bind(mkt).all()
+        ).results ?? [];
+        if (tailRows.length === 0) continue;
+        tailRows.reverse();
+        const oldestTailDate = tailRows[0].date;
+        const startUnix = Math.floor(new Date(`${oldestTailDate}T00:00:00Z`).getTime() / 1000) - 86400 * 5;
+        const bars = await fetchYahooBars(sym, startUnix, nowSec);
+        if (bars.length === 0) continue;
+
+        const byDate = new Map(tailRows.map((r) => [r.date, { ...r }]));
+        for (const b of bars) {
+          if (b.date < oldestTailDate) continue;
+          const prev = byDate.get(b.date);
+          if (prev) {
+            prev.open = b.open;
+            prev.high = b.high;
+            prev.low = b.low;
+            prev.close = b.close;
+            prev.volume = b.volume;
+          } else {
+            const lastRow = tailRows[tailRows.length - 1];
+            byDate.set(b.date, {
+              market: mkt,
+              date: b.date,
+              open: b.open,
+              high: b.high,
+              low: b.low,
+              close: b.close,
+              volume: b.volume,
+              entry: null,
+              entry_at: null,
+              base_close: null,
+              close3: null,
+              close5: null,
+              hit3: null,
+              flag: 0,
+              flag_price_only: 0,
+              news_veto: 0,
+              score: lastRow?.score ?? null,
+              threshold: lastRow?.threshold ?? null,
+              outcome: null,
+              target: null,
+              peak: null,
+              peak_at: null,
+              us_date: null,
+              factors_packed: 0,
+            });
+          }
+        }
+
+        const merged = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+        const H = 5;
+        for (let i = 0; i < merged.length; i += 1) {
+          const row = merged[i];
+          if (mkt === "ssec") {
+            if (i + H < merged.length && row.open != null) {
+              const win = merged.slice(i + 1, i + 1 + H);
+              if (win.every((w) => w.close != null)) {
+                let bestIdx = 0;
+                for (let k = 1; k < win.length; k += 1) {
+                  if (win[k].close > win[bestIdx].close) bestIdx = k;
+                }
+                row.peak = win[bestIdx].close;
+                row.peak_at = win[bestIdx].date;
+                row.outcome = merged[i + H].close > row.close ? 1 : 0;
+                if (row.flag) {
+                  row.base_close = row.close;
+                  row.close3 = merged[i + 3].close;
+                  row.close5 = merged[i + H].close;
+                  row.hit3 = row.close3 > row.base_close ? 1 : 0;
+                }
+              }
+            }
+          } else if (i + H + 1 < merged.length) {
+            const nextBar = merged[i + 1];
+            const win = merged.slice(i + 2, i + 2 + H);
+            if (nextBar.open != null && win.every((w) => w.close != null)) {
+              let bestIdx = 0;
+              for (let k = 1; k < win.length; k += 1) {
+                if (win[k].close > win[bestIdx].close) bestIdx = k;
+              }
+              row.entry = nextBar.open;
+              row.entry_at = nextBar.date;
+              row.base_close = row.close;
+              row.close3 = merged[i + 3].close;
+              row.close5 = merged[i + H].close;
+              row.hit3 = row.close3 > row.base_close ? 1 : 0;
+              row.outcome = row.close5 > row.base_close ? 1 : 0;
+              row.target = merged[i + H].date;
+              row.peak = win[bestIdx].close;
+              row.peak_at = win[bestIdx].date;
+            }
+          }
+        }
+
+        const toWrite = merged.slice(-12);
+        const stmts = toWrite.map((r) =>
+          env.DB.prepare(
+            `INSERT OR REPLACE INTO session (
+              market, date, open, high, low, close, volume, entry, entry_at,
+              base_close, close3, close5, hit3, flag, flag_price_only, news_veto,
+              score, threshold, outcome, target, peak, peak_at, us_date, factors_packed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ).bind(
+            mkt,
+            r.date,
+            r.open,
+            r.high,
+            r.low,
+            r.close,
+            r.volume,
+            r.entry,
+            r.entry_at,
+            r.base_close,
+            r.close3,
+            r.close5,
+            r.hit3,
+            r.flag,
+            r.flag_price_only,
+            r.news_veto,
+            r.score,
+            r.threshold,
+            r.outcome,
+            r.target,
+            r.peak,
+            r.peak_at,
+            r.us_date,
+            r.factors_packed ?? 0,
+          ),
+        );
+        const lastBar = merged[merged.length - 1];
+        const fetchedIso = `${todayBj}T${new Date().toISOString().slice(11, 19)}+08:00`;
+        stmts.push(
+          env.DB.prepare("UPDATE market SET last_session = ?, fetched_at = ? WHERE market = ?").bind(
+            lastBar.date,
+            fetchedIso,
+            mkt,
+          ),
+        );
+        await env.DB.batch(stmts);
+        updated[sym] = lastBar.date;
+        insertedCounts[mkt] = toWrite.length;
+      } catch (e) {
+        errors[sym] = String(e && e.message ? e.message : e);
+      }
+    }
+
+    const afterMeta = (await env.DB.prepare("SELECT market, last_session FROM market").all()).results ?? [];
+    const sessions = Object.fromEntries(afterMeta.map((m) => [m.market, m.last_session]));
+    return json({
+      ok: true,
+      refreshed_at: new Date().toISOString(),
+      beijing_date: todayBj,
+      sessions,
+      updated,
+      upserted_rows: insertedCounts,
+      errors,
+    });
+  } catch (err) {
+    return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
+  }
 }
 
 async function loadMarket(env, market) {
@@ -202,7 +468,6 @@ async function loadMarket(env, market) {
 
   doc.components = {};
   for (const { position, key } of factorRes.results ?? []) {
-    // 不能用 >> ：JS 位运算是 32 位的，而 11 个开关要 44 位，所以走除法
     doc.components[key] = sessions.map((row) => Math.floor(row.factors_packed / 2 ** (4 * position)) % 16);
   }
 
@@ -334,6 +599,17 @@ async function ingest(request, env) {
 }
 
 async function applyOp(env, body) {
+  if (body.op === "clear_meta") {
+    const market = body.market;
+    if (!market) return json({ ok: false, error: "market is required" }, 400);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM market_node WHERE market = ?").bind(market),
+      env.DB.prepare("DELETE FROM contexts WHERE market = ?").bind(market),
+      env.DB.prepare("DELETE FROM factor_key WHERE market = ?").bind(market),
+    ]);
+    return json({ ok: true, op: "clear_meta", market });
+  }
+
   if (body.op === "clear") {
     const market = body.market;
     if (!market) return json({ ok: false, error: "market is required" }, 400);
@@ -370,7 +646,6 @@ async function applyOp(env, body) {
 
   if (body.op === "sql") {
     if (typeof body.sql !== "string") return json({ ok: false, error: "sql must be a string" }, 400);
-    // 只允许写白名单表，避免 token 泄漏后能删库
     if (
       !/^\s*INSERT\s+(OR\s+REPLACE\s+)?INTO\s+(session|market|market_node|contexts|factor_key|timeline_close|timeline_rolling|timeline_daily|timeline_ladder|timeline_node|agent_dataset|agent_node)\b/i.test(
         body.sql,

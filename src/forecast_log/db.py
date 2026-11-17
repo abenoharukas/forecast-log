@@ -254,20 +254,31 @@ def upsert_series(root: Path, series: Series) -> None:
     validate_bars(series.bars)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     slug = symbol_slug(series.symbol)
-    rows = [
-        (
-            series.symbol,
-            bar.date.isoformat(),
-            bar.open,
-            bar.high,
-            bar.low,
-            bar.close,
-            bar.volume,
-        )
-        for bar in series.bars
-    ]
     conn = connect(db_path(root))
     try:
+        max_row = conn.execute(
+            "SELECT MAX(date) AS max_date, COUNT(*) AS cnt FROM bars WHERE symbol = ?",
+            (series.symbol,),
+        ).fetchone()
+        max_date = max_row["max_date"] if max_row and max_row["cnt"] else None
+        # 已有历史数据时只插入新日期 + 更新最后一天（盘中修正），不重复写入 4000+ 历史行
+        bars_to_write = (
+            [b for b in series.bars if b.date.isoformat() >= max_date]
+            if max_date is not None
+            else list(series.bars)
+        )
+        rows = [
+            (
+                series.symbol,
+                bar.date.isoformat(),
+                bar.open,
+                bar.high,
+                bar.low,
+                bar.close,
+                bar.volume,
+            )
+            for bar in bars_to_write
+        ]
         with conn:
             conn.execute(
                 """
@@ -281,19 +292,20 @@ def upsert_series(root: Path, series: Series) -> None:
                 """,
                 (series.symbol, slug, series.timezone, series.fetched_at, now_iso),
             )
-            conn.executemany(
-                """
-                INSERT INTO bars (symbol, date, open, high, low, close, volume)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol, date) DO UPDATE SET
-                    open   = excluded.open,
-                    high   = excluded.high,
-                    low    = excluded.low,
-                    close  = excluded.close,
-                    volume = excluded.volume
-                """,
-                rows,
-            )
+            if rows:
+                conn.executemany(
+                    """
+                    INSERT INTO bars (symbol, date, open, high, low, close, volume)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, date) DO UPDATE SET
+                        open   = excluded.open,
+                        high   = excluded.high,
+                        low    = excluded.low,
+                        close  = excluded.close,
+                        volume = excluded.volume
+                    """,
+                    rows,
+                )
     finally:
         conn.close()
 

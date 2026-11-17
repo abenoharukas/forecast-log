@@ -206,18 +206,31 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
     }
 
 
-def save_cross_market(root: Path, market: str, doc: dict) -> None:
+def save_cross_market(root: Path, market: str, doc: dict) -> int:
+    """增量更新信号表：已有且已结算（outcome IS NOT NULL）的历史行绝不删除重插，只写入新增日与最近未结算窗口。"""
     bundle = build_cross_bundle(doc, market)
     conn = connect(db_path(root))
     try:
+        existing = {
+            row["date"]: row["outcome"]
+            for row in conn.execute("SELECT date, outcome FROM session WHERE market = ?", (market,)).fetchall()
+        }
+        all_sessions = bundle["sessions"]
+        tail_cutoff = all_sessions[-10]["date"] if len(all_sessions) >= 10 else ""
+        sessions_to_write = [
+            s
+            for s in all_sessions
+            if s["date"] not in existing or existing[s["date"]] is None or s["date"] >= tail_cutoff
+        ]
+
         with conn:
-            for table in ("session", "market_node", "contexts", "factor_key", "market"):
+            for table in ("market_node", "contexts", "factor_key"):
                 conn.execute(f"DELETE FROM {table} WHERE market = ?", (market,))
 
             r = bundle["row"]
             conn.execute(
                 """
-                INSERT INTO market (market, instrument, name, horizon, question, rule, first_session, last_session, fetched_at)
+                INSERT OR REPLACE INTO market (market, instrument, name, horizon, question, rule, first_session, last_session, fetched_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -232,15 +245,13 @@ def save_cross_market(root: Path, market: str, doc: dict) -> None:
                     r["fetched_at"],
                 ),
             )
-            cols = ("market", "date", *SESSION_COLUMNS, "factors_packed")
-            placeholders = ",".join("?" for _ in cols)
-            conn.executemany(
-                f"INSERT INTO session ({','.join(cols)}) VALUES ({placeholders})",
-                [
-                    tuple([market] + [s.get(c) for c in cols[1:]])
-                    for s in bundle["sessions"]
-                ],
-            )
+            if sessions_to_write:
+                cols = ("market", "date", *SESSION_COLUMNS, "factors_packed")
+                placeholders = ",".join("?" for _ in cols)
+                conn.executemany(
+                    f"INSERT OR REPLACE INTO session ({','.join(cols)}) VALUES ({placeholders})",
+                    [tuple([market] + [s.get(c) for c in cols[1:]]) for s in sessions_to_write],
+                )
             conn.executemany(
                 "INSERT INTO factor_key (market, position, key) VALUES (?, ?, ?)",
                 [(market, pos, key) for pos, key in bundle["factor_keys"]],
@@ -271,6 +282,7 @@ def save_cross_market(root: Path, market: str, doc: dict) -> None:
                 "INSERT INTO market_node (market, path, kind, value) VALUES (?, ?, ?, ?)",
                 [(market, path, kind, value) for path, kind, value in bundle["nodes"]],
             )
+        return len(sessions_to_write)
     finally:
         conn.close()
 

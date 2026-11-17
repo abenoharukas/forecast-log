@@ -33,6 +33,7 @@ SESSION_COLUMNS = (
     "peak",
     "peak_at",
     "us_date",
+    "is_closed",
 )
 
 CROSS_SCALAR_ROOTS = (
@@ -143,6 +144,8 @@ def _set_path_clean(root: dict, path: str, value: Any) -> None:
 
 
 def build_cross_bundle(doc: dict, market: str) -> dict:
+    from forecast_log.bars import is_session_closed
+
     nodes: list[tuple[str, str, str | None]] = []
     for key in CROSS_SCALAR_ROOTS:
         if key in doc:
@@ -156,6 +159,10 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
     factor_keys = list(components.keys())
     positions = {key: i for i, key in enumerate(factor_keys)}
 
+    instrument = str(doc.get("instrument") or "")
+    tz_name = "Asia/Shanghai" if (market == "ssec" or instrument.endswith((".SS", ".SZ"))) else "America/New_York"
+    fetched_at = doc.get("fetched_at")
+
     sessions = []
     for index, day in enumerate(doc["time"]):
         mask = 0
@@ -167,6 +174,12 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
         for column in SESSION_COLUMNS:
             series = doc.get(column)
             row[column] = series[index] if isinstance(series, list) and index < len(series) else None
+        if row.get("is_closed") is None:
+            from datetime import date as _date
+
+            row["is_closed"] = 1 if is_session_closed(_date.fromisoformat(day), tz_name, fetched_at) else 0
+        else:
+            row["is_closed"] = 1 if row["is_closed"] else 0
         sessions.append(row)
 
     contexts = [
@@ -207,20 +220,49 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
 
 
 def save_cross_market(root: Path, market: str, doc: dict) -> int:
-    """增量更新信号表：绝不删除历史行，只插入新增交易日或刚完成结算的尾部行。"""
+    """增量更新信号表：绝不删除历史行，只插入新增交易日、更新未收盘（is_closed=0）行或刚完成结算的尾部行。"""
     bundle = build_cross_bundle(doc, market)
     conn = connect(db_path(root))
     try:
         existing = {
-            row["date"]: row["outcome"]
-            for row in conn.execute("SELECT date, outcome FROM session WHERE market = ?", (market,)).fetchall()
+            row["date"]: row
+            for row in conn.execute(
+                "SELECT date, open, high, low, close, volume, flag, outcome, is_closed FROM session WHERE market = ?",
+                (market,),
+            ).fetchall()
         }
         all_sessions = bundle["sessions"]
-        sessions_to_write = [
-            s
-            for s in all_sessions
-            if s["date"] not in existing or (existing[s["date"]] is None and s.get("outcome") is not None)
-        ]
+        dirty_indices: set[int] = set()
+        for idx, s in enumerate(all_sessions):
+            prev = existing.get(s["date"])
+            if (
+                prev is None
+                or prev["is_closed"] == 0
+                or not s.get("is_closed", 1)
+                or (prev["outcome"] is None and s.get("outcome") is not None)
+            ):
+                # 若某一天之前未收盘或新入库，其前 7 个交易日的入场价/3日/5日结算窗口可能依赖这一天的价格，一并重算覆盖
+                for back in range(max(0, idx - 7), idx + 1):
+                    dirty_indices.add(back)
+
+        # 尾部最近 7 个交易日若 OHLCV、信号或收盘标记发生变化，也一并增量同步
+        for idx in range(max(0, len(all_sessions) - 7), len(all_sessions)):
+            s = all_sessions[idx]
+            prev = existing.get(s["date"])
+            if (
+                prev is None
+                or prev["close"] != s.get("close")
+                or prev["open"] != s.get("open")
+                or prev["high"] != s.get("high")
+                or prev["low"] != s.get("low")
+                or prev["volume"] != s.get("volume")
+                or prev["flag"] != s.get("flag")
+                or prev["outcome"] != s.get("outcome")
+                or prev["is_closed"] != s.get("is_closed")
+            ):
+                dirty_indices.add(idx)
+
+        sessions_to_write = [all_sessions[i] for i in sorted(dirty_indices)]
 
         with conn:
             r = bundle["row"]
@@ -341,6 +383,9 @@ def load_cross_market(root: Path, market: str) -> dict | None:
         for row in nodes:
             _set_path_clean(doc, row["path"], cast(row["kind"], row["value"]))
 
+        if isinstance(doc.get("latest"), dict) and sessions:
+            doc["latest"]["is_closed"] = bool(sessions[-1]["is_closed"])
+
         return doc
     finally:
         conn.close()
@@ -366,6 +411,59 @@ def cross_sessions_summary(root: Path) -> dict[str, str | None]:
     try:
         rows = conn.execute("SELECT market, last_session FROM market").fetchall()
         return {row["market"]: row["last_session"] for row in rows}
+    finally:
+        conn.close()
+
+
+def unclosed_sessions_summary(root: Path) -> dict[str, list[str]]:
+    """返回数据库中各市场尚未收盘（is_closed = 0）的交易日列表：{market: [date, ...]}。"""
+    path = db_path(root)
+    if not path.is_file():
+        return {}
+    conn = connect(path)
+    try:
+        rows = conn.execute(
+            "SELECT market, date FROM session WHERE is_closed = 0 ORDER BY market ASC, date ASC"
+        ).fetchall()
+        out: dict[str, list[str]] = {}
+        for row in rows:
+            out.setdefault(str(row["market"]), []).append(str(row["date"]))
+        return out
+    finally:
+        conn.close()
+
+
+def cross_market_status(root: Path) -> dict[str, dict[str, Any]]:
+    """返回各市场最新交易日、抓取时间、是否已收盘以及所有未收盘交易日清单。"""
+    path = db_path(root)
+    if not path.is_file():
+        return {}
+    conn = connect(path)
+    try:
+        markets = conn.execute("SELECT market, instrument, last_session, fetched_at FROM market").fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for m in markets:
+            mkt = str(m["market"])
+            last_row = conn.execute(
+                "SELECT date, close, is_closed FROM session WHERE market = ? ORDER BY date DESC LIMIT 1",
+                (mkt,),
+            ).fetchone()
+            unclosed = [
+                str(r["date"])
+                for r in conn.execute(
+                    "SELECT date FROM session WHERE market = ? AND is_closed = 0 ORDER BY date ASC",
+                    (mkt,),
+                ).fetchall()
+            ]
+            out[mkt] = {
+                "instrument": m["instrument"],
+                "last_session": last_row["date"] if last_row else m["last_session"],
+                "last_close": last_row["close"] if last_row else None,
+                "fetched_at": m["fetched_at"],
+                "is_closed": bool(last_row["is_closed"]) if last_row is not None else True,
+                "unclosed_dates": unclosed,
+            }
+        return out
     finally:
         conn.close()
 
@@ -460,7 +558,7 @@ def build_timeline_bundle(doc: dict) -> dict:
 
 
 def save_timeline(root: Path, doc: dict) -> None:
-    """增量更新 timeline 各表：只插入 idx > max_idx 的新增交易日，绝不清空历史表。"""
+    """增量更新 timeline 各表：追加新增交易日并刷新尾部最近 5 个交易日（覆盖盘中未收盘记录），绝不清空历史表。"""
     bundle = build_timeline_bundle(doc)
     conn = connect(db_path(root))
     try:
@@ -485,10 +583,10 @@ def save_timeline(root: Path, doc: dict) -> None:
             if r["m"] is not None
         }
 
-        new_closes = [r for r in bundle["closes"] if r[1] > close_max.get(r[0], -1)]
-        new_rolling = [r for r in bundle["rolling"] if r[1] > rolling_max.get(r[0], -1)]
-        new_daily = [r for r in bundle["daily"] if r[1] > daily_max.get(r[0], -1)]
-        new_ladder = [r for r in bundle["ladder"] if r[2] > ladder_max.get(r[1], -1)]
+        new_closes = [r for r in bundle["closes"] if r[1] >= max(0, close_max.get(r[0], -1) - 5)]
+        new_rolling = [r for r in bundle["rolling"] if r[1] >= max(0, rolling_max.get(r[0], -1) - 5)]
+        new_daily = [r for r in bundle["daily"] if r[1] >= max(0, daily_max.get(r[0], -1) - 5)]
+        new_ladder = [r for r in bundle["ladder"] if r[2] >= max(0, ladder_max.get(r[1], -1) - 5)]
 
         with conn:
             if new_closes:

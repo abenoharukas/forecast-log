@@ -637,11 +637,15 @@
         const idx = data.time.length - 1;
         const day = data.time[idx];
         const sig = flags[idx] === 1;
+        const isClosed = Array.isArray(data.is_closed)
+          ? Boolean(data.is_closed[idx])
+          : (data.latest && data.latest.is_closed !== undefined ? Boolean(data.latest.is_closed) : true);
+        const statusTag = isClosed ? "" : " [盘中未收盘]";
         const usRef = marketKey === "ssec" && data.latest && data.latest.us_date
           ? " (依据美股 " + data.latest.us_date + ")"
           : "";
         el.style.color = sig ? "var(--green-text)" : "var(--muted)";
-        el.textContent = day + usRef + " → " + (sig ? "▲ 今日信号: 买入 (BUY)" : "今日信号: 观望 (NO SIGNAL)");
+        el.textContent = day + statusTag + usRef + " → " + (sig ? "▲ 今日信号: 买入 (BUY)" : "今日信号: 观望 (NO SIGNAL)");
       }
 
       function beijingDateOf(isoTimestamp) {
@@ -742,7 +746,10 @@
 
         const bj = beijingTodayInfo();
         const fetchedDay = beijingDateOf(data.fetched_at);
-        if (!autoRefreshed && (!fetchedDay || fetchedDay < bj.iso)) {
+        const hasUnclosed =
+          (data.latest && data.latest.is_closed === false) ||
+          (Array.isArray(data.is_closed) && data.is_closed.some((v) => !v));
+        if (!autoRefreshed && (!fetchedDay || fetchedDay < bj.iso || hasUnclosed)) {
           autoRefreshed = true;
           triggerRefresh(false);
         }

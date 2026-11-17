@@ -8,7 +8,7 @@ import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from forecast_log.bars import Bar, Series
+from forecast_log.bars import Bar, Series, is_session_closed
 
 CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 RETRY_STATUS = {429, 500, 502, 503, 504}
@@ -24,7 +24,7 @@ def fetch_daily(symbol: str, timeout: float = 60, start: date | None = None) -> 
     """Daily OHLCV from the Yahoo chart API. This is the only price source."""
     quoted = urllib.parse.quote(symbol, safe="")
     by_date: dict[date, tuple[float | None, float | None, float | None, float, int | None]] = {}
-    tz_name = "America/New_York"
+    tz_name = "Asia/Shanghai" if symbol.endswith((".SS", ".SZ")) else "America/New_York"
     cursor = start or HISTORY_START
     # Take the later of NY and Beijing dates so A-share morning sessions are never cut off
     # when New York is still on the previous calendar day.
@@ -45,35 +45,44 @@ def fetch_daily(symbol: str, timeout: float = 60, start: date | None = None) -> 
         tz_name = chunk_zone or tz_name
         by_date.update(rows)
         cursor = end
+    fetched_at = datetime.now(NY).isoformat(timespec="seconds")
     bars = tuple(
-        Bar(date=day, close=close, open=open_, high=high, low=low, volume=volume)
+        Bar(
+            date=day,
+            close=close,
+            open=open_,
+            high=high,
+            low=low,
+            volume=volume,
+            is_closed=is_session_closed(day, tz_name, fetched_at),
+        )
         for day, (open_, high, low, close, volume) in sorted(by_date.items())
     )
     if not bars:
         raise RuntimeError(f"Yahoo returned no closes for {symbol}")
     if start is None:
         _assert_daily(symbol, bars)
-    fetched_at = datetime.now(NY).isoformat(timespec="seconds")
     return Series(symbol=symbol, timezone=tz_name, fetched_at=fetched_at, bars=bars)
 
 
 def fetch_incremental(symbol: str, existing: Series | None, timeout: float = 60) -> Series:
-    """只拉取数据库中最近日期之后的缺失 K 线并合并，不重拉几十年的历史。"""
+    """只拉取数据库中最早未收盘日期（或最近日期）之后的 K 线并合并，确保未收盘数据被重新拉取并更新收盘状态。"""
     if existing is None or not existing.bars:
         return fetch_daily(symbol, timeout=timeout)
     last_day = existing.bars[-1].date
-    # 往前留 5 天余量，覆盖当日盘中更新或节假日修正
-    start = last_day - timedelta(days=5)
+    unclosed_days = [bar.date for bar in existing.bars if not bar.is_closed]
+    anchor_day = min(unclosed_days) if unclosed_days else last_day
+    # 往前留 5 天余量，覆盖盘中未收盘重抓、跨日收盘确认或节假日修正
+    start = min(anchor_day, last_day) - timedelta(days=5)
     delta = fetch_daily(symbol, timeout=timeout, start=start)
-    merged = {bar.date: bar for bar in existing.bars}
+    tz_name = delta.timezone or existing.timezone
+    merged: dict[date, Bar] = {bar.date: bar for bar in existing.bars}
     for bar in delta.bars:
-        if bar.date >= last_day:
-            merged[bar.date] = bar
-        elif bar.date not in merged:
+        if bar.date >= start or bar.date not in merged or not merged[bar.date].is_closed:
             merged[bar.date] = bar
     bars = tuple(merged[d] for d in sorted(merged))
     _assert_daily(symbol, bars)
-    return Series(symbol=symbol, timezone=delta.timezone or existing.timezone, fetched_at=delta.fetched_at, bars=bars)
+    return Series(symbol=symbol, timezone=tz_name, fetched_at=delta.fetched_at, bars=bars)
 
 
 class _NotYetStarted(Exception):

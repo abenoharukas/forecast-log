@@ -120,20 +120,40 @@ def push_cross(url: str, token: str, market: str, doc: dict, batch: int, remote_
     remote_count = remote_info.get("count") or 0
     max_date = remote_info.get("max_date")
     first_unresolved = remote_info.get("first_unresolved")
+    first_unclosed = remote_info.get("first_unclosed")
+    unclosed_count = remote_info.get("unclosed_count") or 0
     remote_node_count = remote_info.get("node_count") or 0
 
     local_last_date = all_rows[-1]["date"] if all_rows else None
+    local_last_closed = all_rows[-1].get("is_closed", 1) if all_rows else 1
+    remote_last_closed = remote_info.get("last_is_closed", 1)
 
-    if remote_count >= len(all_rows) and max_date == local_last_date and remote_node_count >= len(bundle["nodes"]):
+    if (
+        remote_count >= len(all_rows)
+        and max_date == local_last_date
+        and remote_node_count >= len(bundle["nodes"])
+        and unclosed_count == 0
+        and remote_last_closed == local_last_closed
+    ):
         print(f"cross/{market}: D1 已是最新（{remote_count} 个交易日，最新 {max_date}），跳过写入", flush=True)
         return
 
     if remote_count > 0 and max_date:
-        # 只插入比 D1 最新日期更新的交易日，以及之前未结算（outcome IS NULL）但本地现已结算的尾部行
+        # 找出最早未收盘日往前 7 个交易日的位置，确保所有未收盘日及依赖它的结算窗口都被更新
+        unclosed_cutoff = None
+        if first_unclosed:
+            for idx, r in enumerate(all_rows):
+                if r["date"] >= first_unclosed:
+                    unclosed_cutoff = all_rows[max(0, idx - 7)]["date"]
+                    break
+        # 同时覆盖尾部最近 7 个交易日，确保盘中数据更新和收盘标记同步到 D1
+        tail_cutoff = all_rows[max(0, len(all_rows) - 7)]["date"] if all_rows else max_date
         rows = [
             r
             for r in all_rows
             if r["date"] > max_date
+            or r["date"] >= tail_cutoff
+            or (unclosed_cutoff and r["date"] >= unclosed_cutoff)
             or (first_unresolved and r["date"] >= first_unresolved and r.get("outcome") is not None)
         ]
     else:
@@ -229,10 +249,10 @@ def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl: dict |
     ladder_max = remote_tl.get("ladder") or {}
     remote_node_count = remote_tl.get("node_count") or 0
 
-    closes = [r for r in bundle["closes"] if r[1] > close_max.get(r[0], -1)]
-    rolling = [r for r in bundle["rolling"] if r[1] > rolling_max.get(r[0], -1)]
-    daily = [r for r in bundle["daily"] if r[1] > daily_max.get(r[0], -1)]
-    ladder = [r for r in bundle["ladder"] if r[2] > ladder_max.get(str(r[1]), -1)]
+    closes = [r for r in bundle["closes"] if r[1] >= max(0, close_max.get(r[0], -1) - 5)]
+    rolling = [r for r in bundle["rolling"] if r[1] >= max(0, rolling_max.get(r[0], -1) - 5)]
+    daily = [r for r in bundle["daily"] if r[1] >= max(0, daily_max.get(r[0], -1) - 5)]
+    ladder = [r for r in bundle["ladder"] if r[2] >= max(0, ladder_max.get(str(r[1]), -1) - 5)]
 
     if not any([closes, rolling, daily, ladder]) and remote_node_count >= len(bundle["nodes"]):
         print("timeline: D1 已是最新数据，跳过写入", flush=True)
@@ -252,21 +272,21 @@ def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl: dict |
             print(f"\r  timeline/{label}: {done}/{total}", end="", flush=True)
         print(f"\r  timeline/{label}: {done}/{total} ✓", flush=True)
 
-    _push_rows("close", closes, "INSERT OR IGNORE INTO timeline_close (symbol, idx, date, close) VALUES")
+    _push_rows("close", closes, "INSERT OR REPLACE INTO timeline_close (symbol, idx, date, close) VALUES")
     _push_rows(
         "rolling",
         rolling,
-        "INSERT OR IGNORE INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES",
+        "INSERT OR REPLACE INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES",
     )
     _push_rows(
         "daily",
         daily,
-        "INSERT OR IGNORE INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES",
+        "INSERT OR REPLACE INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES",
     )
     _push_rows(
         "ladder",
         ladder,
-        "INSERT OR IGNORE INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES",
+        "INSERT OR REPLACE INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES",
     )
 
     nodes = bundle["nodes"]

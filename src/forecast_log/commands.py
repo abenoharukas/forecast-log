@@ -40,19 +40,22 @@ def _features_for(root: Path, series) -> object:
 
 
 def fetch_command(root: Path) -> dict:
+    from forecast_log.db import get_series
+    from forecast_log.yahoo import fetch_incremental
+
     loaded = {}
     for symbol in SYMBOLS:
-        series = fetch_daily(symbol)
+        series = fetch_incremental(symbol, get_series(root, symbol))
         save_series(series_path(root, symbol), series)
         last = series.bars[-1]
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
-            f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
+            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），写入 {series_path(root, symbol)}"
         )
         loaded[symbol] = series
     for symbol in FEATURE_SYMBOLS:
         try:
-            series = fetch_daily(symbol)
+            series = fetch_incremental(symbol, get_series(root, symbol))
         except (RuntimeError, OSError) as error:
             print(f"{symbol} 取数失败，跳过：{error}")
             continue
@@ -60,18 +63,19 @@ def fetch_command(root: Path) -> dict:
         last = series.bars[-1]
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
-            f"{last.date.isoformat()} 收盘 {last.close}，写入 {series_path(root, symbol)}"
+            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），写入 {series_path(root, symbol)}"
         )
     for symbol in (*CROSS_SYMBOLS, *COMPARE_SYMBOLS, *CHINA_SYMBOLS):
         try:
-            series = fetch_daily(symbol)
+            series = fetch_incremental(symbol, get_series(root, symbol))
         except (RuntimeError, OSError, ValueError) as error:
             print(f"{symbol} 取数失败，跳过：{error}")
             continue
         save_series(series_path(root, symbol), series)
+        last = series.bars[-1]
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
-            f"{series.bars[-1].date.isoformat()} 收盘 {series.bars[-1].close}，写入 {series_path(root, symbol)}"
+            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），写入 {series_path(root, symbol)}"
         )
     report = reference_report(root, loaded["^VXN"], loaded["^NDX"])
     print(reference_text(report))

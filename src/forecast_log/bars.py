@@ -7,6 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 NY = ZoneInfo("America/New_York")
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,8 @@ class Bar:
     high: float | None = None
     low: float | None = None
     volume: int | None = None
+    # 该交易日在抓取时刻是否已正式收盘（未收盘数据在后续刷新时必须重新拉取并覆盖）。
+    is_closed: bool = True
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,43 @@ class Series:
     timezone: str
     fetched_at: str
     bars: tuple[Bar, ...]
+
+
+def is_session_closed(
+    session_date: date,
+    tz_name: str = "America/New_York",
+    at: datetime | str | None = None,
+) -> bool:
+    """判断某个交易日 session_date 在时间点 at 时是否已经收盘。
+
+    - A 股（Asia/Shanghai）：交易日当天 15:05（北京时间）及之后视为已收盘；早于当天的历史日期恒为已收盘。
+    - 美股及其他（America/New_York 等）：交易日当天 16:15（美东时间）及之后视为已收盘；早于当天的历史日期恒为已收盘。
+    """
+    if at is None:
+        now_dt = datetime.now(NY)
+    elif isinstance(at, str):
+        try:
+            now_dt = datetime.fromisoformat(at)
+        except ValueError:
+            return True
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=NY)
+    else:
+        now_dt = at if at.tzinfo is not None else at.replace(tzinfo=NY)
+
+    if tz_name == "Asia/Shanghai":
+        market_tz = SHANGHAI
+        close_hm = (15, 5)
+    else:
+        market_tz = NY
+        close_hm = (16, 15)
+
+    local_now = now_dt.astimezone(market_tz)
+    if session_date < local_now.date():
+        return True
+    if session_date > local_now.date():
+        return False
+    return (local_now.hour, local_now.minute) >= close_hm
 
 
 def validate_bars(bars: tuple[Bar, ...] | list[Bar]) -> None:
@@ -90,6 +130,7 @@ def save_series(path: Path, series: Series) -> None:
                 "low": bar.low,
                 "close": bar.close,
                 "volume": bar.volume,
+                "is_closed": bar.is_closed,
             }
             for bar in series.bars
         ],
@@ -106,6 +147,8 @@ def load_series(path: Path) -> Series:
         if loaded is not None:
             return loaded
     payload = json.loads(path.read_text())
+    tz_name = payload.get("timezone") or "America/New_York"
+    fetched_at = payload.get("fetched_at")
     bars = tuple(
         Bar(
             date=date.fromisoformat(row["date"]),
@@ -114,13 +157,18 @@ def load_series(path: Path) -> Series:
             high=float(row["high"]) if row.get("high") is not None else None,
             low=float(row["low"]) if row.get("low") is not None else None,
             volume=int(row["volume"]) if row.get("volume") is not None else None,
+            is_closed=(
+                bool(row["is_closed"])
+                if "is_closed" in row and row["is_closed"] is not None
+                else is_session_closed(date.fromisoformat(row["date"]), tz_name, fetched_at)
+            ),
         )
         for row in payload["bars"]
     )
     series = Series(
         symbol=payload["symbol"],
-        timezone=payload["timezone"],
-        fetched_at=payload["fetched_at"],
+        timezone=tz_name,
+        fetched_at=fetched_at,
         bars=bars,
     )
     validate_bars(series.bars)

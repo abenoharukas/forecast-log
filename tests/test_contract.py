@@ -172,3 +172,66 @@ def test_missing_session_is_not_replaced_with_another_day(tmp_path, monkeypatch)
     document = json.loads((tmp_path / "resolutions.json").read_text())
     assert document["resolutions"] == []
     assert document["failures"][0]["reason"] == "no daily close for the resolve session"
+
+
+def test_unclosed_intraday_bar_is_refetched_and_locked_after_close(tmp_path, monkeypatch):
+    from forecast_log.bars import is_session_closed
+    from forecast_log.db import get_series, unclosed_bars_summary, upsert_series
+    from forecast_log.yahoo import fetch_incremental
+
+    intraday_at = "2026-11-16T21:53:45-05:00"
+    assert not is_session_closed(date(2026, 11, 17), "Asia/Shanghai", intraday_at)
+
+    base_bars = [
+        Bar(date(2026, 11, 10) + timedelta(days=i), 3600.0 + i, open=3595.0, high=3610.0, low=3590.0, is_closed=True)
+        for i in range(6)
+    ]
+    intraday_bar = Bar(
+        date(2026, 11, 17),
+        3574.29,
+        open=3585.67,
+        high=3586.25,
+        low=3565.59,
+        volume=1000,
+        is_closed=False,
+    )
+    upsert_series(
+        tmp_path,
+        Series("000001.SS", "Asia/Shanghai", intraday_at, tuple([*base_bars, intraday_bar])),
+    )
+    assert unclosed_bars_summary(tmp_path) == {"000001.SS": ["2026-11-17"]}
+
+    post_close_at = "2026-11-17T02:30:00-05:00"
+    assert is_session_closed(date(2026, 11, 17), "Asia/Shanghai", post_close_at)
+
+    captured_starts = []
+
+    def fake_fetch_daily(symbol, timeout=60, start=None):
+        captured_starts.append(start)
+        closed_bar = Bar(
+            date(2026, 11, 17),
+            3592.88,
+            open=3585.67,
+            high=3598.00,
+            low=3565.59,
+            volume=5000,
+            is_closed=True,
+        )
+        return Series(symbol, "Asia/Shanghai", post_close_at, tuple([*base_bars[-3:], closed_bar]))
+
+    monkeypatch.setattr("forecast_log.yahoo.fetch_daily", fake_fetch_daily)
+
+    existing = get_series(tmp_path, "000001.SS")
+    assert existing is not None
+    assert not existing.bars[-1].is_closed
+
+    refreshed = fetch_incremental("000001.SS", existing)
+    upsert_series(tmp_path, refreshed)
+
+    assert captured_starts[0] <= date(2026, 11, 12)
+    final_series = get_series(tmp_path, "000001.SS")
+    assert final_series.bars[-1].close == 3592.88
+    assert final_series.bars[-1].volume == 5000
+    assert final_series.bars[-1].is_closed is True
+    assert unclosed_bars_summary(tmp_path) == {}
+

@@ -70,6 +70,7 @@ const ARRAY_COLUMNS = [
   "peak",
   "peak_at",
   "us_date",
+  "is_closed",
 ];
 
 export default {
@@ -186,7 +187,7 @@ async function getD1State(env) {
     ] = await env.DB.batch([
       env.DB.prepare("SELECT market, last_session, fetched_at FROM market"),
       env.DB.prepare(
-        "SELECT market, COUNT(*) AS cnt, MAX(date) AS max_date, MIN(CASE WHEN outcome IS NULL THEN date END) AS first_unresolved FROM session GROUP BY market",
+        "SELECT market, COUNT(*) AS cnt, MAX(date) AS max_date, MIN(CASE WHEN outcome IS NULL THEN date END) AS first_unresolved, MIN(CASE WHEN is_closed = 0 THEN date END) AS first_unclosed, SUM(CASE WHEN is_closed = 0 THEN 1 ELSE 0 END) AS unclosed_count FROM session GROUP BY market",
       ),
       env.DB.prepare("SELECT market, COUNT(*) AS cnt FROM market_node GROUP BY market"),
       env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_close GROUP BY symbol"),
@@ -206,6 +207,8 @@ async function getD1State(env) {
         count: 0,
         max_date: null,
         first_unresolved: null,
+        first_unclosed: null,
+        unclosed_count: 0,
         node_count: 0,
       };
     }
@@ -215,6 +218,8 @@ async function getD1State(env) {
         count: r.cnt,
         max_date: r.max_date,
         first_unresolved: r.first_unresolved,
+        first_unclosed: r.first_unclosed ?? null,
+        unclosed_count: r.unclosed_count ?? 0,
       };
     }
     for (const r of mktNodeRes.results ?? []) {
@@ -263,6 +268,27 @@ function beijingDateStr(date = new Date()) {
   }).format(date);
 }
 
+function isSessionClosed(sessionDate, tzName = "America/New_York", now = new Date()) {
+  const isChina = tzName === "Asia/Shanghai";
+  const targetTz = isChina ? "Asia/Shanghai" : "America/New_York";
+  const closeHm = isChina ? 15 * 60 + 5 : 16 * 60 + 15;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: targetTz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const get = (t) => parts.find((p) => p.type === t)?.value || "00";
+  const localDate = `${get("year")}-${get("month")}-${get("day")}`;
+  if (sessionDate < localDate) return 1;
+  if (sessionDate > localDate) return 0;
+  const mins = Number(get("hour")) * 60 + Number(get("minute"));
+  return mins >= closeHm ? 1 : 0;
+}
+
 async function fetchYahooBars(symbol, startUnix, endUnix) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${startUnix}&period2=${endUnix}`;
   const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 forecast-log/1.0" } });
@@ -270,7 +296,7 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
   const payload = await res.json();
   const result = payload?.chart?.result?.[0];
   if (!result) return [];
-  const tz = result?.meta?.exchangeTimezoneName || "America/New_York";
+  const tz = result?.meta?.exchangeTimezoneName || (symbol.endsWith(".SS") || symbol.endsWith(".SZ") ? "Asia/Shanghai" : "America/New_York");
   const stamps = result.timestamp || [];
   const q = result.indicators?.quote?.[0] || {};
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -279,6 +305,7 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
     month: "2-digit",
     day: "2-digit",
   });
+  const now = new Date();
   const byDate = new Map();
   for (let i = 0; i < stamps.length; i += 1) {
     const close = q.close?.[i];
@@ -291,6 +318,7 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
       low: q.low?.[i] != null ? Math.round(q.low[i] * 100) / 100 : null,
       close: Math.round(close * 100) / 100,
       volume: q.volume?.[i] != null ? Math.trunc(q.volume[i]) : null,
+      is_closed: isSessionClosed(d, tz, now),
     });
   }
   return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
@@ -304,7 +332,11 @@ async function refreshFromYahoo(env, force = false) {
       return json({ ok: false, error: "D1 尚未初始化基础数据，请先运行 make cf" }, 404);
     }
 
-    if (!force) {
+    const unclosedRows = (
+      await env.DB.prepare("SELECT market, date FROM session WHERE is_closed = 0 ORDER BY market, date").all()
+    ).results ?? [];
+
+    if (!force && unclosedRows.length === 0) {
       const allFresh = metaRows.every((m) => m.fetched_at && m.fetched_at.slice(0, 10) >= todayBj);
       if (allFresh) {
         const sessions = Object.fromEntries(metaRows.map((m) => [m.market, m.last_session]));
@@ -341,6 +373,7 @@ async function refreshFromYahoo(env, force = false) {
             prev.low = b.low;
             prev.close = b.close;
             prev.volume = b.volume;
+            prev.is_closed = b.is_closed;
           } else {
             const lastRow = tailRows[tailRows.length - 1];
             byDate.set(b.date, {
@@ -368,6 +401,7 @@ async function refreshFromYahoo(env, force = false) {
               peak_at: null,
               us_date: null,
               factors_packed: 0,
+              is_closed: b.is_closed,
             });
           }
         }
@@ -423,8 +457,8 @@ async function refreshFromYahoo(env, force = false) {
             `INSERT OR REPLACE INTO session (
               market, date, open, high, low, close, volume, entry, entry_at,
               base_close, close3, close5, hit3, flag, flag_price_only, news_veto,
-              score, threshold, outcome, target, peak, peak_at, us_date, factors_packed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              score, threshold, outcome, target, peak, peak_at, us_date, factors_packed, is_closed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).bind(
             mkt,
             r.date,
@@ -450,6 +484,7 @@ async function refreshFromYahoo(env, force = false) {
             r.peak_at,
             r.us_date,
             r.factors_packed ?? 0,
+            r.is_closed ?? 1,
           ),
         );
         const lastBar = merged[merged.length - 1];

@@ -55,13 +55,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON series_meta(slug);
 
         CREATE TABLE IF NOT EXISTS bars (
-            symbol  TEXT NOT NULL,
-            date    TEXT NOT NULL,
-            open    REAL CHECK (open IS NULL OR open > 0),
-            high    REAL CHECK (high IS NULL OR high > 0),
-            low     REAL CHECK (low IS NULL OR low > 0),
-            close   REAL NOT NULL CHECK (close > 0),
-            volume  INTEGER CHECK (volume IS NULL OR volume >= 0),
+            symbol    TEXT NOT NULL,
+            date      TEXT NOT NULL,
+            open      REAL CHECK (open IS NULL OR open > 0),
+            high      REAL CHECK (high IS NULL OR high > 0),
+            low       REAL CHECK (low IS NULL OR low > 0),
+            close     REAL NOT NULL CHECK (close > 0),
+            volume    INTEGER CHECK (volume IS NULL OR volume >= 0),
+            is_closed INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (symbol, date),
             CHECK (high IS NULL OR low IS NULL OR low <= high)
         );
@@ -142,6 +143,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             peak_at         TEXT,
             us_date         TEXT,
             factors_packed  INTEGER NOT NULL DEFAULT 0,
+            is_closed       INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (market, date)
         );
 
@@ -243,17 +245,71 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    _migrate_is_closed(conn)
+
+
+def _migrate_is_closed(conn: sqlite3.Connection) -> None:
+    """为旧版数据库平滑补充 is_closed 列，并根据最后抓取时间戳校正尾部未收盘行。"""
+    from forecast_log.bars import is_session_closed
+
+    bar_cols = {row["name"] for row in conn.execute("PRAGMA table_info(bars)").fetchall()}
+    session_cols = {row["name"] for row in conn.execute("PRAGMA table_info(session)").fetchall()}
+    added = False
+    if "is_closed" not in bar_cols:
+        conn.execute("ALTER TABLE bars ADD COLUMN is_closed INTEGER NOT NULL DEFAULT 1")
+        added = True
+    if "is_closed" not in session_cols:
+        conn.execute("ALTER TABLE session ADD COLUMN is_closed INTEGER NOT NULL DEFAULT 1")
+        added = True
+
+    if added:
+        with conn:
+            metas = conn.execute("SELECT symbol, timezone, fetched_at FROM series_meta").fetchall()
+            for meta in metas:
+                sym = meta["symbol"]
+                tz_name = meta["timezone"] or ("Asia/Shanghai" if sym.endswith((".SS", ".SZ")) else "America/New_York")
+                fetched_at = meta["fetched_at"]
+                tail_bars = conn.execute(
+                    "SELECT date FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 5",
+                    (sym,),
+                ).fetchall()
+                for row in tail_bars:
+                    closed = 1 if is_session_closed(date.fromisoformat(row["date"]), tz_name, fetched_at) else 0
+                    if not closed:
+                        conn.execute(
+                            "UPDATE bars SET is_closed = 0 WHERE symbol = ? AND date = ?",
+                            (sym, row["date"]),
+                        )
+
+            markets = conn.execute("SELECT market, instrument, fetched_at FROM market").fetchall()
+            for mkt in markets:
+                market_key = mkt["market"]
+                inst = mkt["instrument"] or ""
+                tz_name = "Asia/Shanghai" if (market_key == "ssec" or inst.endswith((".SS", ".SZ"))) else "America/New_York"
+                fetched_at = mkt["fetched_at"]
+                tail_sessions = conn.execute(
+                    "SELECT date FROM session WHERE market = ? ORDER BY date DESC LIMIT 5",
+                    (market_key,),
+                ).fetchall()
+                for row in tail_sessions:
+                    closed = 1 if is_session_closed(date.fromisoformat(row["date"]), tz_name, fetched_at) else 0
+                    if not closed:
+                        conn.execute(
+                            "UPDATE session SET is_closed = 0 WHERE market = ? AND date = ?",
+                            (market_key, row["date"]),
+                        )
 
 
 # ------------------------------------------------------------------ 股价序列
 
 
 def upsert_series(root: Path, series: Series) -> None:
-    from forecast_log.bars import validate_bars
+    from forecast_log.bars import is_session_closed, validate_bars
 
     validate_bars(series.bars)
     now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     slug = symbol_slug(series.symbol)
+    tz_name = series.timezone or ("Asia/Shanghai" if series.symbol.endswith((".SS", ".SZ")) else "America/New_York")
     conn = connect(db_path(root))
     try:
         max_row = conn.execute(
@@ -261,9 +317,28 @@ def upsert_series(root: Path, series: Series) -> None:
             (series.symbol,),
         ).fetchone()
         max_date = max_row["max_date"] if max_row and max_row["cnt"] else None
-        # 已有历史数据时只插入新日期 + 更新最后一天（盘中修正），不重复写入 4000+ 历史行
+        unclosed_dates = {
+            str(r["date"])
+            for r in conn.execute(
+                "SELECT date FROM bars WHERE symbol = ? AND is_closed = 0",
+                (series.symbol,),
+            ).fetchall()
+        }
+        # 已有历史数据时：插入新日期 + 覆盖尾部最近 5 个交易日 + 强制重刷所有之前未收盘（is_closed=0）的日期
+        tail_cutoff = (
+            series.bars[max(0, len(series.bars) - 5)].date.isoformat()
+            if series.bars
+            else max_date
+        )
         bars_to_write = (
-            [b for b in series.bars if b.date.isoformat() >= max_date]
+            [
+                b
+                for b in series.bars
+                if b.date.isoformat() >= max_date
+                or b.date.isoformat() >= tail_cutoff
+                or b.date.isoformat() in unclosed_dates
+                or not b.is_closed
+            ]
             if max_date is not None
             else list(series.bars)
         )
@@ -276,6 +351,7 @@ def upsert_series(root: Path, series: Series) -> None:
                 bar.low,
                 bar.close,
                 bar.volume,
+                1 if (bar.is_closed and is_session_closed(bar.date, tz_name, series.fetched_at)) else 0,
             )
             for bar in bars_to_write
         ]
@@ -290,19 +366,20 @@ def upsert_series(root: Path, series: Series) -> None:
                     fetched_at = excluded.fetched_at,
                     updated_at = excluded.updated_at
                 """,
-                (series.symbol, slug, series.timezone, series.fetched_at, now_iso),
+                (series.symbol, slug, tz_name, series.fetched_at, now_iso),
             )
             if rows:
                 conn.executemany(
                     """
-                    INSERT INTO bars (symbol, date, open, high, low, close, volume)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO bars (symbol, date, open, high, low, close, volume, is_closed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol, date) DO UPDATE SET
-                        open   = excluded.open,
-                        high   = excluded.high,
-                        low    = excluded.low,
-                        close  = excluded.close,
-                        volume = excluded.volume
+                        open      = excluded.open,
+                        high      = excluded.high,
+                        low       = excluded.low,
+                        close     = excluded.close,
+                        volume    = excluded.volume,
+                        is_closed = excluded.is_closed
                     """,
                     rows,
                 )
@@ -316,7 +393,7 @@ def _row_to_series(conn: sqlite3.Connection, meta: sqlite3.Row) -> Series:
     symbol = meta["symbol"]
     bar_rows = conn.execute(
         """
-        SELECT date, open, high, low, close, volume
+        SELECT date, open, high, low, close, volume, is_closed
         FROM bars
         WHERE symbol = ?
         ORDER BY date ASC
@@ -331,6 +408,7 @@ def _row_to_series(conn: sqlite3.Connection, meta: sqlite3.Row) -> Series:
             high=float(row["high"]) if row["high"] is not None else None,
             low=float(row["low"]) if row["low"] is not None else None,
             volume=int(row["volume"]) if row["volume"] is not None else None,
+            is_closed=bool(row["is_closed"]) if row["is_closed"] is not None else True,
         )
         for row in bar_rows
     )
@@ -342,6 +420,24 @@ def _row_to_series(conn: sqlite3.Connection, meta: sqlite3.Row) -> Series:
     )
     validate_bars(series.bars)
     return series
+
+
+def unclosed_bars_summary(root: Path) -> dict[str, list[str]]:
+    """返回数据库中所有尚未收盘（is_closed = 0）的 K 线：{symbol: [date, ...]}。"""
+    path = db_path(root)
+    if not path.is_file():
+        return {}
+    conn = connect(path)
+    try:
+        rows = conn.execute(
+            "SELECT symbol, date FROM bars WHERE is_closed = 0 ORDER BY symbol ASC, date ASC"
+        ).fetchall()
+        out: dict[str, list[str]] = {}
+        for row in rows:
+            out.setdefault(str(row["symbol"]), []).append(str(row["date"]))
+        return out
+    finally:
+        conn.close()
 
 
 def get_series(root: Path, symbol: str) -> Series | None:

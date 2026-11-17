@@ -278,6 +278,7 @@ def document(root: Path) -> dict:
         "outcome": [int(close5[i] > base_close[i]) if np.isfinite(peak[i]) else None for i in kept],
         "peak": [round(float(peak[i]), 2) if np.isfinite(peak[i]) else None for i in kept],
         "peak_at": [peak_at[i] for i in kept],
+        "is_closed": [1 if series.bars[i].is_closed else 0 for i in kept],
         "summary": {
             "all": summary("1900", "2100", flagged),
             "holdout": summary(HOLDOUT, "2100", flagged),
@@ -366,6 +367,7 @@ def document(root: Path) -> dict:
             if signal_doc["time"] and int(np.searchsorted(signal_doc["time"], dates[-1], side="left")) > 0
             else None,
             "flag": int(kept[-1] in all_flagged) if kept else 0,
+            "is_closed": bool(series.bars[kept[-1]].is_closed) if kept else True,
         },
         "signals_seen": len(rows),
     }

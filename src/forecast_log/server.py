@@ -74,18 +74,27 @@ ASSET_DIRS = ("/fonts/", "/vendor/")
 
 
 def refresh_cross_data() -> dict:
-    """只从 Yahoo 增量拉取数据库中最近日期之后的缺失 K 线，并增量更新数据库信号。"""
+    """从 Yahoo 增量拉取所有未收盘（is_closed=0）及缺失的新 K 线，更新数据库并在已收盘时打上已收盘标记。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    from forecast_log.artifacts_db import (
+        cross_market_status,
+        cross_sessions_summary,
+        unclosed_sessions_summary,
+    )
     from forecast_log.bars import save_series
     from forecast_log.china import CHINA_SYMBOLS
     from forecast_log.commands import COMPARE_SYMBOLS, cross_command
-    from forecast_log.db import get_series
+    from forecast_log.db import get_series, unclosed_bars_summary
     from forecast_log.paths import series_path
     from forecast_log.yahoo import fetch_incremental
 
+    pre_unclosed_sessions = unclosed_sessions_summary(ROOT)
+    pre_unclosed_bars = unclosed_bars_summary(ROOT)
+
     symbols = ("^NDX", "^TNX", "DX-Y.NYB", "HYG", "TLT", "^VIX", *COMPARE_SYMBOLS, *CHINA_SYMBOLS)
     updated: dict[str, str] = {}
+    symbol_closed: dict[str, bool] = {}
     errors: dict[str, str] = {}
 
     def _fetch_one(sym: str) -> tuple[str, object]:
@@ -99,55 +108,109 @@ def refresh_cross_data() -> dict:
             try:
                 _, series = fut.result()
                 save_series(series_path(ROOT, sym), series)
-                updated[sym] = series.bars[-1].date.isoformat()
+                last_bar = series.bars[-1]
+                updated[sym] = last_bar.date.isoformat()
+                symbol_closed[sym] = bool(last_bar.is_closed)
             except Exception as exc:
                 errors[sym] = str(exc)
 
     cross_command(ROOT)
 
-    from forecast_log.artifacts_db import cross_sessions_summary
+    post_status = cross_market_status(ROOT)
+    post_unclosed_sessions = unclosed_sessions_summary(ROOT)
+    newly_closed: dict[str, list[str]] = {}
+    refreshed_unclosed: dict[str, list[str]] = {}
+    for mkt, prev_dates in pre_unclosed_sessions.items():
+        if prev_dates:
+            refreshed_unclosed[mkt] = prev_dates
+        still = set(post_unclosed_sessions.get(mkt) or [])
+        settled = [d for d in prev_dates if d not in still]
+        if settled:
+            newly_closed[mkt] = settled
 
     return {
         "ok": True,
         "refreshed_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
         "beijing_date": datetime.now(SHANGHAI).date().isoformat(),
         "sessions": cross_sessions_summary(ROOT),
+        "market_status": post_status,
         "updated": updated,
+        "symbol_closed": symbol_closed,
+        "refreshed_unclosed": refreshed_unclosed,
+        "pre_unclosed_bars": pre_unclosed_bars,
+        "newly_closed": newly_closed,
+        "still_open": post_unclosed_sessions,
         "errors": errors,
     }
 
 
-def _fetched_beijing_date(raw: str | None) -> str | None:
+def _parse_fetched_dt(raw: str | None) -> datetime | None:
     if not raw:
         return None
     try:
         dt = datetime.fromisoformat(raw)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=SHANGHAI)
-        return dt.astimezone(SHANGHAI).date().isoformat()
+            dt = dt.replace(tzinfo=ZoneInfo("America/New_York"))
+        return dt
     except Exception:
         return None
 
 
 def _needs_refresh() -> bool:
-    from forecast_log.artifacts_db import cross_fetched_at
+    from forecast_log.artifacts_db import cross_fetched_at, unclosed_sessions_summary
+    from forecast_log.db import unclosed_bars_summary
 
-    today_bj = datetime.now(SHANGHAI).date().isoformat()
+    # 1. 只要数据库中存在任何未收盘（is_closed = 0）的交易日或 K 线，必须重新拉取最新行情
+    if unclosed_sessions_summary(ROOT) or unclosed_bars_summary(ROOT):
+        return True
+
+    ny_tz = ZoneInfo("America/New_York")
+    now_sh = datetime.now(SHANGHAI)
+    now_ny = datetime.now(ny_tz)
+
+    # 2. 按各市场所在时区的开盘/收盘时间点检查是否已有新交易时段或收盘后尚未重抓
     for market in ("ndx", "qqq", "ssec"):
-        fetched_day = _fetched_beijing_date(cross_fetched_at(ROOT, market))
-        if fetched_day is None or fetched_day < today_bj:
+        fetched_dt = _parse_fetched_dt(cross_fetched_at(ROOT, market))
+        if fetched_dt is None:
             return True
+        if market == "ssec":
+            local_now = now_sh
+            local_fetched = fetched_dt.astimezone(SHANGHAI)
+            open_hm, close_hm = (9, 25), (15, 5)
+        else:
+            local_now = now_ny
+            local_fetched = fetched_dt.astimezone(ny_tz)
+            open_hm, close_hm = (9, 30), (16, 15)
+
+        if local_fetched.date() < local_now.date():
+            # 跨日后：若前一日是在收盘前抓的，或者今日已进入交易时段，则需要刷新
+            if (local_fetched.hour, local_fetched.minute) < close_hm:
+                return True
+            if local_now.weekday() < 5 and (local_now.hour, local_now.minute) >= open_hm:
+                return True
+        elif local_fetched.date() == local_now.date():
+            # 同日内：若上次抓取在收盘前，且当前已过收盘时间，必须重抓收盘终值
+            if (local_fetched.hour, local_fetched.minute) < close_hm <= (local_now.hour, local_now.minute):
+                return True
+
     return False
 
 
 def _cached_status() -> dict:
-    from forecast_log.artifacts_db import cross_sessions_summary
+    from forecast_log.artifacts_db import (
+        cross_market_status,
+        cross_sessions_summary,
+        unclosed_sessions_summary,
+    )
 
     return {
         "ok": True,
         "cached": True,
         "beijing_date": datetime.now(SHANGHAI).date().isoformat(),
         "sessions": cross_sessions_summary(ROOT),
+        "market_status": cross_market_status(ROOT),
+        "newly_closed": {},
+        "still_open": unclosed_sessions_summary(ROOT),
     }
 
 

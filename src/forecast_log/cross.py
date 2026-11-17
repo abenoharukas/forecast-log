@@ -208,6 +208,7 @@ class Call:
     news_bearish: int = 0  # LLM：强利空意外（否决条件）
     news_bullish: int = 0  # LLM：强利多意外（加分条件）
     riskoff_hits: int = 0  # 正则：risk-off 概念命中数（可选否决）
+    is_closed: int = 1     # 该交易日行情是否已正式收盘（0=盘中未收盘，1=已收盘）
 
 
 CPI_WINDOW = 3        # 离 CPI 几天内算「临近」
@@ -373,6 +374,7 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
             [np.nan if bar.low is None else bar.low for bar in series.bars], dtype=float
         )
         volumes = [bar.volume for bar in series.bars]
+        closed_flags = [1 if bar.is_closed else 0 for bar in series.bars]
     else:
         # 精确按日期取价：缺的那天就是「测不了」，不拿前一天的收盘顶替。
         def _num(val: float | None) -> float:
@@ -382,11 +384,16 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
             bar.date.isoformat(): (bar.open, bar.high, bar.low, bar.close, bar.volume)
             for bar in target.bars
         }
+        target_closed = {bar.date.isoformat(): bool(bar.is_closed) for bar in target.bars}
         opens = np.array([_num(price.get(day, (None,) * 5)[0]) for day in dates], dtype=float)
         highs = np.array([_num(price.get(day, (None,) * 5)[1]) for day in dates], dtype=float)
         lows = np.array([_num(price.get(day, (None,) * 5)[2]) for day in dates], dtype=float)
         closes = np.array([_num(price.get(day, (None,) * 5)[3]) for day in dates], dtype=float)
         volumes = [price.get(day, (None,) * 5)[4] for day in dates]
+        closed_flags = [
+            1 if (bar.is_closed and target_closed.get(bar.date.isoformat(), True)) else 0
+            for bar in series.bars
+        ]
     calendar = _calendar_distance(root, dates)
     news, _ = _news_labels(root)
     keyword_features = _keyword_features(root, dates)
@@ -490,6 +497,7 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
                 news_bearish=bearish,
                 news_bullish=bullish,
                 riskoff_hits=keyword_features.get(dates[i], 0),
+                is_closed=closed_flags[i],
             )
         )
     return out
@@ -701,6 +709,7 @@ def document(
         "target": [row.target for row in rows],
         "peak": [round(row.peak, 2) if row.peak is not None else None for row in rows],
         "peak_at": [row.peak_at for row in rows],
+        "is_closed": [row.is_closed for row in rows],
         "summary": {**with_news, "holdout_from": holdout},
         "summary_price_only": {**price_only, "holdout_from": holdout},
         "context": _runtime_context(root),
@@ -716,6 +725,7 @@ def document(
             "flag": rows[-1].flag,
             "flag_price_only": rows[-1].price_only,
             "news_veto": bool(rows[-1].news_veto),
+            "is_closed": bool(rows[-1].is_closed),
         },
     }
 

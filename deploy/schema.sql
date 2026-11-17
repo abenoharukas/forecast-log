@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS session (
   peak_at         TEXT,
   us_date         TEXT,
   factors_packed  INTEGER NOT NULL DEFAULT 0,  -- 4 bits per switch, matching factor_key.position
+  is_closed       INTEGER NOT NULL DEFAULT 1,  -- 1 = closed final print, 0 = intraday unclosed
   PRIMARY KEY (market, date)
 );
 

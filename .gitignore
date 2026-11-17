@@ -15,3 +15,4 @@ others.md
 deploy/dist/
 .wrangler/
 .dev.vars
+.DS_Store

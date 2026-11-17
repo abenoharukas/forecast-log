@@ -23,7 +23,11 @@ from forecast_log.news_ab import load_labeler
 
 
 def variants(root: Path, slugs: list[str], threshold: float = 0.6) -> dict[str, dict]:
-    cross = json.loads((root / "artifacts" / "cross.json").read_text())
+    from forecast_log.artifacts_db import load_cross_market
+
+    cross = load_cross_market(root, "ndx")
+    if cross is None:
+        raise FileNotFoundError("数据库中缺少 ndx 信号，请先运行 forecast-log cross")
     time = cross["time"]
     price_flag = dict(zip(time, cross["flag_price_only"]))
     outcome = dict(zip(time, cross["outcome"]))

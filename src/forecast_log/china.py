@@ -71,8 +71,12 @@ def _sessions(
 
 
 def entries(root: Path) -> list[Entry]:
-    """信号来自 `artifacts/cross.json`（美股日历），只把入场日和窗口换成 A 股的。"""
-    signal_doc = json.loads((root / "artifacts" / "cross.json").read_text())
+    """信号来自数据库里的 NDX 信号（美股日历），只把入场日和窗口换成 A 股的。"""
+    from forecast_log.artifacts_db import load_cross_market
+
+    signal_doc = load_cross_market(root, "ndx")
+    if signal_doc is None:
+        raise FileNotFoundError("数据库中缺少 ndx 信号，请先运行 forecast-log cross")
     series = load_series(series_path(root, TARGET))
     dates, opens, _highs, _lows, closes, _volumes = _sessions(series)
     n = len(dates)
@@ -150,7 +154,11 @@ def _component_row(signal_doc: dict, dates: list[str], kept: list[int], i: int) 
 
 def document(root: Path) -> dict:
     """页面用的那一份：信号原封不动，换的只有入场日和窗口。"""
-    signal_doc = json.loads((root / "artifacts" / "cross.json").read_text())
+    from forecast_log.artifacts_db import load_cross_market
+
+    signal_doc = load_cross_market(root, "ndx")
+    if signal_doc is None:
+        raise FileNotFoundError("数据库中缺少 ndx 信号，请先运行 forecast-log cross")
     series = load_series(series_path(root, TARGET))
     dates, opens, highs, lows, closes, volumes = _sessions(series)
     n = len(dates)

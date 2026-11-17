@@ -1,17 +1,26 @@
 -- Cloudflare D1 schema for the forecast-log dashboard.
 --
 -- Nothing here is a JSON blob: every number the pages need lives in a typed column.
--- The two generic tables exist because the three markets genuinely disagree about
--- shape (the A-share artefact has `bands`/`reference`, QQQ has `comparison`), so a
--- fixed table would be half NULLs.
+-- The generic node tables exist because nested metadata/summaries vary in shape
+-- across markets, timelines, and evaluation runs.
 --
+-- Cross-asset signals (/api/cross/<market>):
 --   market        one row per tab (ndx / qqq / ssec): the question and its rule
 --   session       one row per trading day: OHLCV plus the derived signal columns
 --   factor_key    which 4-bit slot of session.factors_packed means which switch
 --   contexts      the switches the page renders as checkboxes
 --   market_node   every nested value as one scalar row, addressed by path
 --
--- Rows: ~13,900 sessions, ~30 kv per market, ~11 factor keys. Well inside the free tier.
+-- VXN timeline (/api/timeline):
+--   timeline_close    vxn / ndx daily closes
+--   timeline_rolling  rolling horizon forecasts vs actuals
+--   timeline_daily    daily risk-band series
+--   timeline_ladder   per-horizon (1..7) median/low/high series
+--   timeline_node     nested metadata (summary, pending, forward, questions, tomorrow)
+--
+-- Agent evaluation (/api/agent/<dataset>):
+--   agent_dataset     one row per dataset (deepseek / qwen)
+--   agent_node        all evaluation fields as scalar rows addressed by path
 
 CREATE TABLE IF NOT EXISTS market (
   market        TEXT PRIMARY KEY,       -- ndx | qqq | ssec
@@ -83,7 +92,76 @@ CREATE TABLE IF NOT EXISTS contexts (
 CREATE TABLE IF NOT EXISTS market_node (
   market TEXT NOT NULL,
   path   TEXT NOT NULL,               -- summary.n | calendar.counts.fomc | comparison.rows.0.hit
-  kind   TEXT NOT NULL,               -- num | int | str | bool | null
+  kind   TEXT NOT NULL,               -- num | int | str | bool | null | list | obj
   value  TEXT,
   PRIMARY KEY (market, path)
+);
+
+-- ------------------------------------------------------------------ VXN timeline
+
+CREATE TABLE IF NOT EXISTS timeline_close (
+  symbol TEXT NOT NULL,               -- vxn | ndx
+  idx    INTEGER NOT NULL,
+  date   TEXT NOT NULL,
+  close  REAL NOT NULL,
+  PRIMARY KEY (symbol, idx)
+);
+
+CREATE TABLE IF NOT EXISTS timeline_rolling (
+  symbol TEXT NOT NULL,               -- vxn | ndx
+  idx    INTEGER NOT NULL,
+  time   TEXT NOT NULL,
+  as_of  TEXT,
+  anchor REAL,
+  median REAL,
+  low    REAL,
+  high   REAL,
+  actual REAL,
+  PRIMARY KEY (symbol, idx)
+);
+
+CREATE TABLE IF NOT EXISTS timeline_daily (
+  symbol   TEXT NOT NULL,             -- vxn | ndx
+  idx      INTEGER NOT NULL,
+  time     TEXT NOT NULL,
+  median   REAL,
+  low      REAL,
+  high     REAL,
+  actual   REAL,
+  previous REAL,
+  risk     INTEGER,
+  PRIMARY KEY (symbol, idx)
+);
+
+CREATE TABLE IF NOT EXISTS timeline_ladder (
+  symbol  TEXT NOT NULL,              -- vxn
+  horizon INTEGER NOT NULL,           -- 1..7
+  idx     INTEGER NOT NULL,
+  median  REAL,
+  low     REAL,
+  high    REAL,
+  PRIMARY KEY (symbol, horizon, idx)
+);
+
+CREATE TABLE IF NOT EXISTS timeline_node (
+  path  TEXT NOT NULL PRIMARY KEY,
+  kind  TEXT NOT NULL,
+  value TEXT
+);
+
+-- ------------------------------------------------------------------ Agent eval
+
+CREATE TABLE IF NOT EXISTS agent_dataset (
+  dataset          TEXT PRIMARY KEY,  -- deepseek | qwen
+  n                INTEGER,
+  scored_on_shared INTEGER,
+  generated_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_node (
+  dataset TEXT NOT NULL,
+  path    TEXT NOT NULL,
+  kind    TEXT NOT NULL,
+  value   TEXT,
+  PRIMARY KEY (dataset, path)
 );

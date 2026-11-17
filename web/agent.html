@@ -120,13 +120,13 @@
     <header>
       <div class="head-left">
         <h1>Agent evaluation</h1>
-        <span class="sub" id="config">loading artifacts/agent_eval_summary.json…</span>
+        <span class="sub" id="config">loading /api/agent/deepseek…</span>
         <span class="sub" id="stamp"></span>
         <span class="sub"><a href="/">Signals →</a> · <a href="/vxn">VXN →</a></span>
       </div>
       <div class="market-tabs" role="tablist" aria-label="Evaluation dataset">
-        <button type="button" class="market-tab active" data-src="/artifacts/agent_eval_summary.json">DeepSeek</button>
-        <button type="button" class="market-tab" data-src="/artifacts/agent_eval_qwen_summary.json">Qwen</button>
+        <button type="button" class="market-tab active" data-src="/api/agent/deepseek">DeepSeek</button>
+        <button type="button" class="market-tab" data-src="/api/agent/qwen">Qwen</button>
       </div>
     </header>
 
@@ -402,7 +402,7 @@
         loadReport(tab.dataset.src);
       });
     });
-    loadReport("/artifacts/agent_eval_summary.json");
+    loadReport("/api/agent/deepseek");
     });
   </script>
 </body>

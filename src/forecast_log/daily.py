@@ -261,10 +261,11 @@ def gate(documents: list[dict], day: date) -> tuple[list[dict], int]:
 
 def _readings(root: Path, day: date) -> dict:
     """当天价格侧的数字，给 LLM 当上下文，也用来判断它和信号是否一致。"""
+    from forecast_log.artifacts_db import load_cross_market
+
     out: dict = {"as_of": day.isoformat()}
-    cross_path = root / "artifacts" / "cross.json"
-    if cross_path.is_file():
-        cross = json.loads(cross_path.read_text())
+    cross = load_cross_market(root, "ndx")
+    if cross is not None:
         latest = cross.get("latest") or {}
         if latest.get("date") == day.isoformat():
             out.update(
@@ -411,10 +412,11 @@ def gate(documents: list[dict], day: date) -> tuple[list[dict], int]:
 
 def _readings(root: Path, day: date) -> dict:
     """当天价格侧的数字，给 LLM 当上下文，也用来判断它和信号是否一致。"""
+    from forecast_log.artifacts_db import load_cross_market
+
     out: dict = {"as_of": day.isoformat()}
-    cross_path = root / "artifacts" / "cross.json"
-    if cross_path.is_file():
-        cross = json.loads(cross_path.read_text())
+    cross = load_cross_market(root, "ndx")
+    if cross is not None:
         latest = cross.get("latest") or {}
         if latest.get("date") == day.isoformat():
             out.update(

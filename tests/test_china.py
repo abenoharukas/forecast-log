@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from forecast_log import china
+from forecast_log.artifacts_db import load_cross_market
 from forecast_log.bars import load_series
 from forecast_log.paths import series_path
 
@@ -8,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _have_inputs() -> bool:
-    return (ROOT / "artifacts" / "cross.json").is_file() and series_path(ROOT, china.TARGET).exists()
+    return load_cross_market(ROOT, "ndx") is not None and series_path(ROOT, china.TARGET).exists()
 
 
 def test_every_signal_enters_on_the_first_a_share_session_after_the_us_date():
@@ -57,9 +58,8 @@ def test_the_entry_is_the_open_and_the_window_starts_there():
 def test_the_signal_itself_is_not_rebuilt_for_this_market():
     if not _have_inputs():
         return
-    import json
-
-    signals = json.loads((ROOT / "artifacts" / "cross.json").read_text())
+    signals = load_cross_market(ROOT, "ndx")
+    assert signals is not None
     rows = china.entries(ROOT)
     entered = {row.us_date for row in rows if row.outcome is not None}
     flagged = {day for day, flag in zip(signals["time"], signals["flag"]) if flag}

@@ -676,7 +676,7 @@
       applySpan();
     });
 
-    fetch("/artifacts/timeline.json?t=" + Date.now())
+    fetch("/api/timeline?t=" + Date.now())
       .then((response) => {
         if (!response.ok) throw new Error(String(response.status));
         return response.json();
@@ -686,7 +686,7 @@
         showQuestion();
       })
       .catch(() => {
-        document.querySelector("#leg-date").textContent = "timeline.json not available";
+        document.querySelector("#leg-date").textContent = "timeline data not available";
       });
     });
   </script>

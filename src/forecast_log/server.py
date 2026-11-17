@@ -103,31 +103,22 @@ def refresh_cross_data() -> dict:
 
     cross_command(ROOT)
 
-    sessions = {}
-    for key, fname in (("ndx", "cross.json"), ("qqq", "cross_qqq.json"), ("ssec", "cross_ssec.json")):
-        path = ROOT / "artifacts" / fname
-        if path.is_file():
-            doc = json.loads(path.read_text())
-            sessions[key] = doc.get("last_session")
+    from forecast_log.artifacts_db import cross_sessions_summary
 
     return {
         "ok": True,
         "refreshed_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
         "beijing_date": datetime.now(SHANGHAI).date().isoformat(),
-        "sessions": sessions,
+        "sessions": cross_sessions_summary(ROOT),
         "updated": updated,
         "errors": errors,
     }
 
 
-def _fetched_beijing_date(path: Path) -> str | None:
-    if not path.is_file():
+def _fetched_beijing_date(raw: str | None) -> str | None:
+    if not raw:
         return None
     try:
-        doc = json.loads(path.read_text())
-        raw = doc.get("fetched_at")
-        if not raw:
-            return None
         dt = datetime.fromisoformat(raw)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=SHANGHAI)
@@ -137,35 +128,29 @@ def _fetched_beijing_date(path: Path) -> str | None:
 
 
 def _needs_refresh() -> bool:
+    from forecast_log.artifacts_db import cross_fetched_at
+
     today_bj = datetime.now(SHANGHAI).date().isoformat()
-    for fname in ("cross.json", "cross_qqq.json", "cross_ssec.json"):
-        path = ROOT / "artifacts" / fname
-        fetched_day = _fetched_beijing_date(path)
+    for market in ("ndx", "qqq", "ssec"):
+        fetched_day = _fetched_beijing_date(cross_fetched_at(ROOT, market))
         if fetched_day is None or fetched_day < today_bj:
             return True
     return False
 
 
 def _cached_status() -> dict:
-    sessions = {}
-    for key, fname in (("ndx", "cross.json"), ("qqq", "cross_qqq.json"), ("ssec", "cross_ssec.json")):
-        path = ROOT / "artifacts" / fname
-        if path.is_file():
-            doc = json.loads(path.read_text())
-            sessions[key] = doc.get("last_session")
+    from forecast_log.artifacts_db import cross_sessions_summary
+
     return {
         "ok": True,
         "cached": True,
         "beijing_date": datetime.now(SHANGHAI).date().isoformat(),
-        "sessions": sessions,
+        "sessions": cross_sessions_summary(ROOT),
     }
 
 
-MARKET_ARTIFACTS = {"ndx": "cross.json", "qqq": "cross_qqq.json", "ssec": "cross_ssec.json"}
-
-
 class Handler(http.server.SimpleHTTPRequestHandler):
-    """Serves the repo root (so /web/*.html, /artifacts/*.json and /data/* all resolve)."""
+    """Serves the repo root (so /web/*.html and /api/* all resolve)."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -204,15 +189,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.path = "/" + relative.lstrip("/") + (f"?{query}" if query else "")
         super().do_GET()
 
-    def _serve_cross_api(self, slug: str) -> None:
-        """本地开发也走同一个地址；线上这个地址由 Worker 从 D1 拼出来。"""
-        name = MARKET_ARTIFACTS.get(slug)
-        path = ROOT / "artifacts" / name if name else None
-        if path is None or not path.is_file():
-            body = json.dumps({"ok": False, "error": f"no data for {slug}"}, ensure_ascii=False).encode()
+    def _send_json(self, doc: dict | None, missing_msg: str) -> None:
+        if doc is None:
+            body = json.dumps({"ok": False, "error": missing_msg}, ensure_ascii=False).encode("utf-8")
             self.send_response(404)
         else:
-            body = path.read_bytes()
+            body = json.dumps(doc, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -227,7 +209,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         api = re.fullmatch(r"/api/cross/([a-z-]+)", path.rstrip("/"))
         if api:
-            self._serve_cross_api(api.group(1))
+            from forecast_log.artifacts_db import load_cross_market
+
+            slug = api.group(1)
+            self._send_json(load_cross_market(ROOT, slug), f"no data for {slug}")
+            return
+
+        if path.rstrip("/") == "/api/timeline":
+            from forecast_log.artifacts_db import load_timeline
+
+            self._send_json(load_timeline(ROOT), "no timeline data in database")
+            return
+
+        agent_api = re.fullmatch(r"/api/agent/([a-z0-9_-]+)", path.rstrip("/"))
+        if agent_api:
+            from forecast_log.artifacts_db import load_agent_eval
+
+            dataset = agent_api.group(1)
+            self._send_json(load_agent_eval(ROOT, dataset), f"no agent data for {dataset}")
             return
 
         clean = path.rstrip("/") or "/"

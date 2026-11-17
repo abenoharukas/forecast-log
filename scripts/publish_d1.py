@@ -1,21 +1,12 @@
-"""Push the computed signals into Cloudflare D1, so the deployed site reads a database.
+"""Push dashboard data from local SQLite (`data/forecast.db`) into Cloudflare D1.
 
-The Python pipeline still computes `artifacts/cross*.json` locally -- that is where the
-numpy work happens. This script only moves the numbers into D1; the Worker then serves
-`/api/cross/<market>` straight out of the tables, and no JSON file is published.
+Reads directly from `data/forecast.db` (no `artifacts/*.json` files needed) and pushes:
+- cross signals (`ndx`, `qqq`, `ssec`)
+- VXN timeline (`timeline`)
+- agent evaluation (`deepseek`, `qwen`)
 
     INGEST_TOKEN=... python3 scripts/publish_d1.py --url https://<worker>
     INGEST_TOKEN=... python3 scripts/publish_d1.py --url http://127.0.0.1:8787   # wrangler dev
-
-Layout it writes:
-
-    market       one row per tab: instrument, question, rule, first/last session
-    session      one row per trading day: OHLCV + derived signal columns
-    factor_key   which bit of session.factors_mask is which switch
-    contexts     the switch definitions the page renders
-    market_node  every nested value as one scalar row, addressed by a dotted path
-
-`/api/ingest` is the only writer, so local and production go through the same code path.
 """
 
 from __future__ import annotations
@@ -23,146 +14,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
-MARKETS = {"ndx": "cross.json", "qqq": "cross_qqq.json", "ssec": "cross_ssec.json"}
-
-SESSION_COLUMNS = (
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
-    "entry",
-    "entry_at",
-    "base_close",
-    "close3",
-    "close5",
-    "hit3",
-    "flag",
-    "flag_price_only",
-    "news_veto",
-    "score",
-    "threshold",
-    "outcome",
-    "target",
-    "peak",
-    "peak_at",
-    "us_date",
+from forecast_log.artifacts_db import (  # noqa: E402
+    SESSION_COLUMNS,
+    build_agent_bundle,
+    build_cross_bundle,
+    build_timeline_bundle,
+    load_agent_eval,
+    load_cross_market,
+    load_timeline,
 )
-
-# 这些顶层键不进 market 行，拆成路径存 market_node
-SCALAR_ROOTS = (
-    "summary",
-    "summary_price_only",
-    "context",
-    "comparison",
-    "bands",
-    "reference",
-    "signals_seen",
-    "news",
-    "latest",
-)
-
-
-def classify(value):
-    if value is None:
-        return "null", None
-    if isinstance(value, bool):
-        return "bool", "1" if value else "0"
-    if isinstance(value, int):
-        return "int", str(value)
-    if isinstance(value, float):
-        return "num", repr(value)
-    return "str", str(value)
-
-
-def walk(prefix: str, value, out: list[tuple[str, str, str | None]]) -> None:
-    """Nested dict/list -> one row per scalar, path carries the structure."""
-    if isinstance(value, dict):
-        if not value:
-            out.append((prefix, "obj", None))
-        for key, inner in value.items():
-            walk(f"{prefix}.{key}" if prefix else str(key), inner, out)
-    elif isinstance(value, list):
-        if not value:
-            out.append((prefix, "list", None))  # 空数组也要留个位置，否则结构就少一层
-        for index, inner in enumerate(value):
-            walk(f"{prefix}.{index}", inner, out)
-    else:
-        kind, text = classify(value)
-        out.append((prefix, kind, text))
-
-
-def build(doc: dict, market: str) -> dict:
-    nodes: list[tuple[str, str, str | None]] = []
-    for key in SCALAR_ROOTS:
-        if key in doc:
-            walk(key, doc[key], nodes)
-    if "calendar" in doc:
-        walk("calendar", doc["calendar"], nodes)
-    if isinstance(doc.get("question"), dict):
-        # question.horizon/text/rule 已经是 market 表的列，这里只补 factors 数组
-        if "factors" in doc["question"]:
-            walk("question.factors", doc["question"]["factors"], nodes)
-
-    components = doc.get("components") or {}
-    factor_keys = list(components.keys())
-    positions = {key: i for i, key in enumerate(factor_keys)}
-
-    sessions = []
-    for index, day in enumerate(doc["time"]):
-        # 每个开关占 4 bit（取值 0..15，riskoff_hits 最大是 5），11 个开关 = 44 bit，
-        # 仍在 JS 安全整数范围内，所以一条 session 行就能装下全部 factors
-        mask = 0
-        for key, slot in positions.items():
-            series = components.get(key) or []
-            if index < len(series) and series[index]:
-                mask |= int(series[index]) << (4 * slot)
-        row = {"date": day, "factors_packed": mask}
-        for column in SESSION_COLUMNS:
-            series = doc.get(column)
-            row[column] = series[index] if isinstance(series, list) and index < len(series) else None
-        sessions.append(row)
-
-    contexts = [
-        {
-            "position": position,
-            "key": ctx["key"],
-            "label": ctx.get("label"),
-            "kind": ctx.get("kind"),
-            "required": 1 if ctx.get("required") else 0,
-            "threshold": ctx.get("threshold"),
-            "group_name": ctx.get("group"),
-            "group_label": ctx.get("group_label"),
-            "note": ctx.get("note"),
-            "available_from": ctx.get("available_from"),
-        }
-        for position, ctx in enumerate(doc.get("contexts") or [])
-    ]
-
-    question = doc.get("question") or {}
-    return {
-        "market": market,
-        "row": {
-            "market": market,
-            "instrument": doc.get("instrument"),
-            "name": doc.get("name"),
-            "horizon": question.get("horizon"),
-            "question": question.get("text"),
-            "rule": question.get("rule"),
-            "first_session": doc.get("first_session"),
-            "last_session": doc.get("last_session"),
-            "fetched_at": doc.get("fetched_at"),
-        },
-        "nodes": nodes,
-        "contexts": contexts,
-        "factor_keys": [[i, key] for i, key in enumerate(factor_keys)],
-        "sessions": sessions,
-    }
 
 
 def literal(value) -> str:
@@ -175,8 +42,6 @@ def literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-# 默认不走环境里的 http_proxy：目标通常是本机 wrangler 或 Cloudflare，
-# 走代理反而连不上（本机代理挂掉时表现为 502）。
 OPENER = urllib.request.build_opener(
     urllib.request.ProxyHandler({"http": os.environ["INGEST_PROXY"], "https": os.environ["INGEST_PROXY"]})
     if os.environ.get("INGEST_PROXY")
@@ -203,8 +68,8 @@ def chunks(seq, size):
         yield seq[i : i + size]
 
 
-def push(url: str, token: str, bundle: dict, batch: int) -> None:
-    market = bundle["market"]
+def push_cross(url: str, token: str, market: str, doc: dict, batch: int) -> None:
+    bundle = build_cross_bundle(doc, market)
     post(url, token, {"market": market, "op": "clear"})
 
     columns = ("market", "date", *SESSION_COLUMNS, "factors_packed")
@@ -214,14 +79,13 @@ def push(url: str, token: str, bundle: dict, batch: int) -> None:
             "(" + literal(market) + "," + ",".join(literal(row.get(column)) for column in columns[1:]) + ")"
             for row in part
         )
-        post(url, token, {"market": market, "op": "sql", "sql": f"INSERT INTO session ({','.join(columns)}) VALUES {values}"})
+        post(url, token, {"op": "sql", "sql": f"INSERT INTO session ({','.join(columns)}) VALUES {values}"})
 
     row = bundle["row"]
     post(
         url,
         token,
         {
-            "market": market,
             "op": "sql",
             "sql": "INSERT OR REPLACE INTO market ({}) VALUES ({})".format(
                 ",".join(row.keys()), ",".join(literal(v) for v in row.values())
@@ -233,7 +97,6 @@ def push(url: str, token: str, bundle: dict, batch: int) -> None:
             url,
             token,
             {
-                "market": market,
                 "op": "sql",
                 "sql": "INSERT OR REPLACE INTO market_node (market, path, kind, value) VALUES "
                 + ",".join(
@@ -246,7 +109,6 @@ def push(url: str, token: str, bundle: dict, batch: int) -> None:
         url,
         token,
         {
-            "market": market,
             "op": "sql",
             "sql": "INSERT OR REPLACE INTO contexts (market, position, key, label, kind, required, threshold, group_name, group_label, note, available_from) VALUES "
             + ",".join(
@@ -276,20 +138,90 @@ def push(url: str, token: str, bundle: dict, batch: int) -> None:
         url,
         token,
         {
-            "market": market,
             "op": "sql",
             "sql": "INSERT OR REPLACE INTO factor_key (market, position, key) VALUES "
             + ",".join(f"({literal(market)},{position},{literal(key)})" for position, key in bundle["factor_keys"]),
         },
     )
-    print(f"{market}: {len(rows)} 个交易日、{len(bundle['nodes'])} 个字段已写入 D1")
+    print(f"cross/{market}: {len(rows)} 个交易日、{len(bundle['nodes'])} 个字段已写入 D1")
+
+
+def push_timeline(url: str, token: str, doc: dict, batch: int) -> None:
+    bundle = build_timeline_bundle(doc)
+    post(url, token, {"op": "clear_timeline"})
+
+    for part in chunks(bundle["closes"], batch):
+        values = ",".join(f"({literal(s)},{i},{literal(d)},{literal(c)})" for s, i, d, c in part)
+        post(url, token, {"op": "sql", "sql": f"INSERT INTO timeline_close (symbol, idx, date, close) VALUES {values}"})
+
+    for part in chunks(bundle["rolling"], batch):
+        values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
+        post(
+            url,
+            token,
+            {
+                "op": "sql",
+                "sql": "INSERT INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES "
+                + values,
+            },
+        )
+
+    for part in chunks(bundle["daily"], batch):
+        values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
+        post(
+            url,
+            token,
+            {
+                "op": "sql",
+                "sql": "INSERT INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES "
+                + values,
+            },
+        )
+
+    for part in chunks(bundle["ladder"], batch):
+        values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
+        post(
+            url,
+            token,
+            {"op": "sql", "sql": f"INSERT INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES {values}"},
+        )
+
+    for part in chunks(bundle["nodes"], 80):
+        values = ",".join(f"({literal(p)},{literal(k)},{literal(v)})" for p, k, v in part)
+        post(url, token, {"op": "sql", "sql": f"INSERT OR REPLACE INTO timeline_node (path, kind, value) VALUES {values}"})
+
+    print(
+        f"timeline: {len(bundle['closes'])} 收盘、{len(bundle['rolling'])} rolling、"
+        f"{len(bundle['daily'])} daily、{len(bundle['ladder'])} ladder 已写入 D1"
+    )
+
+
+def push_agent(url: str, token: str, dataset: str, doc: dict) -> None:
+    bundle = build_agent_bundle(doc, dataset)
+    post(url, token, {"op": "clear_agent", "dataset": dataset})
+    r = bundle["row"]
+    post(
+        url,
+        token,
+        {
+            "op": "sql",
+            "sql": "INSERT INTO agent_dataset (dataset, n, scored_on_shared, generated_at) VALUES "
+            f"({literal(r['dataset'])},{literal(r['n'])},{literal(r['scored_on_shared'])},{literal(r['generated_at'])})",
+        },
+    )
+    for part in chunks(bundle["nodes"], 80):
+        values = ",".join(f"({literal(dataset)},{literal(p)},{literal(k)},{literal(v)})" for p, k, v in part)
+        post(url, token, {"op": "sql", "sql": f"INSERT OR REPLACE INTO agent_node (dataset, path, kind, value) VALUES {values}"})
+    print(f"agent/{dataset}: {len(bundle['nodes'])} 个字段已写入 D1")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="把算好的信号写进 Cloudflare D1")
+    parser = argparse.ArgumentParser(description="把本地 SQLite 里的看板数据同步到 Cloudflare D1")
     parser.add_argument("--url", default=os.environ.get("WORKER_URL", "http://127.0.0.1:8787"))
     parser.add_argument("--token", default=os.environ.get("INGEST_TOKEN", ""))
     parser.add_argument("--market", default="ndx,qqq,ssec")
+    parser.add_argument("--skip-timeline", action="store_true")
+    parser.add_argument("--skip-agent", action="store_true")
     parser.add_argument("--batch", type=int, default=100, help="每条 INSERT 写多少行")
     args = parser.parse_args()
 
@@ -297,10 +229,22 @@ def main() -> None:
         raise SystemExit("缺少 INGEST_TOKEN（本地放 .dev.vars，线上用 wrangler secret put）")
 
     for market in [m.strip() for m in args.market.split(",") if m.strip()]:
-        path = ROOT / "artifacts" / MARKETS[market]
-        if not path.is_file():
-            raise SystemExit(f"缺少 {path}，先跑 forecast-log cross")
-        push(args.url, args.token, build(json.loads(path.read_text()), market), args.batch)
+        doc = load_cross_market(ROOT, market)
+        if doc is None:
+            raise SystemExit(f"data/forecast.db 中缺少 {market} 信号，先跑 forecast-log cross")
+        push_cross(args.url, args.token, market, doc, args.batch)
+
+    if not args.skip_timeline:
+        tl = load_timeline(ROOT)
+        if tl is not None:
+            push_timeline(args.url, args.token, tl, args.batch)
+
+    if not args.skip_agent:
+        for dataset in ("deepseek", "qwen"):
+            ag = load_agent_eval(ROOT, dataset)
+            if ag is not None:
+                push_agent(args.url, args.token, dataset, ag)
+
     print("D1 已更新")
 
 

@@ -89,10 +89,16 @@ def test_run_writes_the_artifact_and_flags_a_contested_signal(tmp_path: Path, mo
         "fetch_news",
         lambda root, day, lookback=2, use_cache=True: _news(day, [("2026-11-12", "too late"), ("2026-11-11", "fine")]),
     )
-    cross = tmp_path / "artifacts" / "cross.json"
-    cross.parent.mkdir(parents=True)
-    cross.write_text(
-        json.dumps({"latest": {"date": day.isoformat(), "score": 0.71, "threshold": 0.54, "flag": True}})
+    from forecast_log.artifacts_db import save_cross_market
+
+    save_cross_market(
+        tmp_path,
+        "ndx",
+        {
+            "instrument": "^NDX",
+            "time": [day.isoformat()],
+            "latest": {"date": day.isoformat(), "score": 0.71, "threshold": 0.54, "flag": True},
+        },
     )
 
     llm = StubLLM('{"tone": "risk-off", "confidence": 0.8, "drivers": ["credit spreads widening"]}')
@@ -113,9 +119,13 @@ def test_run_writes_the_artifact_and_flags_a_contested_signal(tmp_path: Path, mo
 def test_low_confidence_risk_off_does_not_contradict_a_signal(tmp_path: Path, monkeypatch):
     day = date(2026, 11, 11)
     monkeypatch.setattr(daily, "fetch_news", lambda root, day, lookback=2, use_cache=True: _news(day, []))
-    cross = tmp_path / "artifacts" / "cross.json"
-    cross.parent.mkdir(parents=True)
-    cross.write_text(json.dumps({"latest": {"date": day.isoformat(), "flag": True}}))
+    from forecast_log.artifacts_db import save_cross_market
+
+    save_cross_market(
+        tmp_path,
+        "ndx",
+        {"instrument": "^NDX", "time": [day.isoformat()], "latest": {"date": day.isoformat(), "flag": True}},
+    )
     record = daily.run(tmp_path, day=day, llm=StubLLM('{"tone": "risk-off", "confidence": 0.4}'))
     assert record["contested"] is False
 

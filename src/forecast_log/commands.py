@@ -93,26 +93,28 @@ def backtest_command(root: Path) -> dict:
         "vxn": rolling_paths(vxn, PATH_HORIZON, extra),
         "ndx": rolling_paths(ndx, PATH_HORIZON),
     }
+    from forecast_log.artifacts_db import save_cross_market, save_timeline
+
     report = run_backtest(vxn, ndx, rows, extra, paths)
     report["reference"] = ref
     path = root / "artifacts" / "backtest_report.json"
     write_report(path, report)
-    timeline_path = root / "artifacts" / "timeline.json"
-    write_report(timeline_path, timeline_document(vxn, ndx, rows, extra, paths), indent=None)
+    save_timeline(root, timeline_document(vxn, ndx, rows, extra, paths))
     print(render_report(report))
     print(f"完整结果写在 {path}")
-    print(f"时间轴写在 {timeline_path}")
+    print("时间轴已写入数据库 (data/forecast.db)")
     if not ref["matches"]:
         raise SystemExit(1)
     return report
 
 
 def cross_command(root: Path) -> dict:
-    """跨资产风险偏好偏多时，之后 5 个交易日内偏涨的点（artifacts/cross.json）。"""
+    """跨资产风险偏好偏多时，之后 5 个交易日内偏涨的点（写入数据库）。"""
+    from forecast_log.artifacts_db import save_cross_market
+
     ndx = load_series(series_path(root, "^NDX"))
     document = cross_document(root, ndx)
-    path = root / "artifacts" / "cross.json"
-    write_report(path, document, indent=None)
+    save_cross_market(root, "ndx", document)
     stats = document["summary"]
     print(
         f"{document['question']['text']}\n"
@@ -121,7 +123,7 @@ def cross_command(root: Path) -> dict:
         f"命中 {stats['holdout_hit']:.1%}，基率 {stats['holdout_base_rate']:.1%}\n"
         f"最新 {document['latest']['date']}：分数 {document['latest']['score']:.3f}，"
         f"阈值 {document['latest']['threshold']:.3f}，{'打点' if document['latest']['flag'] else '不打点'}\n"
-        f"写在 {path}"
+        f"已写入数据库 (data/forecast.db: ndx)"
     )
     for symbol in COMPARE_SYMBOLS:
         compare_path = series_path(root, symbol)
@@ -131,8 +133,7 @@ def cross_command(root: Path) -> dict:
         # 信号还是那一条：只把入场/出场价换成这只标的的收盘。
         other = cross_document(root, ndx, instrument=symbol, target=load_series(compare_path))
         other["comparison"] = comparison(document, other)
-        other_path = root / "artifacts" / f"cross_{symbol.lower()}.json"
-        write_report(other_path, other, indent=None)
+        save_cross_market(root, symbol.lower(), other)
         rows = other["comparison"]["rows"]
         print(
             f"\n同一套信号、换到 {symbol}（{other['first_session']} → {other['last_session']}，"
@@ -151,13 +152,12 @@ def cross_command(root: Path) -> dict:
                 f"（{row['holdout_lift']:+.1%}）"
             )
         print(
-            f"  判定不一致 {len(other['comparison']['disagreements'])} 天，写在 {other_path}"
+            f"  判定不一致 {len(other['comparison']['disagreements'])} 天，已写入数据库 (data/forecast.db: {symbol.lower()})"
         )
     # A 股那一份：信号一个字不改，只换了入场的市场。
     if has_series(root, "000001.SS"):
         study = china_document(root)
-        study_path = root / "artifacts" / "cross_ssec.json"
-        write_report(study_path, study, indent=None)
+        save_cross_market(root, "ssec", study)
         whole, held = study["summary"]["all"], study["summary"]["holdout"]
         print(
             f"\n同一个信号、换到上证综指结算（{study['first_session']} → {study['last_session']}）：\n"
@@ -165,7 +165,7 @@ def cross_command(root: Path) -> dict:
             f"（{whole['lift']:+.1%}）\n"
             f"  {study['summary']['holdout_from']} 起 {held['signals']} 个 命中 {held['hit']:.1%} "
             f"对基率 {held['base_rate']:.1%}（{held['lift']:+.1%}）\n"
-            f"  写在 {study_path}"
+            f"  已写入数据库 (data/forecast.db: ssec)"
         )
     else:
         print("000001.SS 还没取，跳过 A 股那一份（forecast-log fetch）")

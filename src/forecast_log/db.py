@@ -104,6 +104,143 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_news_items_as_of_depth
             ON news_items(as_of, depth);
+
+        CREATE TABLE IF NOT EXISTS market (
+            market        TEXT PRIMARY KEY,
+            instrument    TEXT NOT NULL,
+            name          TEXT,
+            horizon       INTEGER,
+            question      TEXT,
+            rule          TEXT,
+            first_session TEXT,
+            last_session  TEXT,
+            fetched_at    TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS session (
+            market          TEXT NOT NULL,
+            date            TEXT NOT NULL,
+            open            REAL,
+            high            REAL,
+            low             REAL,
+            close           REAL,
+            volume          INTEGER,
+            entry           REAL,
+            entry_at        TEXT,
+            base_close      REAL,
+            close3          REAL,
+            close5          REAL,
+            hit3            INTEGER,
+            flag            INTEGER,
+            flag_price_only INTEGER,
+            news_veto       INTEGER,
+            score           REAL,
+            threshold       REAL,
+            outcome         INTEGER,
+            target          TEXT,
+            peak            REAL,
+            peak_at         TEXT,
+            us_date         TEXT,
+            factors_packed  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (market, date)
+        );
+
+        CREATE INDEX IF NOT EXISTS session_by_market_date ON session (market, date);
+
+        CREATE TABLE IF NOT EXISTS factor_key (
+            market   TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            key      TEXT NOT NULL,
+            PRIMARY KEY (market, position)
+        );
+
+        CREATE TABLE IF NOT EXISTS contexts (
+            market         TEXT NOT NULL,
+            position       INTEGER NOT NULL,
+            key            TEXT NOT NULL,
+            label          TEXT,
+            kind           TEXT,
+            required       INTEGER,
+            threshold      REAL,
+            group_name     TEXT,
+            group_label    TEXT,
+            note           TEXT,
+            available_from TEXT,
+            PRIMARY KEY (market, position)
+        );
+
+        CREATE TABLE IF NOT EXISTS market_node (
+            market TEXT NOT NULL,
+            path   TEXT NOT NULL,
+            kind   TEXT NOT NULL,
+            value  TEXT,
+            PRIMARY KEY (market, path)
+        );
+
+        CREATE TABLE IF NOT EXISTS timeline_close (
+            symbol TEXT NOT NULL,
+            idx    INTEGER NOT NULL,
+            date   TEXT NOT NULL,
+            close  REAL NOT NULL,
+            PRIMARY KEY (symbol, idx)
+        );
+
+        CREATE TABLE IF NOT EXISTS timeline_rolling (
+            symbol TEXT NOT NULL,
+            idx    INTEGER NOT NULL,
+            time   TEXT NOT NULL,
+            as_of  TEXT,
+            anchor REAL,
+            median REAL,
+            low    REAL,
+            high   REAL,
+            actual REAL,
+            PRIMARY KEY (symbol, idx)
+        );
+
+        CREATE TABLE IF NOT EXISTS timeline_daily (
+            symbol   TEXT NOT NULL,
+            idx      INTEGER NOT NULL,
+            time     TEXT NOT NULL,
+            median   REAL,
+            low      REAL,
+            high     REAL,
+            actual   REAL,
+            previous REAL,
+            risk     INTEGER,
+            PRIMARY KEY (symbol, idx)
+        );
+
+        CREATE TABLE IF NOT EXISTS timeline_ladder (
+            symbol  TEXT NOT NULL,
+            horizon INTEGER NOT NULL,
+            idx     INTEGER NOT NULL,
+            median  REAL,
+            low     REAL,
+            high    REAL,
+            PRIMARY KEY (symbol, horizon, idx)
+        );
+
+        CREATE TABLE IF NOT EXISTS timeline_node (
+            path  TEXT NOT NULL PRIMARY KEY,
+            kind  TEXT NOT NULL,
+            value TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_dataset (
+            dataset          TEXT PRIMARY KEY,
+            n                INTEGER,
+            scored_on_shared INTEGER,
+            generated_at     TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_node (
+            dataset TEXT NOT NULL,
+            path    TEXT NOT NULL,
+            kind    TEXT NOT NULL,
+            value   TEXT,
+            PRIMARY KEY (dataset, path)
+        );
         """
     )
 

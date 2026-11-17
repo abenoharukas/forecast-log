@@ -54,10 +54,18 @@ def post(url: str, token: str, payload: dict) -> dict:
         url.rstrip("/") + "/api/ingest",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "forecast-publish/1.0",
+        },
     )
-    with OPENER.open(request, timeout=180) as response:
-        body = json.loads(response.read().decode("utf-8"))
+    try:
+        with OPENER.open(request, timeout=180) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"HTTP {exc.code} {exc.reason}: {detail}") from exc
     if not body.get("ok"):
         raise SystemExit(f"写入失败：{body}")
     return body

@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "forecast-log",
+  "name": "forecast",
   "main": "deploy/worker.mjs",
   "compatibility_date": "2026-11-01",
   "observability": {
@@ -9,7 +9,7 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "forecast-log",
+      "database_name": "forecast",
       "database_id": "local-dev-placeholder"
     }
   ],

@@ -76,18 +76,44 @@ def chunks(seq, size):
         yield seq[i : i + size]
 
 
-def push_cross(url: str, token: str, market: str, doc: dict, batch: int) -> None:
+def get_state(url: str) -> dict:
+    request = urllib.request.Request(
+        url.rstrip("/") + "/api/state",
+        method="GET",
+        headers={"User-Agent": "forecast-publish/1.0"},
+    )
+    try:
+        with OPENER.open(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return {}
+
+
+def push_cross(url: str, token: str, market: str, doc: dict, batch: int, remote_info: dict | None = None, force: bool = False) -> None:
     bundle = build_cross_bundle(doc, market)
-    post(url, token, {"market": market, "op": "clear"})
+    all_rows = bundle["sessions"]
+    remote_count = (remote_info or {}).get("count") or 0
+    first_unresolved = (remote_info or {}).get("first_unresolved")
+    max_date = (remote_info or {}).get("max_date")
+
+    if not force and remote_count > 0 and (first_unresolved or max_date):
+        cutoff = first_unresolved or max_date
+        tail_cutoff = all_rows[-10]["date"] if len(all_rows) >= 10 else ""
+        if tail_cutoff and tail_cutoff < cutoff:
+            cutoff = tail_cutoff
+        rows = [r for r in all_rows if r["date"] >= cutoff]
+        post(url, token, {"market": market, "op": "clear_meta"})
+    else:
+        rows = all_rows
+        post(url, token, {"market": market, "op": "clear"})
 
     columns = ("market", "date", *SESSION_COLUMNS, "factors_packed")
-    rows = bundle["sessions"]
-    for part in chunks(rows, batch):
+    for part in chunks(rows, max(batch, 300)):
         values = ",".join(
             "(" + literal(market) + "," + ",".join(literal(row.get(column)) for column in columns[1:]) + ")"
             for row in part
         )
-        post(url, token, {"op": "sql", "sql": f"INSERT INTO session ({','.join(columns)}) VALUES {values}"})
+        post(url, token, {"op": "sql", "sql": f"INSERT OR REPLACE INTO session ({','.join(columns)}) VALUES {values}"})
 
     row = bundle["row"]
     post(
@@ -154,8 +180,11 @@ def push_cross(url: str, token: str, market: str, doc: dict, batch: int) -> None
     print(f"cross/{market}: {len(rows)} 个交易日、{len(bundle['nodes'])} 个字段已写入 D1")
 
 
-def push_timeline(url: str, token: str, doc: dict, batch: int) -> None:
+def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl_count: int = 0, force: bool = False) -> None:
     bundle = build_timeline_bundle(doc)
+    if not force and remote_tl_count == len(bundle["closes"]) and remote_tl_count > 0:
+        print(f"timeline: D1 已存在完整数据（{remote_tl_count} 收盘），跳过重复录入", flush=True)
+        return
     post(url, token, {"op": "clear_timeline"})
     tl_batch = max(batch, 500)
 
@@ -197,7 +226,10 @@ def push_timeline(url: str, token: str, doc: dict, batch: int) -> None:
     )
 
 
-def push_agent(url: str, token: str, dataset: str, doc: dict) -> None:
+def push_agent(url: str, token: str, dataset: str, doc: dict, remote_agent: dict | None = None, force: bool = False) -> None:
+    if not force and remote_agent and remote_agent.get("generated_at") == doc.get("generated_at"):
+        print(f"agent/{dataset}: D1 已存在最新数据（{doc.get('generated_at')}），跳过重复录入", flush=True)
+        return
     bundle = build_agent_bundle(doc, dataset)
     post(url, token, {"op": "clear_agent", "dataset": dataset})
     r = bundle["row"]
@@ -213,40 +245,46 @@ def push_agent(url: str, token: str, dataset: str, doc: dict) -> None:
     for part in chunks(bundle["nodes"], 80):
         values = ",".join(f"({literal(dataset)},{literal(p)},{literal(k)},{literal(v)})" for p, k, v in part)
         post(url, token, {"op": "sql", "sql": f"INSERT OR REPLACE INTO agent_node (dataset, path, kind, value) VALUES {values}"})
-    print(f"agent/{dataset}: {len(bundle['nodes'])} 个字段已写入 D1")
+    print(f"agent/{dataset}: {len(bundle['nodes'])} 个字段已写入 D1", flush=True)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="把本地 SQLite 里的看板数据同步到 Cloudflare D1")
+    parser = argparse.ArgumentParser(description="把本地 SQLite 里的看板数据增量同步到 Cloudflare D1")
     parser.add_argument("--url", default=os.environ.get("WORKER_URL", "http://127.0.0.1:8787"))
     parser.add_argument("--token", default=os.environ.get("INGEST_TOKEN", ""))
     parser.add_argument("--market", default="ndx,qqq,ssec")
     parser.add_argument("--skip-timeline", action="store_true")
     parser.add_argument("--skip-agent", action="store_true")
+    parser.add_argument("--force", action="store_true", help="强制全量重写")
     parser.add_argument("--batch", type=int, default=100, help="每条 INSERT 写多少行")
     args = parser.parse_args()
 
     if not args.token:
         raise SystemExit("缺少 INGEST_TOKEN（本地放 .dev.vars，线上用 wrangler secret put）")
 
+    state = get_state(args.url)
+    remote_markets = state.get("markets") or {}
+    remote_tl_count = state.get("timeline_count") or 0
+    remote_agents = state.get("agents") or {}
+
     for market in [m.strip() for m in args.market.split(",") if m.strip()]:
         doc = load_cross_market(ROOT, market)
         if doc is None:
             raise SystemExit(f"data/forecast.db 中缺少 {market} 信号，先跑 forecast-log cross")
-        push_cross(args.url, args.token, market, doc, args.batch)
+        push_cross(args.url, args.token, market, doc, args.batch, remote_markets.get(market), args.force)
 
     if not args.skip_timeline:
         tl = load_timeline(ROOT)
         if tl is not None:
-            push_timeline(args.url, args.token, tl, args.batch)
+            push_timeline(args.url, args.token, tl, args.batch, remote_tl_count, args.force)
 
     if not args.skip_agent:
         for dataset in ("deepseek", "qwen"):
             ag = load_agent_eval(ROOT, dataset)
             if ag is not None:
-                push_agent(args.url, args.token, dataset, ag)
+                push_agent(args.url, args.token, dataset, ag, remote_agents.get(dataset), args.force)
 
-    print("D1 已更新")
+    print("D1 同步完成", flush=True)
 
 
 if __name__ == "__main__":

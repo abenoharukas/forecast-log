@@ -171,12 +171,15 @@ function setPath(root, path, value) {
 
 async function getD1State(env) {
   try {
-    const [marketsRes, unresolvedRes, tlRes, agentRes] = await env.DB.batch([
+    const [marketsRes, unresolvedRes, tlCloseRes, tlRollRes, tlDailyRes, tlLadRes, agentRes] = await env.DB.batch([
       env.DB.prepare("SELECT market, last_session, fetched_at FROM market"),
       env.DB.prepare(
         "SELECT market, COUNT(*) AS cnt, MAX(date) AS max_date, MIN(CASE WHEN outcome IS NULL THEN date END) AS first_unresolved FROM session GROUP BY market",
       ),
-      env.DB.prepare("SELECT COUNT(*) AS cnt FROM timeline_close"),
+      env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_close GROUP BY symbol"),
+      env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_rolling GROUP BY symbol"),
+      env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_daily GROUP BY symbol"),
+      env.DB.prepare("SELECT horizon, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_ladder GROUP BY horizon"),
       env.DB.prepare("SELECT dataset, generated_at, n FROM agent_dataset"),
     ]);
 
@@ -192,6 +195,12 @@ async function getD1State(env) {
         first_unresolved: r.first_unresolved,
       };
     }
+    const timeline = {
+      close: Object.fromEntries((tlCloseRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
+      rolling: Object.fromEntries((tlRollRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
+      daily: Object.fromEntries((tlDailyRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
+      ladder: Object.fromEntries((tlLadRes.results ?? []).map((r) => [String(r.horizon), r.max_idx])),
+    };
     const agents = {};
     for (const r of agentRes.results ?? []) {
       agents[r.dataset] = { generated_at: r.generated_at, n: r.n };
@@ -199,11 +208,11 @@ async function getD1State(env) {
     return json({
       ok: true,
       markets,
-      timeline_count: tlRes.results?.[0]?.cnt ?? 0,
+      timeline,
       agents,
     });
   } catch (err) {
-    return json({ ok: true, markets: {}, timeline_count: 0, agents: {}, note: String(err) });
+    return json({ ok: true, markets: {}, timeline: {}, agents: {}, note: String(err) });
   }
 }
 

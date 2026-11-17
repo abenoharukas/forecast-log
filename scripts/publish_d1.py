@@ -180,15 +180,32 @@ def push_cross(url: str, token: str, market: str, doc: dict, batch: int, remote_
     print(f"cross/{market}: {len(rows)} 个交易日、{len(bundle['nodes'])} 个字段已写入 D1")
 
 
-def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl_count: int = 0, force: bool = False) -> None:
+def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl: dict | None = None, force: bool = False) -> None:
     bundle = build_timeline_bundle(doc)
-    if not force and remote_tl_count == len(bundle["closes"]) and remote_tl_count > 0:
-        print(f"timeline: D1 已存在完整数据（{remote_tl_count} 收盘），跳过重复录入", flush=True)
+    remote_tl = remote_tl or {}
+    if force:
+        post(url, token, {"op": "clear_timeline"})
+        remote_tl = {}
+
+    close_max = remote_tl.get("close") or {}
+    rolling_max = remote_tl.get("rolling") or {}
+    daily_max = remote_tl.get("daily") or {}
+    ladder_max = remote_tl.get("ladder") or {}
+
+    closes = [r for r in bundle["closes"] if r[1] > close_max.get(r[0], -1)]
+    rolling = [r for r in bundle["rolling"] if r[1] > rolling_max.get(r[0], -1)]
+    daily = [r for r in bundle["daily"] if r[1] > daily_max.get(r[0], -1)]
+    ladder = [r for r in bundle["ladder"] if r[2] > ladder_max.get(str(r[1]), -1)]
+
+    if not any([closes, rolling, daily, ladder]):
+        print("timeline: D1 已是最新数据，0 行需要增量写入", flush=True)
         return
-    post(url, token, {"op": "clear_timeline"})
+
     tl_batch = max(batch, 500)
 
     def _push_rows(label: str, rows: list, sql_prefix: str) -> None:
+        if not rows:
+            return
         total = len(rows)
         done = 0
         for part in chunks(rows, tl_batch):
@@ -198,21 +215,21 @@ def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl_count: 
             print(f"\r  timeline/{label}: {done}/{total}", end="", flush=True)
         print(f"\r  timeline/{label}: {done}/{total} ✓", flush=True)
 
-    _push_rows("close", bundle["closes"], "INSERT INTO timeline_close (symbol, idx, date, close) VALUES")
+    _push_rows("close", closes, "INSERT OR REPLACE INTO timeline_close (symbol, idx, date, close) VALUES")
     _push_rows(
         "rolling",
-        bundle["rolling"],
-        "INSERT INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES",
+        rolling,
+        "INSERT OR REPLACE INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES",
     )
     _push_rows(
         "daily",
-        bundle["daily"],
-        "INSERT INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES",
+        daily,
+        "INSERT OR REPLACE INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES",
     )
     _push_rows(
         "ladder",
-        bundle["ladder"],
-        "INSERT INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES",
+        ladder,
+        "INSERT OR REPLACE INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES",
     )
 
     for part in chunks(bundle["nodes"], 80):
@@ -220,8 +237,8 @@ def push_timeline(url: str, token: str, doc: dict, batch: int, remote_tl_count: 
         post(url, token, {"op": "sql", "sql": f"INSERT OR REPLACE INTO timeline_node (path, kind, value) VALUES {values}"})
 
     print(
-        f"timeline: {len(bundle['closes'])} 收盘、{len(bundle['rolling'])} rolling、"
-        f"{len(bundle['daily'])} daily、{len(bundle['ladder'])} ladder 已写入 D1",
+        f"timeline: 增量同步 {len(closes)} 收盘、{len(rolling)} rolling、"
+        f"{len(daily)} daily、{len(ladder)} ladder 到 D1",
         flush=True,
     )
 
@@ -264,7 +281,7 @@ def main() -> None:
 
     state = get_state(args.url)
     remote_markets = state.get("markets") or {}
-    remote_tl_count = state.get("timeline_count") or 0
+    remote_tl = state.get("timeline") or {}
     remote_agents = state.get("agents") or {}
 
     for market in [m.strip() for m in args.market.split(",") if m.strip()]:
@@ -276,7 +293,7 @@ def main() -> None:
     if not args.skip_timeline:
         tl = load_timeline(ROOT)
         if tl is not None:
-            push_timeline(args.url, args.token, tl, args.batch, remote_tl_count, args.force)
+            push_timeline(args.url, args.token, tl, args.batch, remote_tl, args.force)
 
     if not args.skip_agent:
         for dataset in ("deepseek", "qwen"):

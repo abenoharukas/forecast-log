@@ -383,28 +383,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def _startup_refresh() -> None:
-    """服务启动后始终自动调用一次全品种增量刷新函数，补齐所有未收盘及最新数据。"""
-    print("启动自动刷新：正在增量拉取全品种最新行情（含未收盘数据重抓）…", flush=True)
-    with _REFRESH_LOCK:
-        try:
-            res = refresh_cross_data()
-            print(
-                f"行情更新完成：{res.get('sessions')}（共更新 {len(res.get('updated', {}))} 个品种）",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"启动自动更新失败：{exc}", flush=True)
-
-
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="forecast-log serve", description="本地看板服务")
+    parser = argparse.ArgumentParser(prog="forecast-log serve", description="本地看板服务（仅启动 HTTP 服务，OHLCV 刷新由前端页面按需发起）")
     parser.add_argument("port", nargs="?", type=int, default=DEFAULT_PORT, help=f"端口，默认 {DEFAULT_PORT}")
-    parser.add_argument("--no-refresh", action="store_true", help="启动时不自动拉行情")
     args = parser.parse_args(argv)
-
-    if not args.no_refresh:
-        threading.Thread(target=_startup_refresh, daemon=True).start()
 
     try:
         server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)

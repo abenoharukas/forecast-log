@@ -29,9 +29,8 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("resolve", help="结算日收盘之后写入 resolutions.json")
     sub.add_parser("score", help="计算已结算题目的 Brier 分数")
     sub.add_parser("cross", help="跨资产风险偏好偏多时，之后 5 个交易日内的偏涨点")
-    serve_parser = sub.add_parser("serve", help="起本地看板（默认 http://127.0.0.1:8731/web/）")
+    serve_parser = sub.add_parser("serve", help="起本地看板（默认 http://127.0.0.1:8731/）")
     serve_parser.add_argument("port", nargs="?", type=int, default=None, help="端口，默认 8731")
-    serve_parser.add_argument("--no-refresh", action="store_true", help="启动时不自动拉行情")
     sub.add_parser("events", help="让 LLM 拉 FOMC / CPI / NFP 日历（data/events.json）")
     daily_parser = sub.add_parser("daily", help="收盘后跑一次：抓当天新闻，LLM 给当天风险偏好标签")
     daily_parser.add_argument("--day", default=None, help="as-of 日期，默认今天")
@@ -82,10 +81,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "serve":
         from forecast_log.server import main as serve_main
 
-        serve_main(
-            ([str(args.port)] if args.port is not None else [])
-            + (["--no-refresh"] if args.no_refresh else [])
-        )
+        serve_main([str(args.port)] if args.port is not None else [])
         return
     root = repo_root()
     if args.command == "fetch":

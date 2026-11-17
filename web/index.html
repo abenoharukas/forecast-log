@@ -676,18 +676,31 @@
       applySpan();
     });
 
-    fetch("/api/timeline?t=" + Date.now())
-      .then((response) => {
-        if (!response.ok) throw new Error(String(response.status));
-        return response.json();
-      })
-      .then((documentData) => {
-        timeline = documentData;
-        showQuestion();
-      })
-      .catch(() => {
-        document.querySelector("#leg-date").textContent = "timeline data not available";
-      });
+    function loadTimeline() {
+      return fetch("/api/timeline?t=" + Date.now())
+        .then((response) => {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.json();
+        })
+        .then((documentData) => {
+          timeline = documentData;
+          showQuestion();
+        })
+        .catch(() => {
+          document.querySelector("#leg-date").textContent = "timeline data not available";
+        });
+    }
+
+    loadTimeline().then(() => {
+      fetch("/api/refresh", { method: "POST" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload) => {
+          if (payload && !payload.cached) {
+            return loadTimeline();
+          }
+        })
+        .catch(() => {});
+    });
     });
   </script>
 </body>

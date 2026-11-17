@@ -12,3 +12,5 @@ artifacts/surprise/
 data/forecast.db-wal
 data/forecast.db-shm
 others.md
+deploy/dist/
+.wrangler/

@@ -15,7 +15,7 @@ PIP := $(VENV)/bin/pip
 FL := $(VENV)/bin/forecast-log
 
 .DEFAULT_GOAL := dev
-.PHONY: dev setup stop status refresh test help
+.PHONY: dev setup stop status refresh static worker deploy test help
 
 dev: $(PY) ## 起本地看板（默认 8731 端口）
 	@$(FL) serve $(PORT)
@@ -34,6 +34,15 @@ stop: ## 停掉占着端口的进程
 
 status: ## 看端口上是谁
 	@lsof -nP -iTCP:$(PORT) -sTCP:LISTEN || echo "端口 $(PORT) 空闲"
+
+static: $(PY) ## 打包静态站点到 deploy/dist（Cloudflare 用）
+	@$(PY) scripts/build_static.py
+
+worker: static ## 用 workerd 本地跑一遍 Cloudflare Worker
+	@wrangler dev --port 8787
+
+deploy: static ## 部署到 Cloudflare（需先 wrangler login）
+	@wrangler deploy
 
 refresh: $(PY) ## 强制刷新行情（服务需在跑）
 	@curl -s --noproxy '*' "http://127.0.0.1:$(PORT)/api/refresh?force=1" | $(PY) -m json.tool

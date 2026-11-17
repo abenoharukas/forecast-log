@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
+import re
 import sys
 import threading
 from datetime import datetime
@@ -160,6 +161,9 @@ def _cached_status() -> dict:
     }
 
 
+MARKET_ARTIFACTS = {"ndx": "cross.json", "qqq": "cross_qqq.json", "ssec": "cross_ssec.json"}
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     """Serves the repo root (so /web/*.html, /artifacts/*.json and /data/* all resolve)."""
 
@@ -200,10 +204,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.path = "/" + relative.lstrip("/") + (f"?{query}" if query else "")
         super().do_GET()
 
+    def _serve_cross_api(self, slug: str) -> None:
+        """本地开发也走同一个地址；线上这个地址由 Worker 从 D1 拼出来。"""
+        name = MARKET_ARTIFACTS.get(slug)
+        path = ROOT / "artifacts" / name if name else None
+        if path is None or not path.is_file():
+            body = json.dumps({"ok": False, "error": f"no data for {slug}"}, ensure_ascii=False).encode()
+            self.send_response(404)
+        else:
+            body = path.read_bytes()
+            self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         path, _, query = self.path.partition("?")
         if path == "/api/refresh":
             self._handle_refresh(force="force=1" in query)
+            return
+
+        api = re.fullmatch(r"/api/cross/([a-z-]+)", path.rstrip("/"))
+        if api:
+            self._serve_cross_api(api.group(1))
             return
 
         clean = path.rstrip("/") or "/"

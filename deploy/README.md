@@ -1,74 +1,76 @@
-# Cloudflare 部署
+# Cloudflare 部署（数据在 D1）
 
-这个项目是「静态页面 + 一个 Python 接口」。前端可以原样搬到 Cloudflare，
-`/api/refresh` 那条刷新链路不行——它要 numpy 和 Yahoo 行情。
+信号页的三个市场（`^NDX` / `QQQ` / `000001.SS`）已经改成**从 D1 读数据**，
+不再读任何 `artifacts/*.json`。D1 是 Cloudflare 的 SQLite，免费额度内。
 
-结论先写在这里：
+## 一条命令
 
-| 部分 | 能上 Cloudflare 吗 | 用什么 |
+```bash
+INGEST_TOKEN=$(openssl rand -hex 24) make cf
+```
+
+`scripts/deploy_cf.sh` 按顺序做 8 件事，任何一步不通就停下并说清楚缺什么：
+
+1. 检查能不能连上 `api.cloudflare.com`
+2. 检查 `wrangler login` 是否有效
+3. 打包 `deploy/dist`（页面 + 字体 + 图表库，6.22 MB）
+4. D1 建库（已存在就复用），把 `database_id` 写回 `wrangler.jsonc`
+5. 建表：`deploy/schema.sql`（全是 `CREATE TABLE IF NOT EXISTS`，可重复跑）
+6. `wrangler secret put INGEST_TOKEN`
+7. `wrangler deploy`，从输出里抓出 `*.workers.dev` 地址
+8. `scripts/publish_d1.py` 把当天算好的信号写进 D1
+
+## 数据怎么进的库
+
+```
+本地 Python 算信号          线上
+──────────────            ─────────────────────────────
+artifacts/cross*.json  →  /api/ingest  →  D1 表
+                                            ↓
+                          页面 → /api/cross/ndx|qqq|ssec → Worker 拼 JSON 返回
+```
+
+- **写**：`scripts/publish_d1.py`。它把 JSON 读进来、拆成行，用一条条 `INSERT` 通过
+  `/api/ingest` 发给 Worker，Worker 用 Bearer Token 校验后写 D1。本地和线上走同一套代码。
+  `/api/ingest` 只接受 `INSERT INTO session|market|market_node|contexts|factor_key`，
+  别的 SQL 一律 400，token 泄漏也不能删库。
+- **读**：Worker 从 D1 查出来，按原来的 JSON 形状拼回去，页面代码只改了 URL。
+
+## 表结构（`deploy/schema.sql`）
+
+| 表 | 干什么 | 行数 |
 |---|---|---|
-| 5 个页面（`/`、`/qqq`、`/a-shares`、`/volatility`、`/agent`） | 能，和本地一模一样 | Workers + Workers Static Assets（静态资源） |
-| 干净地址、旧地址 301 | 能 | `deploy/worker.mjs` 里的路由（和 `server.py` 的规则一一对应） |
-| `artifacts/*.json` | 能 | 同上，当静态文件发 |
-| `/api/refresh`（拉 Yahoo + numpy 重算） | 不能 | 要么本地跑完再部署，要么上 Containers（见下） |
-| `data/forecast.db`（81 MB，浏览器从不请求） | 不需要上 | 留在本地 / 换 R2 或 D1 |
+| `market` | 每个标签页一行：标的、问题、规则、首末交易日 | 3 |
+| `session` | 每个交易日一行：OHLCV + 信号列 + `factors_packed` | 13,737 |
+| `factor_key` | `factors_packed` 的哪个 4 bit 槽位是哪个开关 | 29 |
+| `contexts` | 页面上那些开关的定义（标签、阈值、可用起点） | 27 |
+| `market_node` | 所有嵌套值，一行一个标量，路径带下标（`bands.0.hit`） | 386 |
 
-## 包有多大
+`factors_packed` 是把 8–11 个开关压进一个整数，每个开关占 4 bit（`riskoff_hits`
+最大是 5，不是 0/1）。11 个开关 44 bit，还在 JS 安全整数范围内——所以一天一行就够，
+不用给每个开关建一行（那会是 11 万行，超过免费额度每天 10 万行的写入上限）。
 
-`python3 scripts/build_static.py` 生成 `deploy/dist`：20 个文件、6.22 MB，最大单文件
-`artifacts/timeline.json` 3.53 MB。Workers Static Assets 的文档限制是单文件 25 MiB、
-最多 20,000 个文件，这个包远在限内。
+没有任何一列存 JSON 字符串：`market_node` 的 `path` 就是结构本身，
+`kind` 说明该按数字、整数、布尔还是字符串还原。
 
-## 现在已经能跑的部分
+## 现在还没搬的两页
 
-`wrangler.jsonc` + `deploy/worker.mjs` 已经写好，`dist` 是构建产物。
+`/volatility`（`artifacts/timeline.json`，3.5 MB，七层嵌套）和 `/agent`
+（两份 `agent_eval*_summary.json`）仍然读静态文件。把这两份也搬进 D1 需要各自的表
+（timeline 是 rolling / ladder / forward / vxn / ndx / daily / questions 七组序列），
+是下一步的工作，不影响信号页。
 
-```bash
-python3 scripts/build_static.py     # 或 make static
-wrangler dev --port 8787            # 本地用 workerd 跑一遍，不需要登录
-```
+## 本地验证过什么
 
-本地实测：`/`、`/ndx`、`/qqq`、`/a-shares`、`/volatility`、`/agent` 全 200，
-`/theme.css`、`/ctxbar.js`、`/fonts/*`、`/vendor/*`、`/artifacts/*.json` 全 200，
-旧地址 `/web/points.html?market=qqq` 等 301 到新地址，页面在浏览器里渲染正常。
+`wrangler dev` + 本地 D1（不需要登录、不需要网络）：
 
-部署（需要先 `wrangler login`）：
+- 三个市场写入 D1 后，`/api/cross/<market>` 返回的 JSON 与 Python 产物**逐字段一致**
+  （13,737 个交易日 × 全部数组、components、summary、contexts、context、bands、comparison）
+- 页面在浏览器里渲染正常，图表、统计表、开关都从数据库出来
+- `/api/ingest` 无 token → 401，非 INSERT → 400，重复推送先 `DELETE` 再写
 
-```bash
-python3 scripts/build_static.py
-wrangler deploy                     # 或 make deploy
-```
+## 关于 /api/refresh
 
-刷新按钮在这个部署里会返回 501 并说明原因——不是坏了，是刻意写死的，
-免得用户以为数据更新了。
-
-## 如果刷新也要在云上
-
-三条路，按代价从小到大：
-
-1. **本地刷新 + 重新部署（现在就是这条）**
-   `make refresh` 重算 `artifacts/cross*.json`，然后 `wrangler deploy`。免费。
-   代价是数据的新鲜度取决于你什么时候想起来跑。
-
-2. **加一个 GitHub Action 定时任务**
-   每天美东收盘后跑 `forecast-log cross`，把 `artifacts/` 提交回仓库，再用
-   API Token 触发 `wrangler deploy`。仍然是静态站，免费，但每天会有一次提交。
-   注意 Yahoo 在 CI 的网络环境下能否取到，需要实测。
-
-3. **Containers（真跑 Python 服务）**
-   把 `serve.py` 打进镜像，Worker 转发请求，`/api/refresh` 就真的能用。
-   - 需要 Workers Paid 计划（Containers 按用量计费，另外可能还有实例空闲成本）。
-   - 容器实例的文件系统**不持久**，重启就没了：重算出来的 `artifacts/*.json`
-     要写到 R2（或其他存储），页面再从 R2/Worker 读，不能指望写磁盘。
-   - 冷启动是秒级，刷新这种一天一次的操作可以接受。
-   - 镜像要带 python3 + numpy，体积大概 200 MB 起。
-
-如果目的只是「让别人能看这几张图」，方案 1 就够；如果目的是「网页上点一下就
-能看到最新信号」，才需要方案 3。
-
-## 需要你自己确认的两件事
-
-- `wrangler login` 能不能过——我这边连不上 Cloudflare 的 auth 服务
-  （网络/代理不通），所以没实际部署，只做了本地 `wrangler dev` 验证。
-- 上面的限额和计费请以部署时 `wrangler` 的报错和 dashboard 为准；我这份写的时候
-  取不到 developers.cloudflare.com 的页面。
+线上这个按钮仍然返回 501。原因没变：它是 31 秒的 numpy 计算，Workers 的 CPU 预算
+放不下，容器才行。现在的做法是本地 `make refresh`（算完写 `artifacts/`），
+再 `make cf`（或只重跑第 8 步 `publish_d1.py`）把新数据推进 D1。

@@ -84,7 +84,7 @@
         <button type="button" class="ctxbar-btn" id="refresh-btn" title="拉取最新行情（含北京时间当日 A 股）并重算信号">↻ 刷新行情</button>
         <span class="sub" id="question">—</span>
       </div>
-      <span class="sub" id="build">r4 · clean URLs · <a href="/volatility">VXN Fear Index →</a> · <a href="/agent">Agent scoreboard →</a></span>
+      <span class="sub" id="build">r5 · reads D1 · <a href="/volatility">VXN Fear Index →</a> · <a href="/agent">Agent scoreboard →</a></span>
     </header>
 
     <section class="ctxbar collapsed" id="ctxbar" aria-label="Context factors">
@@ -145,7 +145,7 @@
         ndx: {
           key: "ndx",
           path: "/ndx",
-          file: "/artifacts/cross.json",
+          file: "/api/cross/ndx",
           title: "Nasdaq-100 — 5-day risk-on signals",
           docTitle: "Nasdaq-100 — 5-day risk-on signals",
           paneName: "Risk-on composite → day-5 NDX close above the signal-day close",
@@ -155,7 +155,7 @@
         qqq: {
           key: "qqq",
           path: "/qqq",
-          file: "/artifacts/cross_qqq.json",
+          file: "/api/cross/qqq",
           title: "QQQ — same signals, a tradable instrument",
           docTitle: "QQQ — same risk-on signals, a tradable instrument",
           paneName: "Risk-on composite → day-5 QQQ close above the signal-day close",
@@ -165,7 +165,7 @@
         ssec: {
           key: "ssec",
           path: "/a-shares",
-          file: "/artifacts/cross_ssec.json",
+          file: "/api/cross/ssec",
           title: "Shanghai composite — A股跨市场信号检验",
           docTitle: "Shanghai composite — A-shares risk-on signals",
           paneName: "Same signal → day-5 A-share close above the basis close",

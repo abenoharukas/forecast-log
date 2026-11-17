@@ -15,7 +15,7 @@ PIP := $(VENV)/bin/pip
 FL := $(VENV)/bin/forecast-log
 
 .DEFAULT_GOAL := dev
-.PHONY: dev setup stop status refresh static worker deploy test help
+.PHONY: dev setup stop status refresh static worker deploy cf d1-schema publish test help
 
 dev: $(PY) ## 起本地看板（默认 8731 端口）
 	@$(FL) serve $(PORT)
@@ -41,8 +41,17 @@ static: $(PY) ## 打包静态站点到 deploy/dist（Cloudflare 用）
 worker: static ## 用 workerd 本地跑一遍 Cloudflare Worker
 	@wrangler dev --port 8787
 
-deploy: static ## 部署到 Cloudflare（需先 wrangler login）
+deploy: static ## 只发静态资源（旧方式，不碰 D1）
 	@wrangler deploy
+
+cf: ## 一条命令部署到 Cloudflare，数据进 D1（需先 wrangler login）
+	@bash scripts/deploy_cf.sh
+
+d1-schema: ## 只在本地 D1 建表（wrangler dev 用）
+	@wrangler d1 execute forecast-log --local --file=deploy/schema.sql
+
+publish: ## 把 artifacts 里的信号推进本地 wrangler dev 的 D1
+	@.venv/bin/python scripts/publish_d1.py --url http://127.0.0.1:8787
 
 refresh: $(PY) ## 强制刷新行情（服务需在跑）
 	@curl -s --noproxy '*' "http://127.0.0.1:$(PORT)/api/refresh?force=1" | $(PY) -m json.tool

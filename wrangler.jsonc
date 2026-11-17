@@ -6,6 +6,13 @@
   "observability": {
     "enabled": true
   },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "forecast-log",
+      "database_id": "local-dev-placeholder"
+    }
+  ],
   "assets": {
     "directory": "./deploy/dist",
     "binding": "ASSETS",

@@ -7,7 +7,8 @@
  *   2. Expose GET/POST /api/refresh (and /api/fetch) to incrementally fetch missing
  *      daily bars from Yahoo Finance after D1's latest date and upsert only the
  *      new/unresolved tail rows into D1.
- *   3. Expose GET /api/state and POST /api/ingest for incremental syncing from publish_d1.py.
+ *   3. Expose GET /api/state and POST /api/ingest for strictly incremental, append-only
+ *      syncing from publish_d1.py (never truncating historical tables).
  */
 
 const MARKET_BY_SLUG = { ndx: "ndx", qqq: "qqq", ssec: "ssec", "a-shares": "ssec" };
@@ -171,21 +172,42 @@ function setPath(root, path, value) {
 
 async function getD1State(env) {
   try {
-    const [marketsRes, unresolvedRes, tlCloseRes, tlRollRes, tlDailyRes, tlLadRes, agentRes] = await env.DB.batch([
+    const [
+      marketsRes,
+      unresolvedRes,
+      mktNodeRes,
+      tlCloseRes,
+      tlRollRes,
+      tlDailyRes,
+      tlLadRes,
+      tlNodeRes,
+      agentRes,
+      agentNodeRes,
+    ] = await env.DB.batch([
       env.DB.prepare("SELECT market, last_session, fetched_at FROM market"),
       env.DB.prepare(
         "SELECT market, COUNT(*) AS cnt, MAX(date) AS max_date, MIN(CASE WHEN outcome IS NULL THEN date END) AS first_unresolved FROM session GROUP BY market",
       ),
+      env.DB.prepare("SELECT market, COUNT(*) AS cnt FROM market_node GROUP BY market"),
       env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_close GROUP BY symbol"),
       env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_rolling GROUP BY symbol"),
       env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_daily GROUP BY symbol"),
       env.DB.prepare("SELECT horizon, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_ladder GROUP BY horizon"),
+      env.DB.prepare("SELECT COUNT(*) AS cnt FROM timeline_node WHERE path NOT LIKE 'questions.%'"),
       env.DB.prepare("SELECT dataset, generated_at, n FROM agent_dataset"),
+      env.DB.prepare("SELECT dataset, COUNT(*) AS cnt FROM agent_node GROUP BY dataset"),
     ]);
 
     const markets = {};
     for (const r of marketsRes.results ?? []) {
-      markets[r.market] = { last_session: r.last_session, fetched_at: r.fetched_at, count: 0, first_unresolved: null };
+      markets[r.market] = {
+        last_session: r.last_session,
+        fetched_at: r.fetched_at,
+        count: 0,
+        max_date: null,
+        first_unresolved: null,
+        node_count: 0,
+      };
     }
     for (const r of unresolvedRes.results ?? []) {
       markets[r.market] = {
@@ -195,16 +217,32 @@ async function getD1State(env) {
         first_unresolved: r.first_unresolved,
       };
     }
+    for (const r of mktNodeRes.results ?? []) {
+      markets[r.market] = {
+        ...(markets[r.market] || {}),
+        node_count: r.cnt,
+      };
+    }
+
     const timeline = {
       close: Object.fromEntries((tlCloseRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
       rolling: Object.fromEntries((tlRollRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
       daily: Object.fromEntries((tlDailyRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
       ladder: Object.fromEntries((tlLadRes.results ?? []).map((r) => [String(r.horizon), r.max_idx])),
+      node_count: tlNodeRes.results?.[0]?.cnt ?? 0,
     };
+
     const agents = {};
     for (const r of agentRes.results ?? []) {
-      agents[r.dataset] = { generated_at: r.generated_at, n: r.n };
+      agents[r.dataset] = { generated_at: r.generated_at, n: r.n, node_count: 0 };
     }
+    for (const r of agentNodeRes.results ?? []) {
+      agents[r.dataset] = {
+        ...(agents[r.dataset] || {}),
+        node_count: r.cnt,
+      };
+    }
+
     return json({
       ok: true,
       markets,
@@ -212,7 +250,7 @@ async function getD1State(env) {
       agents,
     });
   } catch (err) {
-    return json({ ok: true, markets: {}, timeline: {}, agents: {}, note: String(err) });
+    return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
   }
 }
 
@@ -508,7 +546,7 @@ async function loadTimeline(env) {
     env.DB.prepare("SELECT * FROM timeline_rolling ORDER BY symbol, idx"),
     env.DB.prepare("SELECT * FROM timeline_daily ORDER BY symbol, idx"),
     env.DB.prepare("SELECT * FROM timeline_ladder ORDER BY horizon, idx"),
-    env.DB.prepare("SELECT path, kind, value FROM timeline_node"),
+    env.DB.prepare("SELECT path, kind, value FROM timeline_node WHERE path NOT LIKE 'questions.%'"),
   ]);
 
   const closes = closeRes.results ?? [];
@@ -521,7 +559,6 @@ async function loadTimeline(env) {
     vxn: { time: [], close: [] },
     ndx: { time: [], close: [] },
     daily: { vxn: {}, ndx: {} },
-    questions: {},
   };
 
   for (const row of closes) {
@@ -608,55 +645,14 @@ async function ingest(request, env) {
 }
 
 async function applyOp(env, body) {
-  if (body.op === "clear_meta") {
-    const market = body.market;
-    if (!market) return json({ ok: false, error: "market is required" }, 400);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM market_node WHERE market = ?").bind(market),
-      env.DB.prepare("DELETE FROM contexts WHERE market = ?").bind(market),
-      env.DB.prepare("DELETE FROM factor_key WHERE market = ?").bind(market),
-    ]);
-    return json({ ok: true, op: "clear_meta", market });
-  }
-
-  if (body.op === "clear") {
-    const market = body.market;
-    if (!market) return json({ ok: false, error: "market is required" }, 400);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM session WHERE market = ?").bind(market),
-      env.DB.prepare("DELETE FROM market_node WHERE market = ?").bind(market),
-      env.DB.prepare("DELETE FROM contexts WHERE market = ?").bind(market),
-      env.DB.prepare("DELETE FROM factor_key WHERE market = ?").bind(market),
-      env.DB.prepare("DELETE FROM market WHERE market = ?").bind(market),
-    ]);
-    return json({ ok: true, op: "clear", market });
-  }
-
-  if (body.op === "clear_timeline") {
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM timeline_close"),
-      env.DB.prepare("DELETE FROM timeline_rolling"),
-      env.DB.prepare("DELETE FROM timeline_daily"),
-      env.DB.prepare("DELETE FROM timeline_ladder"),
-      env.DB.prepare("DELETE FROM timeline_node"),
-    ]);
-    return json({ ok: true, op: "clear_timeline" });
-  }
-
-  if (body.op === "clear_agent") {
-    const dataset = body.dataset;
-    if (!dataset) return json({ ok: false, error: "dataset is required" }, 400);
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM agent_node WHERE dataset = ?").bind(dataset),
-      env.DB.prepare("DELETE FROM agent_dataset WHERE dataset = ?").bind(dataset),
-    ]);
-    return json({ ok: true, op: "clear_agent", dataset });
+  if (body.op === "state") {
+    return getD1State(env);
   }
 
   if (body.op === "sql") {
     if (typeof body.sql !== "string") return json({ ok: false, error: "sql must be a string" }, 400);
     if (
-      !/^\s*INSERT\s+(OR\s+REPLACE\s+)?INTO\s+(session|market|market_node|contexts|factor_key|timeline_close|timeline_rolling|timeline_daily|timeline_ladder|timeline_node|agent_dataset|agent_node)\b/i.test(
+      !/^\s*INSERT\s+(OR\s+(REPLACE|IGNORE)\s+)?INTO\s+(session|market|market_node|contexts|factor_key|timeline_close|timeline_rolling|timeline_daily|timeline_ladder|timeline_node|agent_dataset|agent_node)\b/i.test(
         body.sql,
       )
     ) {

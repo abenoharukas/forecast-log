@@ -52,9 +52,13 @@ printf '%s' "$INGEST_TOKEN" | wrangler secret put INGEST_TOKEN --name "$NAME"
 
 say "6/7 部署 Worker"
 DEPLOY_LOG=$(wrangler deploy </dev/null 2>&1 | tee /dev/stderr)
-URL=$(printf '%s' "$DEPLOY_LOG" | grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' | head -1 || true)
+# 主地址：wrangler.jsonc 里 routes 的第一条自定义域名（workers.dev 已关）
+URL=$(${PY} -c "import json,re;t=open('wrangler.jsonc').read();t=re.sub(r'^\s*//.*$','',t,flags=re.M);r=json.loads(t).get('routes') or [];print('https://'+r[0]['pattern'] if r and r[0].get('custom_domain') else '')")
 if [ -z "$URL" ]; then
-  echo "✘ 没从部署输出里找到 workers.dev 地址，看看上面的日志"
+  URL=$(printf '%s' "$DEPLOY_LOG" | grep -oE 'https://[A-Za-z0-9._-]+\.workers\.dev' | head -1 || true)
+fi
+if [ -z "$URL" ]; then
+  echo "✘ 没从部署输出里找到地址，看看上面的日志"
   exit 1
 fi
 echo "部署地址: $URL"

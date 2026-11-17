@@ -207,7 +207,7 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
 
 
 def save_cross_market(root: Path, market: str, doc: dict) -> int:
-    """增量更新信号表：已有且已结算（outcome IS NOT NULL）的历史行绝不删除重插，只写入新增日与最近未结算窗口。"""
+    """增量更新信号表：绝不删除历史行，只插入新增交易日或刚完成结算的尾部行。"""
     bundle = build_cross_bundle(doc, market)
     conn = connect(db_path(root))
     try:
@@ -216,17 +216,13 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
             for row in conn.execute("SELECT date, outcome FROM session WHERE market = ?", (market,)).fetchall()
         }
         all_sessions = bundle["sessions"]
-        tail_cutoff = all_sessions[-10]["date"] if len(all_sessions) >= 10 else ""
         sessions_to_write = [
             s
             for s in all_sessions
-            if s["date"] not in existing or existing[s["date"]] is None or s["date"] >= tail_cutoff
+            if s["date"] not in existing or (existing[s["date"]] is None and s.get("outcome") is not None)
         ]
 
         with conn:
-            for table in ("market_node", "contexts", "factor_key"):
-                conn.execute(f"DELETE FROM {table} WHERE market = ?", (market,))
-
             r = bundle["row"]
             conn.execute(
                 """
@@ -253,12 +249,12 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
                     [tuple([market] + [s.get(c) for c in cols[1:]]) for s in sessions_to_write],
                 )
             conn.executemany(
-                "INSERT INTO factor_key (market, position, key) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO factor_key (market, position, key) VALUES (?, ?, ?)",
                 [(market, pos, key) for pos, key in bundle["factor_keys"]],
             )
             conn.executemany(
                 """
-                INSERT INTO contexts (market, position, key, label, kind, required, threshold, group_name, group_label, note, available_from)
+                INSERT OR REPLACE INTO contexts (market, position, key, label, kind, required, threshold, group_name, group_label, note, available_from)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
@@ -279,7 +275,7 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
                 ],
             )
             conn.executemany(
-                "INSERT INTO market_node (market, path, kind, value) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO market_node (market, path, kind, value) VALUES (?, ?, ?, ?)",
                 [(market, path, kind, value) for path, kind, value in bundle["nodes"]],
             )
         return len(sessions_to_write)
@@ -451,9 +447,8 @@ def build_timeline_bundle(doc: dict) -> dict:
                 )
             )
 
-    for key in ("forward", "questions"):
-        if key in doc:
-            walk(key, doc[key], nodes)
+    if "forward" in doc:
+        walk("forward", doc["forward"], nodes)
 
     return {
         "closes": closes,
@@ -465,30 +460,59 @@ def build_timeline_bundle(doc: dict) -> dict:
 
 
 def save_timeline(root: Path, doc: dict) -> None:
+    """增量更新 timeline 各表：只插入 idx > max_idx 的新增交易日，绝不清空历史表。"""
     bundle = build_timeline_bundle(doc)
     conn = connect(db_path(root))
     try:
+        close_max = {
+            r["symbol"]: r["m"]
+            for r in conn.execute("SELECT symbol, MAX(idx) AS m FROM timeline_close GROUP BY symbol").fetchall()
+            if r["m"] is not None
+        }
+        rolling_max = {
+            r["symbol"]: r["m"]
+            for r in conn.execute("SELECT symbol, MAX(idx) AS m FROM timeline_rolling GROUP BY symbol").fetchall()
+            if r["m"] is not None
+        }
+        daily_max = {
+            r["symbol"]: r["m"]
+            for r in conn.execute("SELECT symbol, MAX(idx) AS m FROM timeline_daily GROUP BY symbol").fetchall()
+            if r["m"] is not None
+        }
+        ladder_max = {
+            r["horizon"]: r["m"]
+            for r in conn.execute("SELECT horizon, MAX(idx) AS m FROM timeline_ladder GROUP BY horizon").fetchall()
+            if r["m"] is not None
+        }
+
+        new_closes = [r for r in bundle["closes"] if r[1] > close_max.get(r[0], -1)]
+        new_rolling = [r for r in bundle["rolling"] if r[1] > rolling_max.get(r[0], -1)]
+        new_daily = [r for r in bundle["daily"] if r[1] > daily_max.get(r[0], -1)]
+        new_ladder = [r for r in bundle["ladder"] if r[2] > ladder_max.get(r[1], -1)]
+
         with conn:
-            for table in ("timeline_close", "timeline_rolling", "timeline_daily", "timeline_ladder", "timeline_node"):
-                conn.execute(f"DELETE FROM {table}")
+            if new_closes:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO timeline_close (symbol, idx, date, close) VALUES (?, ?, ?, ?)",
+                    new_closes,
+                )
+            if new_rolling:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    new_rolling,
+                )
+            if new_daily:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    new_daily,
+                )
+            if new_ladder:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES (?, ?, ?, ?, ?, ?)",
+                    new_ladder,
+                )
             conn.executemany(
-                "INSERT INTO timeline_close (symbol, idx, date, close) VALUES (?, ?, ?, ?)",
-                bundle["closes"],
-            )
-            conn.executemany(
-                "INSERT INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                bundle["rolling"],
-            )
-            conn.executemany(
-                "INSERT INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                bundle["daily"],
-            )
-            conn.executemany(
-                "INSERT INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES (?, ?, ?, ?, ?, ?)",
-                bundle["ladder"],
-            )
-            conn.executemany(
-                "INSERT INTO timeline_node (path, kind, value) VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO timeline_node (path, kind, value) VALUES (?, ?, ?)",
                 bundle["nodes"],
             )
     finally:
@@ -507,7 +531,7 @@ def load_timeline(root: Path) -> dict | None:
         rolling = conn.execute("SELECT * FROM timeline_rolling ORDER BY symbol, idx").fetchall()
         daily = conn.execute("SELECT * FROM timeline_daily ORDER BY symbol, idx").fetchall()
         ladder = conn.execute("SELECT * FROM timeline_ladder ORDER BY horizon, idx").fetchall()
-        nodes = conn.execute("SELECT path, kind, value FROM timeline_node").fetchall()
+        nodes = conn.execute("SELECT path, kind, value FROM timeline_node WHERE path NOT LIKE 'questions.%'").fetchall()
 
         doc: dict[str, Any] = {
             "rolling": {"vxn": {}, "ndx": {}},
@@ -516,7 +540,6 @@ def load_timeline(root: Path) -> dict | None:
             "vxn": {"time": [], "close": []},
             "ndx": {"time": [], "close": []},
             "daily": {"vxn": {}, "ndx": {}},
-            "questions": {},
         }
 
         for row in closes:
@@ -589,15 +612,13 @@ def save_agent_eval(root: Path, dataset: str, doc: dict) -> None:
     conn = connect(db_path(root))
     try:
         with conn:
-            conn.execute("DELETE FROM agent_node WHERE dataset = ?", (dataset,))
-            conn.execute("DELETE FROM agent_dataset WHERE dataset = ?", (dataset,))
             r = bundle["row"]
             conn.execute(
-                "INSERT INTO agent_dataset (dataset, n, scored_on_shared, generated_at) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO agent_dataset (dataset, n, scored_on_shared, generated_at) VALUES (?, ?, ?, ?)",
                 (r["dataset"], r["n"], r["scored_on_shared"], r["generated_at"]),
             )
             conn.executemany(
-                "INSERT INTO agent_node (dataset, path, kind, value) VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO agent_node (dataset, path, kind, value) VALUES (?, ?, ?, ?)",
                 [(dataset, path, kind, value) for path, kind, value in bundle["nodes"]],
             )
     finally:

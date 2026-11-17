@@ -157,42 +157,34 @@ def push_cross(url: str, token: str, market: str, doc: dict, batch: int) -> None
 def push_timeline(url: str, token: str, doc: dict, batch: int) -> None:
     bundle = build_timeline_bundle(doc)
     post(url, token, {"op": "clear_timeline"})
+    tl_batch = max(batch, 500)
 
-    for part in chunks(bundle["closes"], batch):
-        values = ",".join(f"({literal(s)},{i},{literal(d)},{literal(c)})" for s, i, d, c in part)
-        post(url, token, {"op": "sql", "sql": f"INSERT INTO timeline_close (symbol, idx, date, close) VALUES {values}"})
+    def _push_rows(label: str, rows: list, sql_prefix: str) -> None:
+        total = len(rows)
+        done = 0
+        for part in chunks(rows, tl_batch):
+            values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
+            post(url, token, {"op": "sql", "sql": f"{sql_prefix} {values}"})
+            done += len(part)
+            print(f"\r  timeline/{label}: {done}/{total}", end="", flush=True)
+        print(f"\r  timeline/{label}: {done}/{total} ✓", flush=True)
 
-    for part in chunks(bundle["rolling"], batch):
-        values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
-        post(
-            url,
-            token,
-            {
-                "op": "sql",
-                "sql": "INSERT INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES "
-                + values,
-            },
-        )
-
-    for part in chunks(bundle["daily"], batch):
-        values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
-        post(
-            url,
-            token,
-            {
-                "op": "sql",
-                "sql": "INSERT INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES "
-                + values,
-            },
-        )
-
-    for part in chunks(bundle["ladder"], batch):
-        values = ",".join("(" + ",".join(literal(v) for v in row) + ")" for row in part)
-        post(
-            url,
-            token,
-            {"op": "sql", "sql": f"INSERT INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES {values}"},
-        )
+    _push_rows("close", bundle["closes"], "INSERT INTO timeline_close (symbol, idx, date, close) VALUES")
+    _push_rows(
+        "rolling",
+        bundle["rolling"],
+        "INSERT INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES",
+    )
+    _push_rows(
+        "daily",
+        bundle["daily"],
+        "INSERT INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES",
+    )
+    _push_rows(
+        "ladder",
+        bundle["ladder"],
+        "INSERT INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES",
+    )
 
     for part in chunks(bundle["nodes"], 80):
         values = ",".join(f"({literal(p)},{literal(k)},{literal(v)})" for p, k, v in part)
@@ -200,7 +192,8 @@ def push_timeline(url: str, token: str, doc: dict, batch: int) -> None:
 
     print(
         f"timeline: {len(bundle['closes'])} 收盘、{len(bundle['rolling'])} rolling、"
-        f"{len(bundle['daily'])} daily、{len(bundle['ladder'])} ladder 已写入 D1"
+        f"{len(bundle['daily'])} daily、{len(bundle['ladder'])} ladder 已写入 D1",
+        flush=True,
     )
 
 

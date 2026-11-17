@@ -57,6 +57,7 @@ if [ -z "$URL" ]; then
   echo "✘ 没从部署输出里找到 workers.dev 地址，看看上面的日志"
   exit 1
 fi
+echo "部署地址: $URL"
 
 say "7/7 把数据推进 D1"
 $PY scripts/publish_d1.py --url "$URL" --token "$INGEST_TOKEN"

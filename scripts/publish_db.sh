@@ -16,13 +16,16 @@ db="$root/data/forecast.db"
 
 [ -f "$db" ] || { echo 'data/forecast.db 不存在，先跑 make data' >&2; exit 1; }
 
+# sqlite3 是硬依赖：既要用它合并 WAL，也要用它做完整性检查。缺了就不发——
+# 没 checkpoint 的快照可能缺最新写入，没校验的快照可能是坏库。
+command -v sqlite3 >/dev/null 2>&1 || {
+  echo '需要 sqlite3（合并 WAL + 完整性检查），当前没有，拒绝发布' >&2
+  exit 1
+}
+
 # 1. 把 WAL 里的最新改动合并回主文件，否则上传的是半旧的快照
-if command -v sqlite3 >/dev/null 2>&1; then
-  sqlite3 "$db" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
-  echo 'WAL 已合并回 forecast.db'
-else
-  echo '没有 sqlite3 命令，跳过 WAL 合并（若看板正在写库，快照可能是旧的）' >&2
-fi
+sqlite3 "$db" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
+echo 'WAL 已合并回 forecast.db'
 
 # 2. 完整性检查，坏库不往外发
 status=$(sqlite3 "$db" 'PRAGMA quick_check;' 2>&1 | head -1)

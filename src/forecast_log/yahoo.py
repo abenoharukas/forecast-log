@@ -76,7 +76,29 @@ def fetch_incremental(symbol: str, existing: Series | None, timeout: float = 60)
     start = min(anchor_day, last_day) - timedelta(days=5)
     delta = fetch_daily(symbol, timeout=timeout, start=start)
     tz_name = delta.timezone or existing.timezone
-    merged: dict[date, Bar] = {bar.date: bar for bar in existing.bars}
+    delta_by_date = {bar.date: bar for bar in delta.bars}
+    latest_delta_day = delta.bars[-1].date
+    merged: dict[date, Bar] = {}
+    for bar in existing.bars:
+        if bar.date in delta_by_date and (bar.date >= start or not bar.is_closed):
+            merged[bar.date] = delta_by_date[bar.date]
+        elif (
+            not bar.is_closed
+            and bar.date < latest_delta_day
+            and is_session_closed(bar.date, tz_name, delta.fetched_at)
+        ):
+            # 兜底：若某条历史临时盘中行在 Yahoo 后续日线中被移除且时间已跨过该交易日，标记完结避免死循环重抓
+            merged[bar.date] = Bar(
+                date=bar.date,
+                close=bar.close,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                volume=bar.volume,
+                is_closed=True,
+            )
+        else:
+            merged[bar.date] = bar
     for bar in delta.bars:
         if bar.date >= start or bar.date not in merged or not merged[bar.date].is_closed:
             merged[bar.date] = bar

@@ -22,6 +22,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[2]
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _REFRESH_LOCK = threading.Lock()
+_TIMELINE_LOCK = threading.Lock()
+INTRADAY_COOLDOWN_SECONDS = 300
 DEFAULT_PORT = 8731
 
 # 干净的 URL → 实际文件。地址里不带 .html，也不带 /web/ 前缀。
@@ -73,26 +75,87 @@ ASSET_FILES = {"/theme.css", "/theme.js", "/ctxbar.js"}
 ASSET_DIRS = ("/fonts/", "/vendor/")
 
 
-def refresh_cross_data() -> dict:
-    """从 Yahoo 增量拉取所有未收盘（is_closed=0）及缺失的新 K 线，更新数据库并在已收盘时打上已收盘标记。"""
+def all_refresh_symbols(root: Path = ROOT) -> list[str]:
+    """汇总项目中所有行情品种（含信号因子、对照 ETF、A 股、VXN 波动率族及库内全部已有品种）。"""
+    from forecast_log.china import CHINA_SYMBOLS
+    from forecast_log.commands import COMPARE_SYMBOLS, SYMBOLS
+    from forecast_log.cross import CROSS_SYMBOLS
+    from forecast_log.db import list_db_symbols
+    from forecast_log.features import FEATURE_SYMBOLS
+
+    return list(
+        dict.fromkeys(
+            (
+                *SYMBOLS,
+                *FEATURE_SYMBOLS,
+                *CROSS_SYMBOLS,
+                *COMPARE_SYMBOLS,
+                *CHINA_SYMBOLS,
+                *list_db_symbols(root),
+            )
+        )
+    )
+
+
+def _timeline_needs_update(root: Path = ROOT) -> bool:
+    """检查 bars 表中的 ^VXN / ^NDX 最新日期或收盘价是否领先于 timeline_close 表。"""
+    from forecast_log.db import connect, db_path
+
+    path = db_path(root)
+    if not path.is_file():
+        return False
+    conn = connect(path)
+    try:
+        for db_sym, tl_sym in (("^VXN", "vxn"), ("^NDX", "ndx")):
+            bar_row = conn.execute(
+                "SELECT date, close FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+                (db_sym,),
+            ).fetchone()
+            tl_row = conn.execute(
+                "SELECT date, close FROM timeline_close WHERE symbol = ? ORDER BY idx DESC LIMIT 1",
+                (tl_sym,),
+            ).fetchone()
+            if bar_row is None:
+                continue
+            if tl_row is None or str(tl_row["date"]) != str(bar_row["date"]):
+                return True
+            if abs(float(tl_row["close"]) - float(bar_row["close"])) > 1e-4:
+                return True
+        return False
+    finally:
+        conn.close()
+
+
+def _refresh_timeline_bg(root: Path = ROOT) -> None:
+    if not _TIMELINE_LOCK.acquire(blocking=False):
+        return
+    try:
+        if _timeline_needs_update(root):
+            from forecast_log.commands import backtest_command
+
+            backtest_command(root)
+    except Exception as exc:
+        print(f"后台更新 VXN timeline 失败：{exc}", flush=True)
+    finally:
+        _TIMELINE_LOCK.release()
+
+
+def refresh_cross_data(sync_timeline: bool = False) -> dict:
+    """从 Yahoo 并发增量拉取全库所有品种的未收盘（is_closed=0）及新增 K 线，更新单表 bars 与时间轴。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from forecast_log.artifacts_db import (
         cross_market_status,
         cross_sessions_summary,
-        unclosed_sessions_summary,
     )
     from forecast_log.bars import save_series
-    from forecast_log.china import CHINA_SYMBOLS
-    from forecast_log.commands import COMPARE_SYMBOLS, cross_command
+    from forecast_log.commands import cross_command
     from forecast_log.db import get_series, unclosed_bars_summary
-    from forecast_log.paths import series_path
     from forecast_log.yahoo import fetch_incremental
 
-    pre_unclosed_sessions = unclosed_sessions_summary(ROOT)
     pre_unclosed_bars = unclosed_bars_summary(ROOT)
 
-    symbols = ("^NDX", "^TNX", "DX-Y.NYB", "HYG", "TLT", "^VIX", *COMPARE_SYMBOLS, *CHINA_SYMBOLS)
+    symbols = all_refresh_symbols(ROOT)
     updated: dict[str, str] = {}
     symbol_closed: dict[str, bool] = {}
     errors: dict[str, str] = {}
@@ -101,13 +164,13 @@ def refresh_cross_data() -> dict:
         existing = get_series(ROOT, sym)
         return sym, fetch_incremental(sym, existing)
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(_fetch_one, sym): sym for sym in dict.fromkeys(symbols)}
+    with ThreadPoolExecutor(max_workers=min(12, max(1, len(symbols)))) as pool:
+        futures = {pool.submit(_fetch_one, sym): sym for sym in symbols}
         for fut in as_completed(futures):
             sym = futures[fut]
             try:
                 _, series = fut.result()
-                save_series(series_path(ROOT, sym), series)
+                save_series(ROOT, series)
                 last_bar = series.bars[-1]
                 updated[sym] = last_bar.date.isoformat()
                 symbol_closed[sym] = bool(last_bar.is_closed)
@@ -116,17 +179,34 @@ def refresh_cross_data() -> dict:
 
     cross_command(ROOT)
 
+    timeline_updating = _timeline_needs_update(ROOT)
+    if timeline_updating:
+        if sync_timeline:
+            _refresh_timeline_bg(ROOT)
+            timeline_updating = False
+        else:
+            threading.Thread(target=_refresh_timeline_bg, args=(ROOT,), daemon=True).start()
+
     post_status = cross_market_status(ROOT)
-    post_unclosed_sessions = unclosed_sessions_summary(ROOT)
-    newly_closed: dict[str, list[str]] = {}
-    refreshed_unclosed: dict[str, list[str]] = {}
-    for mkt, prev_dates in pre_unclosed_sessions.items():
-        if prev_dates:
-            refreshed_unclosed[mkt] = prev_dates
-        still = set(post_unclosed_sessions.get(mkt) or [])
+    post_unclosed_bars = unclosed_bars_summary(ROOT)
+
+    newly_closed_bars: dict[str, list[str]] = {}
+    for sym, prev_dates in pre_unclosed_bars.items():
+        still = set(post_unclosed_bars.get(sym) or [])
         settled = [d for d in prev_dates if d not in still]
         if settled:
-            newly_closed[mkt] = settled
+            newly_closed_bars[sym] = settled
+
+    newly_closed = {
+        mkt: newly_closed_bars[info["instrument"]]
+        for mkt, info in post_status.items()
+        if info.get("instrument") in newly_closed_bars
+    }
+    still_open = {
+        mkt: info["unclosed_dates"]
+        for mkt, info in post_status.items()
+        if info.get("unclosed_dates")
+    }
 
     return {
         "ok": True,
@@ -134,12 +214,15 @@ def refresh_cross_data() -> dict:
         "beijing_date": datetime.now(SHANGHAI).date().isoformat(),
         "sessions": cross_sessions_summary(ROOT),
         "market_status": post_status,
+        "symbols_count": len(symbols),
         "updated": updated,
         "symbol_closed": symbol_closed,
-        "refreshed_unclosed": refreshed_unclosed,
         "pre_unclosed_bars": pre_unclosed_bars,
         "newly_closed": newly_closed,
-        "still_open": post_unclosed_sessions,
+        "newly_closed_bars": newly_closed_bars,
+        "still_open": still_open,
+        "still_open_bars": post_unclosed_bars,
+        "timeline_updating": timeline_updating,
         "errors": errors,
     }
 
@@ -156,19 +239,22 @@ def _parse_fetched_dt(raw: str | None) -> datetime | None:
         return None
 
 
-def _needs_refresh() -> bool:
-    from forecast_log.artifacts_db import cross_fetched_at, unclosed_sessions_summary
-    from forecast_log.db import unclosed_bars_summary
+def _needs_refresh(intraday_cooldown_sec: int = INTRADAY_COOLDOWN_SECONDS) -> bool:
+    from forecast_log.artifacts_db import cross_fetched_at
+    from forecast_log.db import refresh_check_summary
 
-    # 1. 只要数据库中存在任何未收盘（is_closed = 0）的交易日或 K 线，必须重新拉取最新行情
-    if unclosed_sessions_summary(ROOT) or unclosed_bars_summary(ROOT):
+    # 1. 检查全库未收盘行：
+    #    - 已过收盘时间但仍是 is_closed=0 的残缺行 -> 无视冷却立即重抓！
+    #    - 仍在盘中交易的 is_closed=0 行 -> 超过冷却时间（默认 5 分钟）才自动重抓，避免频繁刷页白跑。
+    check = refresh_check_summary(ROOT, intraday_cooldown_sec=intraday_cooldown_sec)
+    if check["needs_refresh"]:
         return True
 
     ny_tz = ZoneInfo("America/New_York")
     now_sh = datetime.now(SHANGHAI)
     now_ny = datetime.now(ny_tz)
 
-    # 2. 按各市场所在时区的开盘/收盘时间点检查是否已有新交易时段或收盘后尚未重抓
+    # 2. 按各市场所在时区的开盘/收盘时间点检查是否已有新交易时段开启或刚跨过收盘点
     for market in ("ndx", "qqq", "ssec"):
         fetched_dt = _parse_fetched_dt(cross_fetched_at(ROOT, market))
         if fetched_dt is None:
@@ -183,13 +269,11 @@ def _needs_refresh() -> bool:
             open_hm, close_hm = (9, 30), (16, 15)
 
         if local_fetched.date() < local_now.date():
-            # 跨日后：若前一日是在收盘前抓的，或者今日已进入交易时段，则需要刷新
             if (local_fetched.hour, local_fetched.minute) < close_hm:
                 return True
             if local_now.weekday() < 5 and (local_now.hour, local_now.minute) >= open_hm:
                 return True
         elif local_fetched.date() == local_now.date():
-            # 同日内：若上次抓取在收盘前，且当前已过收盘时间，必须重抓收盘终值
             if (local_fetched.hour, local_fetched.minute) < close_hm <= (local_now.hour, local_now.minute):
                 return True
 
@@ -200,17 +284,19 @@ def _cached_status() -> dict:
     from forecast_log.artifacts_db import (
         cross_market_status,
         cross_sessions_summary,
-        unclosed_sessions_summary,
     )
+    from forecast_log.db import unclosed_bars_summary
 
+    status = cross_market_status(ROOT)
     return {
         "ok": True,
         "cached": True,
         "beijing_date": datetime.now(SHANGHAI).date().isoformat(),
         "sessions": cross_sessions_summary(ROOT),
-        "market_status": cross_market_status(ROOT),
+        "market_status": status,
         "newly_closed": {},
-        "still_open": unclosed_sessions_summary(ROOT),
+        "still_open": {mkt: info["unclosed_dates"] for mkt, info in status.items() if info.get("unclosed_dates")},
+        "still_open_bars": unclosed_bars_summary(ROOT),
     }
 
 
@@ -329,15 +415,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 def _startup_refresh() -> None:
-    if not _needs_refresh():
-        return
-    print("检测到今日尚未拉取最新行情，后台自动更新中…", flush=True)
+    """服务启动后始终自动调用一次全品种增量刷新函数，补齐所有未收盘及最新数据。"""
+    print("启动自动刷新：正在增量拉取全品种最新行情（含未收盘数据重抓）…", flush=True)
     with _REFRESH_LOCK:
-        if not _needs_refresh():
-            return
         try:
             res = refresh_cross_data()
-            print(f"行情更新完成：{res.get('sessions')}", flush=True)
+            print(
+                f"行情更新完成：{res.get('sessions')}（共更新 {len(res.get('updated', {}))} 个品种）",
+                flush=True,
+            )
         except Exception as exc:
             print(f"启动自动更新失败：{exc}", flush=True)
 

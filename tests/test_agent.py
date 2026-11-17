@@ -33,7 +33,6 @@ from forecast_log.agent.tools import Toolbox
 
 NY = ZoneInfo("America/New_York")
 from forecast_log.bars import Bar, Series, save_series
-from forecast_log.paths import series_path
 
 
 # ----------------------------------------------------------------------- fixtures
@@ -46,7 +45,7 @@ def write_series(root: Path, closes: list[float], symbol: str = "^VXN", start: d
         for index, close in enumerate(closes)
     )
     series = Series(symbol=symbol, timezone="America/New_York", fetched_at="2026-11-12T06:48:23-05:00", bars=bars)
-    save_series(series_path(root, symbol), series)
+    save_series(root, series)
     return series
 
 
@@ -272,14 +271,14 @@ def test_generated_questions_cannot_see_their_own_answer(root: Path) -> None:
     closes = list(20 * np.exp(rng.normal(0, 0.02, 900).cumsum()))
     write_series(root, closes)
     rows = build_questions(
-        __import__("forecast_log.bars", fromlist=["load_series"]).load_series(series_path(root, "^VXN")),
+        __import__("forecast_log.bars", fromlist=["load_series"]).load_series(root, "^VXN"),
         stride=50,
         modes=("level", "quantile", "band_up"),
         limit=30,
     )
     assert rows
     assert len({row.id for row in rows}) == len(rows)
-    actual = {bar.date: bar.close for bar in __import__("forecast_log.bars", fromlist=["load_series"]).load_series(series_path(root, "^VXN")).bars}
+    actual = {bar.date: bar.close for bar in __import__("forecast_log.bars", fromlist=["load_series"]).load_series(root, "^VXN").bars}
     for row in rows:
         assert row.question.resolve_session > row.as_of
         expected = 1 if actual[row.question.resolve_session] > row.question.threshold else 0

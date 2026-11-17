@@ -30,7 +30,6 @@ from pathlib import Path
 import numpy as np
 
 from forecast_log.bars import Series, load_series
-from forecast_log.paths import series_path
 
 HORIZON = 5
 HOLDOUT = "2015-01-01"
@@ -77,7 +76,7 @@ def entries(root: Path) -> list[Entry]:
     signal_doc = load_cross_market(root, "ndx")
     if signal_doc is None:
         raise FileNotFoundError("数据库中缺少 ndx 信号，请先运行 forecast-log cross")
-    series = load_series(series_path(root, TARGET))
+    series = load_series(root, TARGET)
     dates, opens, _highs, _lows, closes, _volumes = _sessions(series)
     n = len(dates)
 
@@ -159,7 +158,7 @@ def document(root: Path) -> dict:
     signal_doc = load_cross_market(root, "ndx")
     if signal_doc is None:
         raise FileNotFoundError("数据库中缺少 ndx 信号，请先运行 forecast-log cross")
-    series = load_series(series_path(root, TARGET))
+    series = load_series(root, TARGET)
     dates, opens, highs, lows, closes, volumes = _sessions(series)
     n = len(dates)
     rows = entries(root)

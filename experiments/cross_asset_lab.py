@@ -15,7 +15,6 @@ import numpy as np
 
 from forecast_log.bars import Series, load_series
 from forecast_log.stats import expanding_z
-from forecast_log.paths import series_path
 
 ROOT = Path(__file__).resolve().parents[1]
 HORIZON = 5
@@ -68,10 +67,10 @@ def transform(values: np.ndarray, how: str) -> np.ndarray:
 def load_prices(symbol: str, dates: np.ndarray) -> np.ndarray:
     if "/" in symbol:
         left, right = symbol.split("/")
-        return aligned(dates, load_series(series_path(ROOT, left))) / aligned(
-            dates, load_series(series_path(ROOT, right))
+        return aligned(dates, load_series(ROOT, left)) / aligned(
+            dates, load_series(ROOT, right)
         )
-    return aligned(dates, load_series(series_path(ROOT, symbol)))
+    return aligned(dates, load_series(ROOT, symbol))
 
 
 def blocks(values: np.ndarray) -> tuple[float, float, float]:
@@ -88,7 +87,7 @@ def blocks(values: np.ndarray) -> tuple[float, float, float]:
 
 
 def main() -> None:
-    ndx = load_series(series_path(ROOT, "^NDX"))
+    ndx = load_series(ROOT, "^NDX")
     dates = np.array([np.datetime64(bar.date) for bar in ndx.bars])
     closes = np.array([bar.close for bar in ndx.bars], dtype=float)
     log_close = np.log(closes)

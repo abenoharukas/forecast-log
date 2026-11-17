@@ -35,7 +35,6 @@ from forecast_log.agent.loop import Agent, QuestionView, Trace
 from forecast_log.agent.tools import Toolbox
 from forecast_log.bars import Series, load_series
 from forecast_log.horizon import sessions_from_as_of_through_resolve
-from forecast_log.paths import series_path
 from forecast_log.questions import load_questions
 
 
@@ -172,7 +171,7 @@ def settlement_questions(root: Path) -> list[QuestionView]:
     """The three real questions, as the agent sees them."""
     views = []
     for question in load_questions(root / "questions.json"):
-        as_of = load_series(series_path(root, question.symbol)).bars[-1].date
+        as_of = load_series(root, question.symbol).bars[-1].date
         horizon = sessions_from_as_of_through_resolve(as_of, question.resolve_session)
         views.append(
             QuestionView(

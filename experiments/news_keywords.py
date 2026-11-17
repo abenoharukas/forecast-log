@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from forecast_log.bars import load_series, Series  # noqa: E402
-from forecast_log.paths import repo_root, series_path  # noqa: E402
+from forecast_log.paths import repo_root  # noqa: E402
 
 HORIZON = 5
 
@@ -76,7 +76,7 @@ def main() -> None:
     args = parser.parse_args()
 
     root = repo_root()
-    series = load_series(series_path(root, args.symbol))
+    series = load_series(root, args.symbol)
     outcomes = forward(series)
     hits = keyword_days(root, date(2013, 1, 1))
 

@@ -200,14 +200,13 @@ def test_expanding_z_never_looks_at_later_rows():
 def test_cross_marks_land_five_sessions_later():
     from pathlib import Path
 
-    from forecast_log.bars import load_series
+    from forecast_log.bars import has_series, load_series
     from forecast_log.cross import HORIZON, document
-    from forecast_log.paths import series_path
 
     root = Path(__file__).resolve().parents[1]
-    if not series_path(root, "^TNX").exists():
+    if not has_series(root, "^TNX"):
         return
-    series = load_series(series_path(root, "^NDX"))
+    series = load_series(root, "^NDX")
     doc = document(root, series)
     position = {bar.date.isoformat(): index for index, bar in enumerate(series.bars)}
     checked = 0

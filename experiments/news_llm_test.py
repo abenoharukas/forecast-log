@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from forecast_log.bars import load_series  # noqa: E402
 from forecast_log.news_labels import flatten, load  # noqa: E402
-from forecast_log.paths import repo_root, series_path  # noqa: E402
+from forecast_log.paths import repo_root  # noqa: E402
 
 HORIZON = 5
 HOLDOUT = "2015-01-01"
@@ -41,7 +41,7 @@ def rate(rows, key=lambda row: row[1]) -> float:
 
 def main() -> None:
     root = repo_root()
-    series = load_series(series_path(root, "^NDX"))
+    series = load_series(root, "^NDX")
     outcomes = forward(series)
     labels = {day: flatten(record["label"]) for day, record in load(root).items()}
     days = sorted(day for day in labels if day in outcomes)

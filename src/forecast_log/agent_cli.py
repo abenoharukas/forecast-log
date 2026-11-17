@@ -32,7 +32,6 @@ from forecast_log.agent.llm import LLM, OpenAICompatLLM
 from forecast_log.agent.loop import Agent
 from forecast_log.agent.tools import Toolbox
 from forecast_log.bars import load_series
-from forecast_log.paths import series_path
 
 NY = ZoneInfo("America/New_York")
 
@@ -64,7 +63,7 @@ def agent_forecast_command(
 
     records = {}
     for question in questions:
-        series = load_series(series_path(root, question.symbol))
+        series = load_series(root, question.symbol)
         as_of_session = series.bars[-1].date
         as_of = AsOf.at_session_close(as_of_session)
         path = out_dir / f"{question.id}.json"
@@ -232,7 +231,7 @@ def agent_eval_command(
     workers: int = 1,
     merge: bool = False,
 ) -> dict:
-    series = load_series(series_path(root, symbol))
+    series = load_series(root, symbol)
     questions = build_questions(series, stride=stride, limit=limit, modes=modes)
     print(f"{len(questions)} 道题，{symbol}，{questions[0].as_of} → {questions[-1].question.resolve_session}")
 

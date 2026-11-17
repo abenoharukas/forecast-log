@@ -48,7 +48,6 @@ import numpy as np
 from forecast_log import daily, events
 from forecast_log.bars import Series, load_series
 from forecast_log.stats import expanding_z
-from forecast_log.paths import series_path
 
 HORIZON = 5
 QUANTILE = 0.90
@@ -80,10 +79,10 @@ def _aligned(dates: np.ndarray, series: Series) -> np.ndarray:
 def _prices(root: Path, symbol: str, dates: np.ndarray) -> np.ndarray:
     if "/" in symbol:
         left, right = symbol.split("/")
-        return _aligned(dates, load_series(series_path(root, left))) / _aligned(
-            dates, load_series(series_path(root, right))
+        return _aligned(dates, load_series(root, left)) / _aligned(
+            dates, load_series(root, right)
         )
-    return _aligned(dates, load_series(series_path(root, symbol)))
+    return _aligned(dates, load_series(root, symbol))
 
 
 def _leg(values: np.ndarray, how: str) -> np.ndarray:

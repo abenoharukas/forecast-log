@@ -7,7 +7,7 @@
 -- Cross-asset signals (/api/cross/<market>):
 --   market        one row per tab (ndx / qqq / ssec): the question and its rule
 --   session       one row per trading day: OHLCV plus the derived signal columns
---   factor_key    which 4-bit slot of session.factors_packed means which switch
+--   contexts      which 4-bit slot of session.factors_packed means which switch
 --   contexts      the switches the page renders as checkboxes
 --   market_node   every nested value as one scalar row, addressed by path
 --
@@ -58,19 +58,12 @@ CREATE TABLE IF NOT EXISTS session (
   peak            REAL,
   peak_at         TEXT,
   us_date         TEXT,
-  factors_packed  INTEGER NOT NULL DEFAULT 0,  -- 4 bits per switch, matching factor_key.position
+  factors_packed  INTEGER NOT NULL DEFAULT 0,  -- 4 bits per switch, matching contexts.position
   is_closed       INTEGER NOT NULL DEFAULT 1,  -- 1 = closed final print, 0 = intraday unclosed
   PRIMARY KEY (market, date)
 );
 
 CREATE INDEX IF NOT EXISTS session_by_market_date ON session (market, date);
-
-CREATE TABLE IF NOT EXISTS factor_key (
-  market   TEXT NOT NULL,
-  position INTEGER NOT NULL,
-  key      TEXT NOT NULL,
-  PRIMARY KEY (market, position)
-);
 
 CREATE TABLE IF NOT EXISTS contexts (
   market         TEXT NOT NULL,

@@ -26,7 +26,6 @@ from forecast_log.agent.gate import AsOf, LookAheadError, check_bars
 from forecast_log.bars import Series, has_series, load_series
 from forecast_log.db import db_path, list_db_symbols, load_all_news_items
 from forecast_log.estimate import AnalogModel
-from forecast_log.paths import series_path
 
 MAX_DOC_CHARS = 4000
 
@@ -56,15 +55,7 @@ class ToolOutcome:
 
 
 def available_symbols(root: Path) -> list[str]:
-    found = set(list_db_symbols(root))
-    raw_dir = root / "data" / "raw"
-    if raw_dir.is_dir():
-        for path in sorted(raw_dir.glob("*.json")):
-            try:
-                found.add(str(json.loads(path.read_text())["symbol"]))
-            except (json.JSONDecodeError, KeyError):
-                continue
-    return sorted(found)
+    return list_db_symbols(root)
 
 
 @dataclass
@@ -115,7 +106,7 @@ class Toolbox:
                 raise UnknownSymbol(
                     f"{symbol!r} is not fetched; available: {', '.join(available_symbols(self.root))}"
                 )
-            self._series[symbol] = load_series(series_path(self.root, symbol))
+            self._series[symbol] = load_series(self.root, symbol)
         return self._series[symbol]
 
     def visible(self, symbol: str) -> tuple[list[date], np.ndarray]:

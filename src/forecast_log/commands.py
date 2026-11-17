@@ -20,7 +20,6 @@ from forecast_log.china import CHINA_SYMBOLS, document as china_document
 from forecast_log.cross import CROSS_SYMBOLS, comparison, document as cross_document
 from forecast_log.features import FEATURE_SYMBOLS, describe as describe_features, load_matrix
 from forecast_log.horizon import sessions_from_as_of_through_resolve
-from forecast_log.paths import series_path
 from forecast_log.questions import load_questions, reference_closes
 from forecast_log.yahoo import fetch_daily
 
@@ -46,11 +45,11 @@ def fetch_command(root: Path) -> dict:
     loaded = {}
     for symbol in SYMBOLS:
         series = fetch_incremental(symbol, get_series(root, symbol))
-        save_series(series_path(root, symbol), series)
+        save_series(root, series)
         last = series.bars[-1]
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
-            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），写入 {series_path(root, symbol)}"
+            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），已存入 data/forecast.db 的 bars 表"
         )
         loaded[symbol] = series
     for symbol in FEATURE_SYMBOLS:
@@ -59,11 +58,11 @@ def fetch_command(root: Path) -> dict:
         except (RuntimeError, OSError) as error:
             print(f"{symbol} 取数失败，跳过：{error}")
             continue
-        save_series(series_path(root, symbol), series)
+        save_series(root, series)
         last = series.bars[-1]
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
-            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），写入 {series_path(root, symbol)}"
+            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），已存入 data/forecast.db 的 bars 表"
         )
     for symbol in (*CROSS_SYMBOLS, *COMPARE_SYMBOLS, *CHINA_SYMBOLS):
         try:
@@ -71,11 +70,11 @@ def fetch_command(root: Path) -> dict:
         except (RuntimeError, OSError, ValueError) as error:
             print(f"{symbol} 取数失败，跳过：{error}")
             continue
-        save_series(series_path(root, symbol), series)
+        save_series(root, series)
         last = series.bars[-1]
         print(
             f"{symbol} {len(series.bars)} 根，{series.bars[0].date.isoformat()} → "
-            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），写入 {series_path(root, symbol)}"
+            f"{last.date.isoformat()} 收盘 {last.close}（{'已收盘' if last.is_closed else '盘中未收盘'}），已存入 data/forecast.db 的 bars 表"
         )
     report = reference_report(root, loaded["^VXN"], loaded["^NDX"])
     print(reference_text(report))
@@ -116,7 +115,7 @@ def cross_command(root: Path) -> dict:
     """跨资产风险偏好偏多时，之后 5 个交易日内偏涨的点（写入数据库）。"""
     from forecast_log.artifacts_db import save_cross_market
 
-    ndx = load_series(series_path(root, "^NDX"))
+    ndx = load_series(root, "^NDX")
     document = cross_document(root, ndx)
     save_cross_market(root, "ndx", document)
     stats = document["summary"]
@@ -130,12 +129,11 @@ def cross_command(root: Path) -> dict:
         f"已写入数据库 (data/forecast.db: ndx)"
     )
     for symbol in COMPARE_SYMBOLS:
-        compare_path = series_path(root, symbol)
         if not has_series(root, symbol):
             print(f"{symbol} 还没取，跳过对照（forecast-log fetch）")
             continue
         # 信号还是那一条：只把入场/出场价换成这只标的的收盘。
-        other = cross_document(root, ndx, instrument=symbol, target=load_series(compare_path))
+        other = cross_document(root, ndx, instrument=symbol, target=load_series(root, symbol))
         other["comparison"] = comparison(document, other)
         save_cross_market(root, symbol.lower(), other)
         rows = other["comparison"]["rows"]
@@ -187,7 +185,7 @@ def lock_command(root: Path, now: datetime | None = None) -> list[Path]:
     if found:
         names = ", ".join(path.name for path in found)
         raise SystemExit(f"已经锁定，不再改写：{names}")
-    series = {symbol: load_series(series_path(root, symbol)) for symbol in SYMBOLS}
+    series = {symbol: load_series(root, symbol) for symbol in SYMBOLS}
     extra = {symbol: (_features_for(root, loaded) if symbol == "^VXN" else None)
              for symbol, loaded in series.items()}
     as_of_bar = {
@@ -360,7 +358,7 @@ def _load_both(root: Path):
     missing = [symbol for symbol in SYMBOLS if not has_series(root, symbol)]
     if missing:
         raise SystemExit("还没有日线缓存。先运行 forecast-log fetch")
-    return load_series(series_path(root, "^VXN")), load_series(series_path(root, "^NDX"))
+    return load_series(root, "^VXN"), load_series(root, "^NDX")
 
 
 def _session_complete(session, now: datetime) -> bool:

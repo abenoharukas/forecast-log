@@ -17,7 +17,6 @@ import numpy as np
 from forecast_log.bars import load_series
 from forecast_log.stats import expanding_z, _sigmoid
 from forecast_log.features import load_matrix
-from forecast_log.paths import series_path
 
 ROOT = Path(__file__).resolve().parents[1]
 HORIZON = 5
@@ -97,7 +96,7 @@ def block_interval(hits: np.ndarray, samples: int = RESAMPLES) -> tuple[float, f
 
 
 def main() -> None:
-    ndx = load_series(series_path(ROOT, "^NDX"))
+    ndx = load_series(ROOT, "^NDX")
     dates = [bar.date for bar in ndx.bars]
     closes = np.array([bar.close for bar in ndx.bars], dtype=float)
     log_close = np.log(closes)

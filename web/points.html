@@ -664,13 +664,28 @@
         if (refreshing) return;
         refreshing = true;
         const btn = document.querySelector("#refresh-btn");
-        if (btn) { btn.disabled = true; btn.textContent = "刷新中…"; }
+        let spinTimer = null;
+        if (btn) {
+          if (force) {
+            btn.disabled = true;
+            btn.textContent = "刷新中…";
+          } else {
+            spinTimer = setTimeout(() => {
+              if (refreshing) {
+                btn.disabled = true;
+                btn.textContent = "刷新中…";
+              }
+            }, 150);
+          }
+        }
+        let didUpdate = false;
         try {
           const url = force ? "/api/refresh?force=1" : "/api/refresh";
           const res = await fetch(url, { method: "POST" });
           if (res.ok) {
             const payload = await res.json();
             if (!payload.cached) {
+              didUpdate = true;
               cache.clear();
               await loadMarket(activeMarket);
             }
@@ -678,8 +693,19 @@
         } catch (_) {
           // Static server without /api/refresh: ignore gracefully
         } finally {
+          if (spinTimer) clearTimeout(spinTimer);
           refreshing = false;
-          if (btn) { btn.disabled = false; btn.textContent = "↻ 刷新行情"; }
+          if (btn) {
+            btn.disabled = false;
+            if (force && didUpdate) {
+              btn.textContent = "✓ 已更新";
+              setTimeout(() => {
+                if (!refreshing) btn.textContent = "↻ 刷新行情";
+              }, 1500);
+            } else {
+              btn.textContent = "↻ 刷新行情";
+            }
+          }
         }
       }
 
@@ -744,12 +770,9 @@
           { marketKey: cfg.key }
         );
 
-        const bj = beijingTodayInfo();
-        const fetchedDay = beijingDateOf(data.fetched_at);
-        const hasUnclosed =
-          (data.latest && data.latest.is_closed === false) ||
-          (Array.isArray(data.is_closed) && data.is_closed.some((v) => !v));
-        if (!autoRefreshed && (!fetchedDay || fetchedDay < bj.iso || hasUnclosed)) {
+        // 页面首次打开时向后端发起一次非强制检查：
+        // 后端会统一判断全库是否有已过收盘的残缺行或超过 5 分钟冷却的盘中行，无需刷新时毫秒级返回 cached: true
+        if (!autoRefreshed) {
           autoRefreshed = true;
           triggerRefresh(false);
         }

@@ -1,7 +1,7 @@
-"""SQLite / D1 共享的看板数据读写层：cross 信号、VXN timeline、agent 评测结果。
+"""看板数据读写层：cross 信号（统一存储于单张 `bars` 表）、VXN timeline、agent 评测结果。
 
-本地全部存进 `data/forecast.db`，线上同步到 Cloudflare D1 的同名表，
-前后端和脚本不再读写 `artifacts/*.json`。
+本地全部存进 `data/forecast.db`（行情与信号共享单张 `bars` 表，不再冗余拆出 `session` 表）；
+同时保留 `SESSION_COLUMNS` 与 `build_cross_bundle` 导出以兼容 `scripts/publish_d1.py`。
 """
 
 from __future__ import annotations
@@ -11,12 +11,9 @@ from typing import Any
 
 from forecast_log.db import connect, db_path
 
-SESSION_COLUMNS = (
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
+PRICE_FLOAT_COLUMNS = ("open", "high", "low", "close")
+
+SIGNAL_COLUMNS = (
     "entry",
     "entry_at",
     "base_close",
@@ -33,8 +30,20 @@ SESSION_COLUMNS = (
     "peak",
     "peak_at",
     "us_date",
+)
+
+SESSION_COLUMNS = (
+    *PRICE_FLOAT_COLUMNS,
+    "volume",
+    *SIGNAL_COLUMNS,
     "is_closed",
 )
+
+DEFAULT_INSTRUMENTS = {
+    "ndx": "^NDX",
+    "qqq": "QQQ",
+    "ssec": "000001.SS",
+}
 
 CROSS_SCALAR_ROOTS = (
     "summary",
@@ -140,7 +149,7 @@ def _set_path_clean(root: dict, path: str, value: Any) -> None:
         cursor[last] = value
 
 
-# ------------------------------------------------------------------ Cross 信号
+# ------------------------------------------------------------------ Cross 信号（单表 bars）
 
 
 def build_cross_bundle(doc: dict, market: str) -> dict:
@@ -159,12 +168,13 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
     factor_keys = list(components.keys())
     positions = {key: i for i, key in enumerate(factor_keys)}
 
-    instrument = str(doc.get("instrument") or "")
+    instrument = str(doc.get("instrument") or DEFAULT_INSTRUMENTS.get(market, market))
     tz_name = "Asia/Shanghai" if (market == "ssec" or instrument.endswith((".SS", ".SZ"))) else "America/New_York"
     fetched_at = doc.get("fetched_at")
+    times = doc.get("time") or []
 
     sessions = []
-    for index, day in enumerate(doc["time"]):
+    for index, day in enumerate(times):
         mask = 0
         for key, slot in positions.items():
             series = components.get(key) or []
@@ -199,17 +209,19 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
     ]
 
     question = doc.get("question") or {}
+    first_session = doc.get("first_session") or (times[0] if times else None)
+    last_session = doc.get("last_session") or (times[-1] if times else None)
     return {
         "market": market,
         "row": {
             "market": market,
-            "instrument": doc.get("instrument"),
+            "instrument": instrument,
             "name": doc.get("name"),
             "horizon": question.get("horizon"),
             "question": question.get("text"),
             "rule": question.get("rule"),
-            "first_session": doc.get("first_session"),
-            "last_session": doc.get("last_session"),
+            "first_session": first_session,
+            "last_session": last_session,
             "fetched_at": doc.get("fetched_at"),
         },
         "nodes": nodes,
@@ -220,15 +232,20 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
 
 
 def save_cross_market(root: Path, market: str, doc: dict) -> int:
-    """增量更新信号表：绝不删除历史行，只插入新增交易日、更新未收盘（is_closed=0）行或刚完成结算的尾部行。"""
+    """将信号列增量写入统一单表 `bars`：绝不删除历史行，且局部更新信号列不覆盖已有原始行情。"""
     bundle = build_cross_bundle(doc, market)
+    symbol = str(bundle["row"]["instrument"])
     conn = connect(db_path(root))
     try:
         existing = {
             row["date"]: row
             for row in conn.execute(
-                "SELECT date, open, high, low, close, volume, flag, outcome, is_closed FROM session WHERE market = ?",
-                (market,),
+                """
+                SELECT date, open, high, low, close, volume, flag, score, outcome, factors_packed, is_closed
+                FROM bars
+                WHERE symbol = ?
+                """,
+                (symbol,),
             ).fetchall()
         }
         all_sessions = bundle["sessions"]
@@ -237,28 +254,27 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
             prev = existing.get(s["date"])
             if (
                 prev is None
+                or (prev["flag"] is None and s.get("flag") is not None)
+                or (prev["score"] is None and s.get("score") is not None)
                 or prev["is_closed"] == 0
                 or not s.get("is_closed", 1)
                 or (prev["outcome"] is None and s.get("outcome") is not None)
             ):
-                # 若某一天之前未收盘或新入库，其前 7 个交易日的入场价/3日/5日结算窗口可能依赖这一天的价格，一并重算覆盖
+                # 若某一天之前未收盘、刚入库或尚未写过信号，其前 7 个交易日的入场价/3日/5日结算窗口可能依赖它，一并重算覆盖
                 for back in range(max(0, idx - 7), idx + 1):
                     dirty_indices.add(back)
 
-        # 尾部最近 7 个交易日若 OHLCV、信号或收盘标记发生变化，也一并增量同步
+        # 尾部最近 7 个交易日若信号、结算或收盘状态发生变化，也一并增量同步
         for idx in range(max(0, len(all_sessions) - 7), len(all_sessions)):
             s = all_sessions[idx]
             prev = existing.get(s["date"])
             if (
                 prev is None
-                or prev["close"] != s.get("close")
-                or prev["open"] != s.get("open")
-                or prev["high"] != s.get("high")
-                or prev["low"] != s.get("low")
-                or prev["volume"] != s.get("volume")
                 or prev["flag"] != s.get("flag")
                 or prev["outcome"] != s.get("outcome")
+                or prev["factors_packed"] != s.get("factors_packed")
                 or prev["is_closed"] != s.get("is_closed")
+                or (prev["close"] is not None and s.get("close") is not None and round(float(prev["close"]), 2) != round(float(s["close"]), 2))
             ):
                 dirty_indices.add(idx)
 
@@ -284,11 +300,24 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
                 ),
             )
             if sessions_to_write:
-                cols = ("market", "date", *SESSION_COLUMNS, "factors_packed")
+                cols = ("symbol", "date", *SESSION_COLUMNS, "factors_packed")
                 placeholders = ",".join("?" for _ in cols)
+                signal_updates = ",\n                        ".join(
+                    f"{col} = excluded.{col}" for col in (*SIGNAL_COLUMNS, "factors_packed")
+                )
                 conn.executemany(
-                    f"INSERT OR REPLACE INTO session ({','.join(cols)}) VALUES ({placeholders})",
-                    [tuple([market] + [s.get(c) for c in cols[1:]]) for s in sessions_to_write],
+                    f"""
+                    INSERT INTO bars ({",".join(cols)})
+                    VALUES ({placeholders})
+                    ON CONFLICT(symbol, date) DO UPDATE SET
+                        open   = COALESCE(bars.open, excluded.open),
+                        high   = COALESCE(bars.high, excluded.high),
+                        low    = COALESCE(bars.low, excluded.low),
+                        close  = COALESCE(bars.close, excluded.close),
+                        volume = COALESCE(bars.volume, excluded.volume),
+                        {signal_updates}
+                    """,
+                    [tuple([symbol, s["date"], *[s.get(c) for c in SESSION_COLUMNS], s["factors_packed"]]) for s in sessions_to_write],
                 )
             conn.executemany(
                 "INSERT OR REPLACE INTO factor_key (market, position, key) VALUES (?, ?, ?)",
@@ -332,8 +361,25 @@ def load_cross_market(root: Path, market: str) -> dict | None:
     conn = connect(path)
     try:
         meta = conn.execute("SELECT * FROM market WHERE market = ?", (market,)).fetchone()
-        sessions = conn.execute("SELECT * FROM session WHERE market = ? ORDER BY date", (market,)).fetchall()
-        if meta is None or not sessions:
+        if meta is None:
+            return None
+        rows = conn.execute(
+            """
+            SELECT * FROM bars
+            WHERE symbol = ?
+              AND (? IS NULL OR date >= ?)
+              AND (? IS NULL OR date <= ?)
+            ORDER BY date ASC
+            """,
+            (
+                meta["instrument"],
+                meta["first_session"],
+                meta["first_session"],
+                meta["last_session"],
+                meta["last_session"],
+            ),
+        ).fetchall()
+        if not rows:
             return None
         nodes = conn.execute("SELECT path, kind, value FROM market_node WHERE market = ?", (market,)).fetchall()
         contexts = conn.execute("SELECT * FROM contexts WHERE market = ? ORDER BY position", (market,)).fetchall()
@@ -347,10 +393,13 @@ def load_cross_market(root: Path, market: str) -> dict | None:
         doc["fetched_at"] = meta["fetched_at"]
         doc["first_session"] = meta["first_session"]
         doc["last_session"] = meta["last_session"]
-        doc["time"] = [row["date"] for row in sessions]
+        doc["time"] = [row["date"] for row in rows]
 
         for column in SESSION_COLUMNS:
-            values = [row[column] for row in sessions]
+            if column in PRICE_FLOAT_COLUMNS:
+                values = [round(float(row[column]), 2) if row[column] is not None else None for row in rows]
+            else:
+                values = [row[column] for row in rows]
             if any(v is not None for v in values):
                 doc[column] = values
 
@@ -358,7 +407,7 @@ def load_cross_market(root: Path, market: str) -> dict | None:
         for f in factors:
             pos = f["position"]
             key = f["key"]
-            doc["components"][key] = [(row["factors_packed"] >> (4 * pos)) & 0xF for row in sessions]
+            doc["components"][key] = [(row["factors_packed"] >> (4 * pos)) & 0xF for row in rows]
 
         doc["contexts"] = []
         for row in contexts:
@@ -383,8 +432,8 @@ def load_cross_market(root: Path, market: str) -> dict | None:
         for row in nodes:
             _set_path_clean(doc, row["path"], cast(row["kind"], row["value"]))
 
-        if isinstance(doc.get("latest"), dict) and sessions:
-            doc["latest"]["is_closed"] = bool(sessions[-1]["is_closed"])
+        if isinstance(doc.get("latest"), dict) and rows:
+            doc["latest"]["is_closed"] = bool(rows[-1]["is_closed"])
 
         return doc
     finally:
@@ -415,26 +464,8 @@ def cross_sessions_summary(root: Path) -> dict[str, str | None]:
         conn.close()
 
 
-def unclosed_sessions_summary(root: Path) -> dict[str, list[str]]:
-    """返回数据库中各市场尚未收盘（is_closed = 0）的交易日列表：{market: [date, ...]}。"""
-    path = db_path(root)
-    if not path.is_file():
-        return {}
-    conn = connect(path)
-    try:
-        rows = conn.execute(
-            "SELECT market, date FROM session WHERE is_closed = 0 ORDER BY market ASC, date ASC"
-        ).fetchall()
-        out: dict[str, list[str]] = {}
-        for row in rows:
-            out.setdefault(str(row["market"]), []).append(str(row["date"]))
-        return out
-    finally:
-        conn.close()
-
-
 def cross_market_status(root: Path) -> dict[str, dict[str, Any]]:
-    """返回各市场最新交易日、抓取时间、是否已收盘以及所有未收盘交易日清单。"""
+    """基于单表 `bars` 返回各市场最新交易日、抓取时间、是否已收盘以及所有未收盘交易日清单。"""
     path = db_path(root)
     if not path.is_file():
         return {}
@@ -444,21 +475,22 @@ def cross_market_status(root: Path) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
         for m in markets:
             mkt = str(m["market"])
+            inst = str(m["instrument"])
             last_row = conn.execute(
-                "SELECT date, close, is_closed FROM session WHERE market = ? ORDER BY date DESC LIMIT 1",
-                (mkt,),
+                "SELECT date, close, is_closed FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+                (inst,),
             ).fetchone()
             unclosed = [
                 str(r["date"])
                 for r in conn.execute(
-                    "SELECT date FROM session WHERE market = ? AND is_closed = 0 ORDER BY date ASC",
-                    (mkt,),
+                    "SELECT date FROM bars WHERE symbol = ? AND is_closed = 0 ORDER BY date ASC",
+                    (inst,),
                 ).fetchall()
             ]
             out[mkt] = {
-                "instrument": m["instrument"],
+                "instrument": inst,
                 "last_session": last_row["date"] if last_row else m["last_session"],
-                "last_close": last_row["close"] if last_row else None,
+                "last_close": round(float(last_row["close"]), 2) if (last_row and last_row["close"] is not None) else None,
                 "fetched_at": m["fetched_at"],
                 "is_closed": bool(last_row["is_closed"]) if last_row is not None else True,
                 "unclosed_dates": unclosed,

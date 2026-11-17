@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -94,85 +93,27 @@ def validate_bars(bars: tuple[Bar, ...] | list[Bar]) -> None:
         raise ValueError("volumes must be non-negative when present")
 
 
-def _root_from_series_path(path: Path) -> Path | None:
-    if path.parent.name == "raw" and path.parent.parent.name == "data":
-        return path.parent.parent.parent
-    return None
-
-
 def has_series(root: Path, symbol: str) -> bool:
     from forecast_log.db import has_series_in_db
-    from forecast_log.paths import series_path
 
-    if has_series_in_db(root, symbol):
-        return True
-    return series_path(root, symbol).is_file()
+    return has_series_in_db(root, symbol)
 
 
-def save_series(path: Path, series: Series) -> None:
+def save_series(root: Path, series: Series) -> None:
+    """唯一存储：SQLite 的 bars 表。"""
     validate_bars(series.bars)
-    root = _root_from_series_path(path)
-    if root is not None:
-        from forecast_log.db import upsert_series
+    from forecast_log.db import upsert_series
 
-        upsert_series(root, series)
-        return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "symbol": series.symbol,
-        "timezone": series.timezone,
-        "fetched_at": series.fetched_at,
-        "bars": [
-            {
-                "date": bar.date.isoformat(),
-                "open": bar.open,
-                "high": bar.high,
-                "low": bar.low,
-                "close": bar.close,
-                "volume": bar.volume,
-                "is_closed": bar.is_closed,
-            }
-            for bar in series.bars
-        ],
-    }
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    upsert_series(root, series)
 
 
-def load_series(path: Path) -> Series:
-    root = _root_from_series_path(path)
-    if root is not None:
-        from forecast_log.db import get_series_by_slug
+def load_series(root: Path, symbol: str) -> Series:
+    from forecast_log.db import get_series
 
-        loaded = get_series_by_slug(root, path.stem)
-        if loaded is not None:
-            return loaded
-    payload = json.loads(path.read_text())
-    tz_name = payload.get("timezone") or "America/New_York"
-    fetched_at = payload.get("fetched_at")
-    bars = tuple(
-        Bar(
-            date=date.fromisoformat(row["date"]),
-            close=float(row["close"]),
-            open=float(row["open"]) if row.get("open") is not None else None,
-            high=float(row["high"]) if row.get("high") is not None else None,
-            low=float(row["low"]) if row.get("low") is not None else None,
-            volume=int(row["volume"]) if row.get("volume") is not None else None,
-            is_closed=(
-                bool(row["is_closed"])
-                if "is_closed" in row and row["is_closed"] is not None
-                else is_session_closed(date.fromisoformat(row["date"]), tz_name, fetched_at)
-            ),
-        )
-        for row in payload["bars"]
-    )
-    series = Series(
-        symbol=payload["symbol"],
-        timezone=tz_name,
-        fetched_at=fetched_at,
-        bars=bars,
-    )
-    validate_bars(series.bars)
-    return series
+    loaded = get_series(root, symbol)
+    if loaded is None:
+        raise FileNotFoundError(f"{symbol} 不在 data/forecast.db 的 bars 表里，先跑 make fetch")
+    return loaded
 
 
 def bar_on(series: Series, session: date) -> Bar | None:

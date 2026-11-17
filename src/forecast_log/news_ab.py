@@ -36,7 +36,6 @@ from forecast_log.news_labels import (
     label_batch,
     read_day_titles,
 )
-from forecast_log.paths import series_path
 
 PROTOCOL = {
     "prompt_version": PROMPT_VERSION,
@@ -190,7 +189,7 @@ def _kappa(a: list[str], b: list[str]) -> float:
 
 def _forward_moves(root: Path, days: list[str], horizon: int = 5) -> dict[str, float]:
     try:
-        series = load_series(series_path(root, "^NDX"))
+        series = load_series(root, "^NDX")
     except FileNotFoundError:  # 没有行情也能比一致性，只是不出下游那两列
         return {}
     ordered = [str(bar.date) for bar in series.bars]

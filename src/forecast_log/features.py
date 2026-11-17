@@ -19,7 +19,6 @@ from pathlib import Path
 import numpy as np
 
 from forecast_log.bars import Series, has_series, load_series
-from forecast_log.paths import series_path
 
 FEATURE_SYMBOLS = ("^VIX9D", "^VIX3M", "^VVIX")
 LONG_LOOKBACK = 252
@@ -56,9 +55,9 @@ def load_matrix(root: Path, dates: list[date]) -> np.ndarray | None:
     """Two features per date, or None when the files have not been fetched."""
     if missing(root):
         return None
-    short = _aligned(load_series(series_path(root, "^VIX9D")), dates)
-    long = _aligned(load_series(series_path(root, "^VIX3M")), dates)
-    vol_of_vol = _aligned(load_series(series_path(root, "^VVIX")), dates)
+    short = _aligned(load_series(root, "^VIX9D"), dates)
+    long = _aligned(load_series(root, "^VIX3M"), dates)
+    vol_of_vol = _aligned(load_series(root, "^VVIX"), dates)
     with np.errstate(invalid="ignore", divide="ignore"):
         slope = np.log(short / long)
         relative = np.log(vol_of_vol / _rolling_median(vol_of_vol))

@@ -267,9 +267,8 @@ def backfill_days(root: Path, days: list[date], workers: int = 3) -> dict:
 def trading_days(root: Path, symbol: str = "^NDX") -> list[date]:
     """有行情的那些天，回填和覆盖率都按这个口径算，别按日历天。"""
     from forecast_log.bars import load_series
-    from forecast_log.paths import series_path
 
-    series = load_series(series_path(root, symbol))
+    series = load_series(root, symbol)
     return [bar.date for bar in series.bars]
 
 

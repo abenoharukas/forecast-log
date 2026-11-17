@@ -2,20 +2,19 @@ from pathlib import Path
 
 from forecast_log import china
 from forecast_log.artifacts_db import load_cross_market
-from forecast_log.bars import load_series
-from forecast_log.paths import series_path
+from forecast_log.bars import has_series, load_series
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _have_inputs() -> bool:
-    return load_cross_market(ROOT, "ndx") is not None and series_path(ROOT, china.TARGET).exists()
+    return load_cross_market(ROOT, "ndx") is not None and has_series(ROOT, china.TARGET)
 
 
 def test_every_signal_enters_on_the_first_a_share_session_after_the_us_date():
     if not _have_inputs():
         return
-    series = load_series(series_path(ROOT, china.TARGET))
+    series = load_series(ROOT, china.TARGET)
     days = [bar.date.isoformat() for bar in series.bars]
     rows = china.entries(ROOT)
     assert rows
@@ -30,7 +29,7 @@ def test_every_signal_enters_on_the_first_a_share_session_after_the_us_date():
 def test_the_entry_is_the_open_and_the_window_starts_there():
     if not _have_inputs():
         return
-    series = load_series(series_path(ROOT, china.TARGET))
+    series = load_series(ROOT, china.TARGET)
     days = [bar.date.isoformat() for bar in series.bars]
     bars = {bar.date.isoformat(): bar for bar in series.bars}
     position = {day: index for index, day in enumerate(days)}

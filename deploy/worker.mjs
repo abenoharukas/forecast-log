@@ -194,7 +194,7 @@ async function getD1State(env) {
       env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_rolling GROUP BY symbol"),
       env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_daily GROUP BY symbol"),
       env.DB.prepare("SELECT horizon, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_ladder GROUP BY horizon"),
-      env.DB.prepare("SELECT COUNT(*) AS cnt FROM timeline_node WHERE path NOT LIKE 'questions.%'"),
+      env.DB.prepare("SELECT COUNT(*) AS cnt FROM timeline_node"),
       env.DB.prepare("SELECT dataset, generated_at, n FROM agent_dataset"),
       env.DB.prepare("SELECT dataset, COUNT(*) AS cnt FROM agent_node GROUP BY dataset"),
     ]);
@@ -521,12 +521,11 @@ async function refreshFromYahoo(env, force = false) {
 }
 
 async function loadMarket(env, market) {
-  const [metaRes, sessionRes, nodeRes, contextRes, factorRes] = await env.DB.batch([
+  const [metaRes, sessionRes, nodeRes, contextRes] = await env.DB.batch([
     env.DB.prepare("SELECT * FROM market WHERE market = ?").bind(market),
     env.DB.prepare("SELECT * FROM session WHERE market = ? ORDER BY date").bind(market),
     env.DB.prepare("SELECT path, kind, value FROM market_node WHERE market = ?").bind(market),
     env.DB.prepare("SELECT * FROM contexts WHERE market = ? ORDER BY position").bind(market),
-    env.DB.prepare("SELECT position, key FROM factor_key WHERE market = ? ORDER BY position").bind(market),
   ]);
 
   const meta = metaRes.results?.[0];
@@ -549,7 +548,8 @@ async function loadMarket(env, market) {
   }
 
   doc.components = {};
-  for (const { position, key } of factorRes.results ?? []) {
+  // 位序 = contexts 的顺序（factors_packed 就是这么打包的）
+  for (const { position, key } of contextRes.results ?? []) {
     doc.components[key] = sessions.map((row) => Math.floor(row.factors_packed / 2 ** (4 * position)) % 16);
   }
 
@@ -581,7 +581,7 @@ async function loadTimeline(env) {
     env.DB.prepare("SELECT * FROM timeline_rolling ORDER BY symbol, idx"),
     env.DB.prepare("SELECT * FROM timeline_daily ORDER BY symbol, idx"),
     env.DB.prepare("SELECT * FROM timeline_ladder ORDER BY horizon, idx"),
-    env.DB.prepare("SELECT path, kind, value FROM timeline_node WHERE path NOT LIKE 'questions.%'"),
+    env.DB.prepare("SELECT path, kind, value FROM timeline_node"),
   ]);
 
   const closes = closeRes.results ?? [];
@@ -687,7 +687,7 @@ async function applyOp(env, body) {
   if (body.op === "sql") {
     if (typeof body.sql !== "string") return json({ ok: false, error: "sql must be a string" }, 400);
     if (
-      !/^\s*INSERT\s+(OR\s+(REPLACE|IGNORE)\s+)?INTO\s+(session|market|market_node|contexts|factor_key|timeline_close|timeline_rolling|timeline_daily|timeline_ladder|timeline_node|agent_dataset|agent_node)\b/i.test(
+      !/^\s*INSERT\s+(OR\s+(REPLACE|IGNORE)\s+)?INTO\s+(session|market|market_node|contexts|timeline_close|timeline_rolling|timeline_daily|timeline_ladder|timeline_node|agent_dataset|agent_node)\b/i.test(
         body.sql,
       )
     ) {

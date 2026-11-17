@@ -227,15 +227,6 @@ def push_cross(url: str, token: str, market: str, doc: dict, batch: int, remote_
             ),
         },
     )
-    post(
-        url,
-        token,
-        {
-            "op": "sql",
-            "sql": "INSERT OR REPLACE INTO factor_key (market, position, key) VALUES "
-            + ",".join(f"({literal(market)},{position},{literal(key)})" for position, key in bundle["factor_keys"]),
-        },
-    )
     print(f"cross/{market}: 增量写入 {len(rows)} 个交易日（D1 共 {max(remote_count, len(all_rows))} 天）", flush=True)
 
 

@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from forecast_log.bars import load_series  # noqa: E402
-from forecast_log.paths import series_path  # noqa: E402
 
 WINDOW = 504
 QUANTILE = 0.6
@@ -38,7 +37,7 @@ def meta_for(question_id: str, outcome: int | None) -> dict:
     horizon = int(match["horizon"])
     family = match["family"] or "level"
 
-    series = load_series(series_path(ROOT, symbol))
+    series = load_series(ROOT, symbol)
     bars = series.bars
     index = next((i for i, bar in enumerate(bars) if bar.date == as_of), None)
     if index is None:

@@ -8,13 +8,13 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>Cross-asset risk-on signals — NDX / QQQ / A-shares</title>
-  <link rel="preload" href="/web/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/web/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="preload" href="/web/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/web/theme.css">
-  <script src="/web/vendor/lightweight-charts.standalone.production.js" defer></script>
-  <script src="/web/theme.js" defer></script>
-  <script src="/web/ctxbar.js" defer></script>
+  <link rel="preload" href="/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/vendor/lightweight-charts.standalone.production.js" defer></script>
+  <script src="/theme.js" defer></script>
+  <script src="/ctxbar.js" defer></script>
   <style>
     * { box-sizing: border-box; }
     html, body { height: 100%; }
@@ -84,7 +84,7 @@
         <button type="button" class="ctxbar-btn" id="refresh-btn" title="拉取最新行情（含北京时间当日 A 股）并重算信号">↻ 刷新行情</button>
         <span class="sub" id="question">—</span>
       </div>
-      <span class="sub" id="build">r3 · unified multi-market view · <a href="/web/">VXN Fear Index →</a> · <a href="/web/agent.html">Agent scoreboard →</a></span>
+      <span class="sub" id="build">r4 · clean URLs · <a href="/volatility">VXN Fear Index →</a> · <a href="/agent">Agent scoreboard →</a></span>
     </header>
 
     <section class="ctxbar collapsed" id="ctxbar" aria-label="Context factors">
@@ -144,6 +144,7 @@
       const MARKETS = {
         ndx: {
           key: "ndx",
+          path: "/ndx",
           file: "/artifacts/cross.json",
           title: "Nasdaq-100 — 5-day risk-on signals",
           docTitle: "Nasdaq-100 — 5-day risk-on signals",
@@ -153,6 +154,7 @@
         },
         qqq: {
           key: "qqq",
+          path: "/qqq",
           file: "/artifacts/cross_qqq.json",
           title: "QQQ — same signals, a tradable instrument",
           docTitle: "QQQ — same risk-on signals, a tradable instrument",
@@ -162,6 +164,7 @@
         },
         ssec: {
           key: "ssec",
+          path: "/a-shares",
           file: "/artifacts/cross_ssec.json",
           title: "Shanghai composite — A股跨市场信号检验",
           docTitle: "Shanghai composite — A-shares risk-on signals",
@@ -686,9 +689,8 @@
           btn.setAttribute("aria-selected", String(isCurrent));
         });
 
-        const url = new URL(window.location.href);
-        url.searchParams.set("market", cfg.key);
-        window.history.replaceState({}, "", url.toString());
+        // 干净地址：/ndx、/qqq、/a-shares（旧 ?market= 仍兼容）
+        window.history.replaceState({}, "", cfg.path);
 
         document.title = cfg.docTitle;
         document.querySelector("#page-title").textContent = cfg.title;
@@ -779,7 +781,9 @@
         togglePanel.setAttribute("aria-expanded", String(!hidden));
       });
 
-      const initialMarket = new URLSearchParams(window.location.search).get("market");
+      const MARKET_BY_PATH = { "/": "ndx", "/signals": "ndx", "/ndx": "ndx", "/qqq": "qqq", "/a-shares": "ssec", "/ssec": "ssec" };
+      const fromPath = MARKET_BY_PATH[window.location.pathname.replace(/\/$/, "") || "/"];
+      const initialMarket = fromPath || new URLSearchParams(window.location.search).get("market");
       loadMarket(MARKETS[initialMarket] ? initialMarket : "ndx");
     });
   </script>

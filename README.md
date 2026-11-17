@@ -114,7 +114,7 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 ## 第二个页面：第 5 个交易日收盘是否高于基准收盘
 
-`web/points.html`，检验对象为指数本身：**跨资产风险偏好偏多时，第 5 个交易日的收盘是否高于基准收盘**。纵轴为指数点位，三角标记画在信号那几天；颜色按第 3 天、第 5 天两根收盘判定：绿 = 第 3 天就高于基准，琥珀 = 第 3 天没到、第 5 天到了，灰 = 第 5 天仍不高于基准。悬停显示信号日、基准收盘、第 3 天与第 5 天收盘及各自相对基准的涨跌幅。同一套信号换到 QQQ 的对照见下一节，换到 A 股的对照在再下一节；两者都是本页顶部的标签页（`points.html?market=qqq` / `?market=ssec`），旧地址 `web/qqq.html`、`web/ssec.html` 只剩一个跳转。
+`web/points.html`，检验对象为指数本身：**跨资产风险偏好偏多时，第 5 个交易日的收盘是否高于基准收盘**。纵轴为指数点位，三角标记画在信号那几天；颜色按第 3 天、第 5 天两根收盘判定：绿 = 第 3 天就高于基准，琥珀 = 第 3 天没到、第 5 天到了，灰 = 第 5 天仍不高于基准。悬停显示信号日、基准收盘、第 3 天与第 5 天收盘及各自相对基准的涨跌幅。同一套信号换到 QQQ 的对照见下一节，换到 A 股的对照在再下一节；两者都是本页顶部的标签页（`/qqq` / `/a-shares`），旧地址 `?market=qqq`、`web/qqq.html`、`web/ssec.html` 都会 301 过去。
 
 ### 判定基准是收盘，成交价另存一列
 
@@ -730,6 +730,14 @@ scripts/with-qwen.sh forecast-log agent-eval --limit 96 --stride 60 --workers 3 
 
 ## 运行
 
+想直接看页面，只跑一条：
+
+```bash
+make            # 建 .venv → 装依赖 → 起看板 http://127.0.0.1:8731/
+```
+
+完整流程（算一遍数据、跑测试）：
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -751,15 +759,33 @@ PYTHONPATH=src:experiments .venv/bin/python experiments/cross_asset_lab.py
 
 `fetch` 把 Yahoo 日线收盘写到 `data/raw/`：两个结算品种（`^VXN`、`^NDX`）、三个前瞻输入（`^VIX9D`、`^VIX3M`、`^VVIX`）、第二个页面用的跨资产行情（`^TNX`、`DX-Y.NYB`、`HYG`、`TLT`、`SPY`、`RSP`、`GC=F`、`^VIX`），QQQ 对照页用的 `QQQ`，以及 A 股那一份的 `000001.SS`。取不到的会跳过并打印原因，不会中断。输入取不到时模型自动只用价格自身。`backtest` 从历史上每一个已完成的交易日出发，只用那天及以前的收盘做概率，再和后来的实际收盘对照。概率不会等于单次的 0 或 1。对齐的是：报 20% 的那些日子里，后来大约有两成越过门槛。`backtest` 同时写出 `artifacts/timeline.json`（含 7 日对账的每一行）和 `artifacts/backtest_report.json`（含分步长的那张表）。
 
-图在 `web/index.html`（fear index）和 `web/points.html`（5 个交易日内的多头信号点；顶部标签页切换 `^NDX` / QQQ / 上证综指三个结算标的）。仓库根目录运行：
+图在 `web/points.html`（5 个交易日内的多头信号点；顶部标签页切换 `^NDX` / QQQ / 上证综指三个结算标的）和 `web/index.html`（fear index）。仓库根目录一条命令：
 
 ```bash
-python3 serve.py 8731
+make            # 等价于 make dev，默认 8731 端口；首次会自动建 .venv 并装依赖
+make dev PORT=9000
+make stop       # 停掉占着端口的进程
+make help       # 列出所有命令
 ```
 
-浏览器打开 <http://127.0.0.1:8731/web/>。应使用 `serve.py` 而非 `python3 -m http.server`：前者带 `Cache-Control: no-store`，否则修改后浏览器仍会加载旧页面，表现为未生效。页面右下角有 build 标记，不一致即为缓存所致。
+等价写法：`forecast-log serve 8731`、`python3 serve.py 8731`、`python -m forecast_log serve 8731`（后两者不需要先 `pip install`）。
 
-`serve.py` 还带一个刷新入口：`GET/POST /api/refresh`（加 `?force=1` 强制拉）。启动时若 `artifacts/cross*.json` 的 `fetched_at` 不是北京时间今天，会在后台自动拉一次 Yahoo 日线（含当天未收盘的 A 股开盘价，所以收盘前的 `BUY` 标记是「待定」），再重跑 `cross`。`points.html` 右上角的「↻ 刷新行情」就是调这个接口。缺 OHLCV 的旧缓存仍能读，只是 K 线那几列会是 `null`。
+地址不带 `.html`、也不带 `/web/` 前缀：
+
+| 页面 | 地址 |
+|---|---|
+| 信号页（默认 `^NDX`） | <http://127.0.0.1:8731/>、`/ndx`、`/signals` |
+| 同一套信号换到 QQQ | <http://127.0.0.1:8731/qqq> |
+| 同一套信号换到上证综指 | <http://127.0.0.1:8731/a-shares>（别名 `/ssec`） |
+| `^VXN` 区间图（fear index） | <http://127.0.0.1:8731/volatility>（别名 `/vxn`） |
+| agent 评测台 | <http://127.0.0.1:8731/agent> |
+| 行情刷新 | `GET/POST /api/refresh` |
+
+旧地址仍然可用，一律 301 到新地址：`/web/points.html?market=qqq` → `/qqq`、`/web/` 和 `/web/index.html` → `/volatility`、`/web/agent.html` → `/agent`、`/web/qqq.html` → `/qqq`、`/web/ssec.html` → `/a-shares`。静态资源同样省掉前缀：`/theme.css`、`/ctxbar.js`、`/fonts/*`、`/vendor/*`（`/web/...` 也还能取到）。
+
+应使用它而非 `python3 -m http.server`：前者带 `Cache-Control: no-store`，否则修改后浏览器仍会加载旧页面，表现为未生效。页面右下角有 build 标记（当前 `r4`），不一致即为缓存所致。
+
+服务带一个刷新入口：`GET/POST /api/refresh`（加 `?force=1` 强制拉；也可以 `make refresh`）。启动时若 `artifacts/cross*.json` 的 `fetched_at` 不是北京时间今天，会在后台自动拉一次 Yahoo 日线（含当天未收盘的 A 股开盘价，所以收盘前的 `BUY` 标记是「待定」），再重跑 `cross`。信号页右上角的「↻ 刷新行情」就是调这个接口。缺 OHLCV 的旧缓存仍能读，只是 K 线那几列会是 `null`。
 
 图上虚线标注在**发出预测当日**，而非结算日。若标注于结算日，「7 日后的点位预测」将等同于实际值右移 7 日——实际序列一周自相关为 0.93，任何诚实的 7 日点位预测都约等于当日点位，如此绘制必然被读作滞后。
 

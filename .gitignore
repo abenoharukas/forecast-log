@@ -16,3 +16,6 @@ deploy/dist/
 .wrangler/
 .dev.vars
 .DS_Store
+
+# SQLite 数据库不进版本历史（见 scripts/fetch_db.sh），clone 后 make data 拉最新一份
+data/forecast.db

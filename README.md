@@ -8,18 +8,22 @@
 
 ## Quick Start
 
-`data/forecast.db` is tracked with Git LFS and ships pre-populated with 15 market series (`107,574` daily bars), 3 cross-asset signal markets, `127,845` historical headlines, and multi-model agent evaluation runs—so the entire dashboard runs out of the box after cloning:
+`data/forecast.db` ships pre-populated with 15 market series (`107,574` daily bars), 3 cross-asset signal markets, `127,845` historical headlines, and multi-model agent evaluation runs—so the entire dashboard runs out of the box after cloning.
+
+The database is **not** stored in git history: a SQLite file is binary, so every one-row change rewrites pages and produces a whole new blob, which would grow the repository by ~90 MB per commit. Instead, the current snapshot is published as a single overwritten asset on the [`data-latest` release](https://github.com/lumixraku/forecast-log/releases/tag/data-latest), and `make` fetches it on first run:
 
 ```bash
-git lfs pull    # Pull data/forecast.db if Git LFS did not smudge on clone
-make            # Creates .venv, installs dependencies, and starts http://127.0.0.1:8731/
+make            # Creates .venv, installs dependencies, downloads data/forecast.db, starts http://127.0.0.1:8731/
 ```
+
+Already have the repo and just need fresh data? `make data` downloads it only if missing, `make data-refresh` forces the latest snapshot.
 
 Common `Makefile` targets:
 
 | Command | Description |
 |---|---|
 | `make` / `make dev` | Start the local no-cache dashboard server on port `8731` (override via `make dev PORT=9000`) |
+| `make data` / `make data-refresh` | Download the current `data/forecast.db` snapshot from the `data-latest` release (skip if present / force latest) |
 | `make refresh` | Force an immediate incremental Yahoo Finance OHLCV fetch across all 15 symbols and recompute signals (`POST /api/refresh?force=1`) |
 | `make test` | Run the offline test suite (`pytest -q`, zero network calls or API keys required) |
 | `make status` / `make stop` | Check or stop the process listening on `PORT` |

@@ -1,6 +1,8 @@
 # 一个命令就能跑起来。`make` 等价于 `make dev`。
 #
-#   make dev       起本地看板（首次会自动建 .venv 并装依赖）
+#   make dev       起本地看板（首次会自动建 .venv、装依赖、拉最新数据库）
+#   make data      拉最新一份 data/forecast.db（数据库不进 git 历史）
+#   make data-publish  改完数据库后把它覆盖发布到 data-latest
 #   make dev PORT=9000
 #   make stop      停掉占着端口的那个进程
 #   make status    看看端口上是谁
@@ -15,12 +17,21 @@ PIP := $(VENV)/bin/pip
 FL := $(VENV)/bin/forecast-log
 
 .DEFAULT_GOAL := dev
-.PHONY: dev setup stop status refresh static worker deploy cf d1-schema publish test help
+.PHONY: dev setup data data-refresh stop status refresh static worker deploy cf d1-schema publish test help
 
-dev: $(PY) ## 起本地看板（默认 8731 端口）
+dev: $(PY) data ## 起本地看板（默认 8731 端口）
 	@$(FL) serve $(PORT)
 
 setup: $(PY) ## 只准备环境，不启动
+
+data: ## 拉最新一份 data/forecast.db（已存在则跳过）
+	@bash scripts/fetch_db.sh
+
+data-refresh: ## 强制重新下载最新的 data/forecast.db
+	@FORCE=1 bash scripts/fetch_db.sh
+
+data-publish: ## 把当前 data/forecast.db 覆盖发布到 data-latest（同名覆盖，需要 gh 登录）
+	@gh release upload data-latest data/forecast.db --clobber
 
 $(PY): pyproject.toml
 	@test -d $(VENV) || python3 -m venv $(VENV)
@@ -60,4 +71,4 @@ test: $(PY) ## 跑测试
 	@$(PY) -m pytest -q
 
 help: ## 列出所有命令
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-8s %s\n", $$1, $$2}'
+	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-12s %s\n", $$1, $$2}'

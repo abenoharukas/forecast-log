@@ -109,7 +109,7 @@ reason to trust anything else the bench says.
 ## Run it
 
 ```bash
-git lfs pull                          # pulls data/forecast.db (15 series, 127k+ headlines)
+bash scripts/fetch_db.sh              # pulls data/forecast.db (15 series, 127k+ headlines)
 pip install -e ".[dev]"
 cp .env.example .env && $EDITOR .env    # DEEPSEEK_API_KEY=... ; git-ignored
 forecast-log fetch

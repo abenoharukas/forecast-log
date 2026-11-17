@@ -30,7 +30,11 @@ mkdir -p "$(dirname "$dest_path")"
 printf '从 GitHub Release 下载 %s（tag: %s）...\n' "$ASSET" "$TAG"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh release download "$TAG" --repo "$REPO" --pattern "$ASSET" --clobber --output "$tmp"
+elif command -v gh >/dev/null 2>&1; then
+  echo "$REPO 是私有仓库，需要先 gh auth login" >&2
+  exit 1
 else
+  echo "未安装 gh，公开仓库可直接 curl；若是私有仓库请先安装并登录 gh" >&2
   curl -fL --progress-bar \
     "https://github.com/$REPO/releases/download/$TAG/$ASSET" -o "$tmp"
 fi

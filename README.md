@@ -1,40 +1,152 @@
 # forecast-log
 
-**A point-in-time forecasting system that locks probabilities before the outcome is knowable, prevents look-ahead leakage by construction, and scores every call against reality.**
+**一个在结果揭晓前锁定概率、从代码构造上杜绝前视泄漏（look-ahead leakage），并用真实行情为每一次判断记账打分的市场预测与回测系统。**
 
-> Looking for the concise engineering overview and evaluation summary? See [`SUBMISSION.md`](SUBMISSION.md).
+> 如需查看面向工程交付的英文精简概述，请参见 [`SUBMISSION.md`](SUBMISSION.md)。
 
-## What This Project Does
+## 核心功能总览
 
-`forecast-log` combines an immutable lock/resolve/score workflow with three empirical forecasting layers and an interactive local dashboard.
+`forecast-log` 围绕「无前视泄漏的时点预测（point-in-time forecasting）」构建，包含 **三个交互式 Web 看板页面**、**一套命令行工具链（CLI）**、**一个带硬性时间闸门的研究型智能体（Agent）** 以及 **一套 4 表极简 SQLite 存储与 Cloudflare D1 云端同步架构**：
 
-1. **Immutable Forecast Log ([`questions.json`](questions.json), `forecasts/`, [`resolutions.json`](resolutions.json))**
-   - Questions, data sources (`Yahoo Finance` daily `Close`), and settlement rules are frozen before the event window.
-   - Probabilities and timestamped evidence are written once to append-only files in `forecasts/` (`lock` refuses to overwrite) and scored with Brier score after settlement in `resolutions.json`.
-   - Three live questions are currently locked for `2026-11-20` and `2026-11-30` (`^VXN > 30` and `^NDX > 28374.25`).
+1. **跨资产风险偏好信号看板与上下文选择器（`/` · `/ndx` · `/qqq` · `/a-shares`）**
+   - **三市场同屏切换**：在单页 K 线看板（[`web/points.html`](web/points.html)）上通过顶部标签页切换 **`^NDX`**（Nasdaq-100 Index，纳斯达克 100 指数）、**`QQQ`**（Invesco QQQ Trust，跟踪纳斯达克 100 的可交易 ETF）与 **`000001.SS`**（上证综合指数，A 股结算标的），自动适配美股「绿涨红跌」与 A 股「红涨绿跌」配色。
+   - **4 因子扩张窗口复合信号（`cross.py`、`china.py`）**：结合 10 年期美债收益率（`^TNX`）、美元指数（`DX-Y.NYB`）、高收益债与长期国债比值（`HYG/TLT`）、标普 500 波动率指数（`^VIX`）四个跨资产价格因子的扩张窗口 z 分数，叠加宏观日历窗口（`CPI` 消费者物价指数、`NFP` 非农就业人口、`FOMC` 美联储公开市场委员会决议日）与大语言模型（LLM）新闻意外否决，检验信号发出 5 个交易日后的收盘价是否高于基准收盘价（`base_close`）。
+   - **Model Context Factors 交互式因子与规则面板（`web/ctxbar.js`）**：顶部浮动面板支持按市场独立勾选触发项（`trigger`）、增强项（`boost`）与否决项（`veto`，含均线趋势过滤、隔夜跳空过滤、A 股 5 日超跌反弹加成及多模型新闻否决），并可实时切换判定函数（任一命中 `OR` / 多因子共振 `≥ 2` / 全票通过 `AND`，以及一票否决 / 双重确认否决 `≥ 2`），浏览器内毫秒级重算全样本与 2015 年起样本外精确率（`precision`）及最新交易日信号状态（`BUY` / `NO SIGNAL`）。
 
-2. **Volatility Analogue & Interval Model (`estimate.py`, `backtest.py`, `web/index.html`)**
-   - Forecasts `^VXN` (CBOE NASDAQ-100 Volatility Index) across 1- to 7-trading-day horizons using non-parametric historical analogues matched on standardized 1-week, 1-month, and 1-year returns, 1-year median deviation, volatility term structure (`^VIX9D / ^VIX3M`), and `^VVIX` (volatility of VIX).
-   - Outputs calibrated 10%–90% probability bands rather than relying on point estimates.
+2. **`VXN` 波动率区间预测与多步长对账看板（`/vxn`）**
+   - **历史状态类比区间模型（`estimate.py`、`backtest.py`）**：基于标准化 1 周 / 1 月 / 1 年涨跌幅、偏离 1 年中位数幅度、波动率期限结构（`^VIX9D / ^VIX3M`）与波动率之波动率（`^VVIX`），在历史中检索最相近的状态邻居，为 **`^VXN`**（CBOE NASDAQ-100 Volatility Index，纳斯达克 100 波动率指数）输出 10%–90% 概率区间，而非仅给出单点预测。
+   - **0 至 7 个交易日步长切换与误差账本（[`web/index.html`](web/index.html)）**：支持切换 **`h = 0`（当天）至 `h = 7`（7 个交易日后）** 共 8 个步长档位，将 N 个交易日前给出的预测贴在目标结算日上与实际收盘（`realised`）直接比对；右侧 **Error ledger（误差账本）** 展示最新已结算与待结算记录，以及全历史各步长的平均绝对误差（`MAE`）、平均绝对百分比误差（`MAPE`）、区间覆盖率（`Band coverage`）与随机游走基准（`Random walk`）。
 
-3. **Cross-Asset Risk-On Signal & Interactive Context Switchboard (`cross.py`, `china.py`, `web/points.html`)**
-   - Evaluates whether a 4-factor cross-asset risk-on composite (`^TNX` 10-year Treasury yield, `DX-Y.NYB` US Dollar Index, `HYG/TLT` high-yield vs. Treasury ratio, `^VIX` vs. 1-year median) plus macro calendar rules (`CPI`, `NFP`, `FOMC`) predicts a higher close 5 trading days later.
-   - Tested across three markets on a single tabbed candlestick UI (`web/points.html?market=ndx|qqq|ssec`): **`^NDX`** (Nasdaq-100 Index), **`QQQ`** (Invesco QQQ Trust ETF), and **`000001.SS`** (Shanghai Composite Index, settled on the next A-share session).
-   - **Model Context Factors (`web/ctxbar.js`)**: Every factor, calendar window, trend/gap filter, and LLM news switch is exported as an independent binary column so users can toggle switches and aggregation rules (`Any` / `Consensus >= 2` / `All`) live in the browser and see full-sample and post-2015 out-of-sample precision recompute instantly.
-   - **Daily Runtime News Read (`daily.py`)**: After the close, fetches GDELT and three RSS feeds (WSJ Markets, Fed monetary policy, SEC press releases), filters strictly by `published_at <= as_of`, and asks an LLM for a structured risk-tone label (`risk-on` / `neutral` / `risk-off`) logged alongside keyword scans without silently altering the price signal.
+3. **带硬性时间闸门的研究型 Agent 与多模型评测台（`/agent`）**
+   - **硬性防前视闸门（`src/forecast_log/agent/gate.py`）**：所有工具返回值、新闻发布时间戳（`published_at <= as_of`）与提交证据日期均经过 `AsOf.check` 校验。一旦触碰决策日之后的未来信息，直接抛出 `LookAheadError` 并退回重答，被拒记录保留在执行轨迹（`Trace.rejections`）中。
+   - **零框架 8 步工具循环与对数几率池化（`loop.py`、`tools.py`、`llm.py`、`ensemble.py`）**：仅用约 120 行原生 `urllib` 直连 `/chat/completions`（兼容 DeepSeek、Qwen、OpenAI、OpenRouter、vLLM、Ollama），配备 7 个受闸门保护的取证工具，支持多次独立运行后按 **log-odds（对数几率）** 池化并输出分歧度（`spread`）。
+   - **DeepSeek 与 Qwen 同题集评测看板（`eval.py`、[`web/agent.html`](web/agent.html)）**：顶部可切换 **DeepSeek** 与 **Qwen** 评测集，严格在所有预测者共同作答的题目交集（`scored_on_shared`）上对比 Brier 分数、对数损失（`LogLoss`）、期望校准误差（`ECE`）、方向命中率、单题美元成本与中位延迟（`p50`）。下方考卷表（`The exam paper`）逐题展示历史实际结果（`Actual`：`YES`/`NO`）与独立的 AI 命中统计列（`AI result`：`✓ 3/3`、`~ 1/3`、`✗ 0/3`），支持按命中状态筛选与关键词搜索。
 
-4. **Gated Research Agent & Multi-Model Benchmark (`src/forecast_log/agent/`, `web/agent.html`)**
-   - A framework-free, 8-step tool-using agent (~120 lines of `urllib` supporting DeepSeek, Qwen, OpenAI, OpenRouter, vLLM, and Ollama) wrapped in a hard point-in-time gate (`gate.py`).
-   - Supports N-run **log-odds ensemble pooling** (`ensemble.py`) with logit spread, and a shared-intersection evaluation harness (`eval.py`) measuring Brier, LogLoss, ECE, directional accuracy, cost per forecast, and p50 latency.
+4. **不可篡改预测日志与每日盘后新闻流解读（`lock` / `resolve` / `score` / `daily` / `news-ab`）**
+   - **事前锁定与事后结算（[`questions.json`](questions.json)、`forecasts/`、[`resolutions.json`](resolutions.json)）**：问题定义、结算规则与数据源在事件窗口前冻结；`forecast-log lock` 一次性写入概率与当日证据快照（文件已存在则拒绝覆写），到期收盘后通过 `resolve` 与 `score` 计算 Brier 分数。
+   - **每日盘后新闻抓取与风险定调（`daily.py`）**：收盘后抓取 GDELT 与三个财经 RSS 源（华尔街日报市场版、美联储货币政策声明、美国证监会 SEC 新闻稿），经时间闸门过滤后由 LLM 输出结构化风险偏好标签（`risk-on` / `neutral` / `risk-off`）、置信度与三条驱动事件，连同 24 个概念的正则词表扫描写入 `artifacts/daily/<YYYY-MM-DD>.json`。
+   - **12.78 万条历史新闻库与多模型解读对比（`wiki_news.py`、`news_ab.py`、`news_veto.py`）**：从 Wikipedia `Portal:Current events` 批量回填 2002–2026 年共 6,078 个交易日的历史新闻，支持对比不同模型对同一批历史新闻的解读一致性与信号否决效果。
 
-5. **Unified Local Dataset & Live-Refresh Server (`data/forecast.db`, [`serve.py`](serve.py))**
-   - Market bars (15 symbols, 107,560 bars) and historical news (6,176 trading days, 127,845 headlines from Wikipedia `Portal:Current events` and runtime RSS/GDELT) are stored in a single WAL-mode SQLite database (`data/forecast.db`, tracked via Git LFS).
-   - `serve.py` serves `web/` with `Cache-Control: no-store` and exposes `GET/POST /api/refresh` to pull fresh Yahoo OHLCV bars (including intraday/open A-share sessions) and regenerate `artifacts/cross*.json`.
+5. **4 表极简 SQLite 存储、按需增量行情刷新与 Cloudflare D1 部署（`db.py`、`artifacts_db.py`、`server.py`、`deploy/`）**
+   - **4 表极简本地数据库（`data/forecast.db`）**：采用 SQLite WAL 并发模式，无外键约束、无碎片化配置表，通过 Git LFS 追踪实现 `git clone` 后开箱即用。全库仅保留 **`bars`**（15 个品种日线 OHLCV 与收盘状态 `is_closed`）、**`signals`**（三市场纯信号与结算结果）、**`news`**（历史与每日新闻）、**`agent_eval`**（评测台扁平做题记录）4 张核心表。
+   - **前端按需触发的增量行情刷新（`server.py`、`yahoo.py`）**：`make dev` / `forecast-log serve` 仅启动 HTTP 服务，不在启动时盲目抓取；当页面打开或点击「↻ 刷新行情」请求 `POST /api/refresh` 时，后端根据 `bars.is_closed` 自动识别已过收盘时间的残缺行（立即重抓）与盘中未收盘行（5 分钟冷却期增量重抓），并发拉取 15 个品种的最新 Yahoo Finance K 线并增量更新数据库，绝不删除历史已完成交易日。
+   - **Cloudflare Workers + D1 一键同步部署（`make cf`）**：通过 `scripts/deploy_cf.sh` 与 `scripts/publish_d1.py` 将本地数据以严格增量追加（`INSERT OR REPLACE`）方式推送至 Cloudflare D1，线上环境同样支持页面端触发 `/api/refresh` 增量拉取最新行情。
 
-## Our Forecasting Philosophy
+## 快速开始与功能使用指南
 
-### 1. Prevent Look-Ahead Leakage by Construction, Not Convention
-In backtesting and agent evaluation, silent data clipping hides bugs. In `src/forecast_log/agent/gate.py`, every tool response, document timestamp, and cited evidence date passes through:
+### 1. 一条命令启动本地看板
+
+仓库内置的 `data/forecast.db` 已通过 Git LFS 预置完整历史行情、信号、新闻与评测数据。克隆仓库后只需运行：
+
+```bash
+git lfs pull    # 若首次克隆未自动拉取 LFS 大文件，执行一次即可
+make            # 等价于 make dev：自动创建 .venv、安装依赖并启动 http://127.0.0.1:8731/
+```
+
+常用 `make` 快捷命令：
+
+| 命令 | 功能说明 |
+|---|---|
+| `make` / `make dev` | 启动本地看板服务（默认端口 `8731`，可通过 `make dev PORT=9000` 指定端口） |
+| `make refresh` | 强制向本地运行中的服务发起一次全品种 Yahoo 行情增量抓取并重算信号（`POST /api/refresh?force=1`） |
+| `make test` | 运行全套离线单元测试（`pytest -q`，不联网、无需 API Key） |
+| `make status` / `make stop` | 查看或停止占用当前端口的本地服务进程 |
+| `make cf` | 一键打包静态资源、初始化/复用 Cloudflare D1 数据库、部署 Worker 并增量推送数据 |
+| `make worker` | 使用本地 `workerd`（端口 `8787`）模拟运行 Cloudflare Worker 与本地 D1 |
+
+### 2. Web 看板路由与接口一览
+
+本地服务（`forecast-log serve`）与线上 Cloudflare Worker（`deploy/worker.mjs`）使用完全一致的干净路由（不带 `.html` 或 `/web/` 前缀，旧地址自动 301 跳转，且全程携带 `Cache-Control: no-store` 防止浏览器缓存旧页面）：
+
+| 路由地址 | 对应页面 / 接口 | 功能说明 |
+|---|---|---|
+| `/` · `/ndx` · `/signals` | `web/points.html` | 跨资产风险偏好信号主看板，默认选中纳斯达克 100 指数（`^NDX`）标签页 |
+| `/qqq` | `web/points.html` | 同一套跨资产信号在可交易基金 `QQQ` 上的结算与跟踪误差对照页 |
+| `/a-shares`（别名 `/ssec`） | `web/points.html` | 同一套美股跨资产信号在次日 A 股上证综指（`000001.SS`）上的结算与分档检验页 |
+| `/vxn`（旧 `/volatility` 301 至此） | `web/index.html` | `VXN` 波动率指数 `h = 0..7` 多步长类比区间预测与历史误差对账看板 |
+| `/agent` | `web/agent.html` | Agent 多模型评测台（支持切换 `DeepSeek` 与 `Qwen` 题集、筛选对错题目并查看逐题考卷） |
+| `GET /api/cross/<ndx\|qqq\|ssec>` | JSON 数据接口 | 从 `signals` 关联 `bars` 表实时组装对应市场的 K 线、信号列、因子位图与汇总指标 |
+| `GET /api/timeline` | JSON 数据接口 | 基于 `bars` 表实时向量化计算（带指纹内存缓存）`VXN` 与 `NDX` 的滚动区间与多步长对账数据 |
+| `GET /api/agent/<deepseek\|qwen>` | JSON 数据接口 | 从 `agent_eval` 扁平表读取各预测者逐题概率，实时计算交集 Brier / LogLoss / ECE 指标 |
+| `GET/POST /api/refresh`（或 `?force=1`） | 行情增量刷新接口 | 检查全库 15 个品种的未收盘 K 线（`is_closed = 0`）与新交易时段，并发拉取 Yahoo 最新日线并更新 `bars` 与 `signals` |
+
+### 3. `forecast-log` 命令行工具（CLI）全集
+
+安装环境（`pip install -e ".[dev]"`）后，可通过 `forecast-log <子命令>`（或 `.venv/bin/python -m forecast_log <子命令>`）调用全部后端功能：
+
+| 子命令 | 主要参数 | 功能说明 |
+|---|---|---|
+| `forecast-log serve [port]` | `port`（默认 `8731`） | 启动本地无缓存 HTTP 看板服务（不执行启动时后台抓取，由前端页面按需触发 `/api/refresh`） |
+| `forecast-log fetch` | 无 | 增量拉取全库 15 个品种的 Yahoo 日线（含盘中未收盘 K 线），写入 `data/forecast.db` 的 `bars` 表并校验基准日收盘价 |
+| `forecast-log cross` | 无 | 计算 `^NDX`、`QQQ`、`000001.SS` 三个市场的跨资产风险偏好信号，增量更新 `data/forecast.db` 的 `signals` 表 |
+| `forecast-log backtest` | 无 | 对历史上每个已完成交易日运行无前视类比回测，输出分步长评估报告 `artifacts/backtest_report.json` 并更新内存时间轴 |
+| `forecast-log lock` | 无 | 为 [`questions.json`](questions.json) 中的待结算问题计算概率并一次性锁定至 `forecasts/<id>.json`（已存在则拒绝覆写） |
+| `forecast-log resolve` | 无 | 在结算日美东收盘（16:15 ET）后拉取实际收盘价，将结算结果写入 [`resolutions.json`](resolutions.json) |
+| `forecast-log score` | 无 | 对照 `forecasts/` 与 `resolutions.json`，计算已结算题目的 Brier 分数 |
+| `forecast-log daily` | `--day YYYY-MM-DD`、`--no-cache` | 盘后抓取当日 GDELT 与 RSS 新闻，过时间闸门后调用 LLM 生成当日风险偏好标签与驱动事件，写入 `artifacts/daily/` |
+| `forecast-log events` | 无 | 调用 LLM 抽取并校验 2011–2026 年 `FOMC` / `CPI` / `NFP` 宏观日历日期，保存至 `data/events.json` |
+| `forecast-log news-backfill` | `--start`、`--end`、`--batch 40` | 从 Wikipedia `Portal:Current events` 按批回填历史每日新闻至 `data/forecast.db` 的 `news` 表 |
+| `forecast-log news-coverage` | 无 | 按年份与交易日统计 `news` 表中的历史新闻覆盖率 |
+| `forecast-log agent-forecast` | `--runs 3`、`--model`、`--force` | 让工具型 Agent 对三道实时题目运行 N 次独立推理并按 log-odds 池化，输出影子预测至 `artifacts/agent/` |
+| `forecast-log agent-eval` | `--limit 96`、`--stride 60`、`--model`、`--also-blind`、`--merge`、`--workers` | 在历史已结算题目上并发运行评测台，支持 `--also-blind`（摘除工具消融）与 `--merge`（同题集多模型合并对比），结果写入 `agent_eval` 表与 JSON 报告 |
+| `forecast-log agent-report` | `--path` | 将评测 JSON 报告渲染为终端 Markdown 汇总表 |
+| `forecast-log news-ab` | `--per-year`、`--models`、`--label-only` | 让多个模型独立标注同一批历史新闻，计算 Cohen's Kappa、Spearman 秩相关及分歧率 |
+| `forecast-log news-veto` | `--models`、`--threshold` | 检验不同模型的新闻利空标签作为多头信号否决票时的全样本与样本外精确率变化 |
+
+## 代码架构与 4 表极简数据库设计
+
+通过 `codegraph` 对仓库代码图谱的分析，整个项目的模块职责与数据流向如下：
+
+### 1. 本地 SQLite 数据库（`data/forecast.db`）的 4 张核心领域表
+
+`src/forecast_log/db.py` 与 `src/forecast_log/artifacts_db.py` 将所有本地持久化数据收敛为严格 **4 张业务实体表**（无外键约束、无 EAV 键值碎表、开启 WAL 模式支持并发读写、通过联合主键与 `CHECK` 约束保证完整性）：
+
+| 表名 | 主键 | 规模（当前） | 核心字段与职责说明 |
+|---|---|---|---|
+| **`bars`** | `(symbol, date)` | 15 个品种 · 107,574 行 | 存储全部 15 个行情品种（`^VXN`、`^NDX`、`QQQ`、`000001.SS`、`^TNX`、`DX-Y.NYB`、`HYG`、`TLT`、`^VIX`、`^VIX9D`、`^VIX3M`、`^VVIX`、`SPY`、`RSP`、`GC=F`）的日线 `open, high, low, close, volume`、收盘标志 `is_closed`（`1` = 已正式收盘，`0` = 盘中未收盘）及抓取时间戳 `fetched_at`。 |
+| **`signals`** | `(market, date)` | 3 个市场 · 13,737 行 | 存储 `ndx`、`qqq`、`ssec` 三个市场的纯信号与结算结果（`entry, entry_at, base_close, close3, close5, hit3, flag, flag_price_only, news_veto, score, threshold, outcome, target, peak, peak_at, us_date, factors_packed, fetched_at`）。**不重复存储 OHLCV**，读取时通过 `LEFT JOIN bars` 关联并在内存中毫秒级聚合统计指标与对比表；`factors_packed` 将每个上下文开关按 4 bit 槽位打包为整数。 |
+| **`news`** | `(as_of, doc_id)` | 6,078 天 · 127,845 条 | 统一存储每日新闻条目与抓取记录（`published_at, title, text, url, domain, depth, source, page, fetched_at`）。若某日已抓取但无新闻，写入 `doc_id = ''` 占位行以防止重复请求。 |
+| **`agent_eval`** | `(dataset, question_id, predictor)` | `deepseek` / `qwen` 两个评测集 | 扁平关系表，每一行对应「一个数据集 × 一道历史考题 × 一个预测器」，存储题目元数据（`symbol, as_of, as_of_close, resolve_session, horizon, family, threshold, question_text, outcome`）及预测器的概率（`probability`）、成本、延迟、工具调用次数与失败数。 |
+
+### 2. 盘中未收盘追踪与增量刷新机制（`bars.is_closed`）
+
+为了在盘中（如北京时间 09:30–15:00 的 A 股交易时段，或美东时间 09:30–16:00 的美股交易时段）既能实时查看最新 K 线与临时信号，又不会把盘中价格误当作最终收盘价锁死，`bars.py`、`yahoo.py` 与 `db.py` 实现了基于时区的收盘状态追踪：
+
+- **收盘判定（`is_session_closed`）**：A 股品种（`.SS` / `.SZ`）以北京时间（`Asia/Shanghai`）当日 **15:05** 为正式收盘线；美股品种以美东时间（`America/New_York`）当日 **16:15** 为正式收盘线。在此之前抓取的当日 K 线均标记为 `is_closed = 0`。
+- **智能刷新检查（`refresh_check_summary`）**：当页面请求 `/api/refresh` 时，后端直接查询 `bars` 表中 `is_closed = 0` 的记录：
+  - **已过收盘时间的残缺行（`overdue_bars`）**：当前时间已跨过该品种收盘线，但库中仍为 `is_closed = 0`，无视冷却期立即向 Yahoo Finance 重新拉取并转为 `is_closed = 1`。
+  - **仍在盘中的未收盘行（`stale_intraday_bars`）**：距离上次抓取超过 5 分钟冷却期（`INTRADAY_COOLDOWN_SECONDS = 300`）时才重新拉取，避免频繁刷新页面造成无效请求。
+- **严格增量追加**：`yahoo.fetch_incremental` 仅拉取缺失或未收盘的尾部时间段，`db.upsert_series` 与 `artifacts_db.save_cross_market` 仅对新增日、尾部 5–7 个交易日及此前 `is_closed = 0` 的行执行 `ON CONFLICT DO UPDATE`，历史已收盘交易日永不删除。
+
+### 3. 核心源码模块索引（`src/forecast_log/`）
+
+| 模块路径 | 核心类 / 函数 | 模块职责 |
+|---|---|---|
+| `src/forecast_log/__main__.py` | `main()` | CLI 统一入口，解析 16 个子命令并分发至对应模块 |
+| `src/forecast_log/server.py` | `Handler`, `refresh_cross_data()`, `_needs_refresh()` | 本地多线程 HTTP 服务，提供干净页面路由、`/api/cross/*`、`/api/timeline`、`/api/agent/*` 与 `/api/refresh` |
+| `src/forecast_log/db.py` | `ensure_schema()`, `upsert_series()`, `refresh_check_summary()`, `save_news_fetch()` | SQLite 4 表 schema 定义、旧库自动无损迁移、K 线与新闻增量读写 |
+| `src/forecast_log/artifacts_db.py` | `save_cross_market()`, `load_cross_market()`, `load_timeline()`, `load_agent_eval()` | 看板数据聚合层：`signals LEFT JOIN bars` 实时计算汇总、向量化生成 `VXN` 时间轴并按指纹缓存、汇总 Agent 评测集 |
+| `src/forecast_log/yahoo.py` | `fetch_daily()`, `fetch_incremental()` | Yahoo Finance 日线抓取器，支持按已有序列尾部与未收盘状态增量拉取 OHLCV |
+| `src/forecast_log/bars.py` | `Bar`, `Series`, `is_session_closed()`, `validate_bars()` | 行情数据结构定义、时区收盘判定与日线序列合法性校验 |
+| `src/forecast_log/estimate.py` | `Estimate`, `estimate()`, `AnalogModel.forecast_batch()` | 非参数历史类比模型，支持单次估计与分块向量化批量预测（输出中位路径与 10%–90% 概率区间） |
+| `src/forecast_log/features.py` | `load_matrix()`, `describe()` | 对齐 `^VIX9D / ^VIX3M`（期限结构斜率）与 `^VVIX`（波动率之波动率）前瞻特征矩阵 |
+| `src/forecast_log/backtest.py` | `run_backtest()`, `rolling_paths()`, `timeline_document()` | 逐日滚动无前视回测、分步长（1–7 日）误差统计与时间轴文档生成 |
+| `src/forecast_log/cross.py` | `composite()`, `calls()`, `document()`, `comparison()` | 美股跨资产 4 因子扩张窗口 z 分数计算、日历与新闻规则合成、上下文位图导出及 `^NDX` vs `QQQ` 逐日对比 |
+| `src/forecast_log/china.py` | `entries()`, `document()`, `summary()` | 跨市场信号映射：将美股 D 日信号对齐至此后第一个 A 股交易日（`000001.SS`）并统计 3 日 / 5 日结算结果與十分位分档 |
+| `src/forecast_log/daily.py` | `fetch_news()`, `gate()`, `classify()`, `run()` | 每日盘后新闻抓取（GDELT + 3 路 RSS）、时间戳闸门过滤、LLM 风险偏好定调与关键词扫描 |
+| `src/forecast_log/wiki_news.py` | `backfill_batch()`, `parse_current_events()`, `coverage()` | Wikipedia `Portal:Current events` 历史新闻批量抓取、解析与覆盖率统计 |
+| `src/forecast_log/events.py` | `fetch()`, `load()`, `days_to_next()` | 使用 LLM 抽取并校验 2011–2026 年 `FOMC`、`CPI`、`NFP` 日历 |
+| `src/forecast_log/surprise.py` | `run()`, `load_compact()` | 历史新闻的 LLM 预期差标注（`surprise` × `direction`） |
+| `src/forecast_log/news_ab.py` | `sample_days()`, `label()`, `compare()`, `command()` | 多模型（DeepSeek vs Qwen）历史新闻解读一致性与分歧对比实验 |
+| `src/forecast_log/news_veto.py` | `variants()`, `command()` | 对比不同模型新闻利空否决规则（关闭 / 单模型 / 双模型共识）对多头信号精确率的影响 |
+| `src/forecast_log/agent/` | `AsOf`, `LookAheadError`, `OpenAICompatLLM`, `Toolbox`, `Agent`, `run_ensemble()`, `evaluate()` | 零框架研究型 Agent：硬性时间闸门、7 个取证工具、8 步工具循环、对数几率集成池化与同题集交集评测台 |
+| `deploy/worker.mjs` & `scripts/publish_d1.py` | `fetch()`, `refreshFromYahoo()`, `push_cross()`, `push_timeline()`, `push_agent()` | Cloudflare Worker 线上服务、D1 数据库增量同步与线上 Yahoo 增量行情刷新 |
+
+## 预测设计原则
+
+### 1. 靠代码构造阻止前视泄漏，而不是靠自觉
+
+在回测与智能体评测中，静默截断未来数据（silent clipping）会把越界 bug 藏起来，因为截断后的输出长相与正常结果完全一致。在 `src/forecast_log/agent/gate.py` 中，所有工具返回值、文档发布时间戳和提交的证据日期都必须通过硬性闸门：
 
 ```python
 def check(self, day: date, source: str) -> date:
@@ -43,33 +155,35 @@ def check(self, day: date, source: str) -> date:
     return day
 ```
 
-- **Hard exceptions over clipping**: If an agent or tool touches a future date or a post-cutoff headline, it raises `LookAheadError` and rejects the submission while preserving the rejected attempt in the execution trace.
-- **Expanding windows**: All z-scores, medians, and 90th-percentile thresholds in `cross.py` are computed recursively using data available up to day `t` only, with threshold design frozen prior to the `2015+` out-of-sample split.
+- **抛异常而非静默截断**：一旦工具或模型触碰晚于决策日（`as_of`）的日期或盘后才发布的新闻标题，立刻抛出 `LookAheadError` 并退回该次提交，同时将违规尝试完整保留在 trace 记录中。
+- **递归扩张窗口（expanding window）**：`cross.py` 中的所有均值、标准差、中位数和 90 分位阈值均仅使用截至交易日 `t` 的历史数据递归计算；规则与窗口参数在 `2015-01-01` 之前定死，`2015+` 作为严格样本外检验。
 
-### 2. Know What a Model Can and Cannot Predict (Intervals vs. Points)
-Backtesting `^VXN` across ~3,950 trading days shows that **point forecasts have minimal standalone value**:
-- Regressing predicted values against the prior close yields a slope of `0.98`, beating a random walk by only ~2.4% (3.3% vs. 3.5% median 1-day error; 8.5% vs. 8.9% at 7 days).
-- **Interval width is the real signal**: The 10%–90% analogue band achieves **79.6%** empirical coverage (nominal 80%) and separates volatility regimes—when the 1-day band is narrow / medium / wide, the next-day probability of a large move (`|return| > 8%`) jumps from **8.6% -> 13.0% -> 28.4%** (vs. 16.7% unconditional base rate).
+### 2. 区分模型能预测什么、不能预测什么（区间宽度 vs 点位预测）
 
-## 7 个交易日的预测与实际对账
+对 `^VXN` 在约 3,950 个交易日上的滚动回测表明，**单纯的点位预测几乎没有独立价值**：
 
-1 日区间看似贴合，是因为 VXN 单日变动中位数仅 3.5%。更应检验的是更长步长：每个交易日都给出一个 **7 日**区间，待目标日收盘后用实际收盘对账。页面上的「7 天后」即该对账结果（VXN，3945 次，2011-02 起）：
+- 将预测点位对前一日收盘价做回归，斜率高达 `0.98`，1 日点位误差中位数（3.3%）相比「假设价格不变」的随机游走基准（3.5%）仅优约 2.4%，7 日步长（8.5% vs 8.9%）同样接近。
+- **真正有效的信息在区间宽度（interval width）**：10%–90% 历史类比区间的实际覆盖率为 **79.6%**（名义值 80%），能有效区分波动率状态——当 1 日预测区间处于窄 / 中 / 宽三档时，次日发生大幅波动（`|涨跌幅| > 8%`）的实际概率从 **8.6% → 13.0% → 28.4%** 单调跃升（无条件基率为 16.7%）。
+
+## 第一个页面（`/vxn`）：7 个交易日的波动率区间预测与实际对账
+
+1 日区间看似贴合，是因为 `^VXN`（CBOE NASDAQ-100 Volatility Index，纳斯达克 100 波动率指数）单日变动中位数仅 3.5%。更应检验的是更长步长：每个交易日都给出一个 **1 至 7 日**区间，待目标日收盘后用实际收盘对账。页面 `/vxn`（[`web/index.html`](web/index.html)）上的 `h = 7 vs realised` 即该对账结果（VXN，3945 次，2011-02 起）：
 
 | 步长 | 点位误差中位 | 随机游走基准 | 区间覆盖 | 平均带宽 | 同覆盖的固定带宽 | 方向命中 |
 |---|---|---|---|---|---|---|
-| 1 日 | 3.3% | 3.5% | 79.4% | 14.6% | 14.1% | 53.9% |
-| 3 日 | 5.8% | 6.0% | 80.8% | 25.5% | 24.9% | 57.0% |
-| 5 日 | 7.1% | 7.5% | 79.7% | 31.1% | 30.1% | 59.0% |
-| **7 日** | **8.5%** | **8.9%** | **80.3%** | **35.6%** | **34.9%** | **60.8%** |
+| 1 日（`h = 1`） | 3.3% | 3.5% | 79.4% | 14.6% | 14.1% | 53.9% |
+| 3 日（`h = 3`） | 5.8% | 6.0% | 80.8% | 25.5% | 24.9% | 57.0% |
+| 5 日（`h = 5`） | 7.1% | 7.5% | 79.7% | 31.1% | 30.1% | 59.0% |
+| **7 日（`h = 7`）** | **8.5%** | **8.9%** | **80.3%** | **35.6%** | **34.9%** | **60.8%** |
 
-顶部按钮对应各步长档位：**当天 / 1 天后 / 2 天后 … 7 天后**。选择某一档位后，图上即绘制该档位的区间：
+顶部按钮对应各步长档位：**`h = 0 vs realised`（当天）/ `h = 1` … `h = 7`（1 至 7 个交易日后）**。选择某一档位后，图上即绘制该档位的预测中位数（赭石色虚线）与实际收盘价（蓝色实线）：
 
-- **当天**：用前一晚的收盘算当天的区间，画在当天，和当天收盘比。
-- **N 天后**：N 个交易日前说的那一次，画在目标日上，和那一天的实际收盘比。
+- **`h = 0`（当天）**：用前一晚的收盘算当天的条件 10%–90% 区间，画在当天，和当天收盘比。
+- **`h = N`（N 个交易日后）**：N 个交易日前发出的那一次预测，画在目标结算日上，和目标日的实际收盘比。若画在发出日，「7 日后的点位预测」看起来就像把实际值右移 7 天（因为一周自相关达 0.93），画在目标日才能直观看出当时预测与后来现实的偏差。
 
-左上角卡片跟着切换，左边是这一档最近几次「说的 vs 实际」，右边是每一档的历史成绩（当前档位高亮）。以「7 天后」为例（括号里是截止日）：
+右侧 **Error ledger（误差账本）** 卡片跟着切换，上方是当前步长最近几次「发出日（Originated）→ 结算日（Resolves）」的预测 vs 实际（最后一行尚未到期），下方是全部步长的历史汇总表（当前档位高亮）。以 7 日步长为例：
 
-| 说的日 | 目标日 | 说的 | 说的区间 | 实际 | 差多少 |
+| 发出日 | 目标日 | 预测中位 | 预测区间（10%–90%） | 实际收盘 | 偏差 |
 |---|---|---|---|---|---|
 | 10-26 | 11-04 | 26.25 | 21.77–32.70 | 25.08 | +1.17 (+4.7%) |
 | 10-27 | 11-05 | 25.24 | 21.26–31.80 | 38.26 | −13.02 (−34.0%) |
@@ -77,65 +191,60 @@ Backtesting `^VXN` across ~3,950 trading days shows that **point forecasts have 
 | 10-29 | 11-09 | 24.62 | 21.33–32.36 | 28.97 | −4.35 (−15.0%) |
 | 10-30 | 11-10 | 28.01 | 22.93–35.93 | 28.57 | −0.56 (−2.0%) |
 | 11-02 | 11-11 | 28.45 | 23.82–37.42 | 26.74 | +1.71 (+6.4%) |
-| 11-11 | 11-20 | 27.01 | 23.42–34.13 | 还没到 | — |
+| 11-11 | 11-20 | 27.01 | 23.42–34.13 | 尚未到期 | — |
 
-右边那一列档位的成绩（VXN，每个档位 3900+ 次）：
+各步长历史成绩汇总（VXN，每个档位 3900+ 次）：
 
-| 档位 | 次数 | 平均差 | 差% 中位 | 在区间内 | 随机游走基准 |
+| 档位 | 次数（`n`） | `MAE`（点） | `MAPE` 中位 | `Band coverage`（在区间内） | `Random walk`（随机游走 MAE） |
 |---|---|---|---|---|---|
-| 当天 | 3958 | 1.04 | 3.4% | 80% | 1.06 |
-| 1 天后 | 3951 | 1.04 | 3.3% | 79% | 1.06 |
-| 3 天后 | 3949 | 1.70 | 5.9% | 81% | 1.75 |
-| 5 天后 | 3947 | 2.06 | 7.1% | 80% | 2.16 |
-| **7 天后** | **3945** | **2.33** | **8.5%** | **80%** | **2.48** |
+| `h = 0`（当天） | 3958 | 1.04 | 3.4% | 80% | 1.06 |
+| `h = 1`（1 天后） | 3951 | 1.04 | 3.3% | 79% | 1.06 |
+| `h = 3`（3 天后） | 3949 | 1.70 | 5.9% | 81% | 1.75 |
+| `h = 5`（5 天后） | 3947 | 2.06 | 7.1% | 80% | 2.16 |
+| **`h = 7`（7 天后）** | **3945** | **2.33** | **8.5%** | **80%** | **2.48** |
 
-结论：1 个交易日的点位误差中位数为 3.3%，7 个交易日为 8.5%；以「前一日收盘不变」为基准是 8.9%。
-
-读法：
+读法与实证结论：
 
 - **7 个交易日的点位误差中位数为 8.5%，随机游走基准为 8.9%**，仅优 5.9%。随步长拉长，误差上升速度与随机游走基准接近，原因是后者本身已能刻画主要趋势方向。
-- **区间覆盖率 80.3%**，名义值为 80%；该项属校准结果，不构成预测能力的证据。同等覆盖率下，「当日收盘 ±17.5%」的固定带宽仅需 34.9%，模型为 35.6%——宽度接近，模型未能压缩区间。
-- **方向命中率 60.8%** 表面上不低，但「始终预测下跌」为 51.8%，「向一年中位数回归」为 58.8%。模型相对后者仅优 2 个百分点，说明这 60.8% 主要来自 VXN 的均值回归，而非预测能力。
-- 唯一稳健的结论：7 日区间为窄 / 中 / 宽时，未来一周 |涨跌幅| > 12% 的实际概率为 **26.2% / 33.9% / 48.1%**（基准 36.1%）；按过去一周已实现波动率排序的基准为 27.2% / 34.4% / 46.8%。两者均有效，模型略优。
+- **区间覆盖率 80.3%**，名义值为 80%；该项属校准结果，不构成点位预测能力的证据。同等覆盖率下，「当日收盘 ±17.5%」的固定带宽仅需 34.9%，模型为 35.6%——宽度接近，模型未能显著压缩区间。
+- **方向命中率 60.8%** 表面上不低，但「始终预测下跌」为 51.8%，「向一年中位数回归」为 58.8%。模型相对后者仅优 2 个百分点，说明这 60.8% 主要来自 VXN 的均值回归特性。
+- **唯一稳健的结论**：7 日区间为窄 / 中 / 宽时，未来一周 `|涨跌幅| > 12%` 的实际概率为 **26.2% / 33.9% / 48.1%**（基准 36.1%）；按过去一周已实现波动率排序的基准为 27.2% / 34.4% / 46.8%。两者均有效，模型略优。
 
-NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准 2.2%；区间覆盖率仅 **74.5%**，名义值 80%——低于 VXN，说明类比法在股指上给出的区间偏窄。该结果由 `backtest` 一并输出，不作省略。
+`^NDX` 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准 2.2%；区间覆盖率仅 **74.5%**（名义值 80%）——低于 VXN，说明历史类比法在趋势性股指上给出的区间偏窄。该结果由 `forecast-log backtest` 一并输出，不作省略。
 
-最近几次对账（发出日 → 结算日）：
+2026-11-05 单日 52.6% 的 VXN 涨幅，未被 7 个交易日前的区间（21.26 – 31.80）覆盖。这是「不可作为点位预测使用」的具体实例：区间虽宽，极端行情仍会超出边界。
 
-| 发出 | 结算 | 当时收盘 | 说的区间 | 实际 | 偏差 |
-|---|---|---|---|---|---|
-| 2026-10-22 | 2026-11-02 | 28.72 | 22.69 – 34.28 | 30.89 | −14.1% |
-| 2026-10-27 | 2026-11-05 | 24.91 | 21.26 – 31.80 | **38.26** | **−34.0% ✗** |
-| 2026-10-28 | 2026-11-06 | 23.78 | 21.44 – 31.41 | **34.02** | **−27.8% ✗** |
-| 2026-10-30 | 2026-11-10 | 28.50 | 22.93 – 35.93 | 28.57 | −2.0% |
-| 2026-11-02 | 2026-11-11 | 30.89 | 23.82 – 37.42 | 26.74 | +6.4% |
+## 第二个页面（`/ndx` · `/qqq` · `/a-shares`）：第 5 个交易日收盘是否高于基准收盘
 
-2026-11-05 单日 52.6% 的涨幅，未被 7 个交易日前的区间（21.26 – 31.80）覆盖。这是「不可作为点位预测使用」的具体实例：区间虽宽，极端行情仍会超出边界。
+[`web/points.html`](web/points.html) 检验对象为股指与 ETF 本身：**跨资产风险偏好偏多时，第 5 个交易日的收盘是否高于基准收盘**。纵轴为对数坐标下的 K 线点位，标记画在信号对应的交易日下方；颜色按第 3 天、第 5 天两根收盘判定：
 
-## 第二个页面：第 5 个交易日收盘是否高于基准收盘
+- **绿（▲ arrowUp）**：第 3 天收盘就高于基准收盘（`hit3 = 1` 且 `outcome = 1`）；
+- **琥珀（● circle）**：第 3 天没到、第 5 天收盘高于基准收盘（`hit3 = 0` 且 `outcome = 1`）；
+- **灰（■ square）**：第 5 天收盘仍不高于基准收盘（`outcome = 0`）；
+- **蓝（▲ `BUY`）**：最近 5 个交易日内已触发、尚未满 5 日结算窗口的待定信号。
 
-`web/points.html`，检验对象为指数本身：**跨资产风险偏好偏多时，第 5 个交易日的收盘是否高于基准收盘**。纵轴为指数点位，三角标记画在信号那几天；颜色按第 3 天、第 5 天两根收盘判定：绿 = 第 3 天就高于基准，琥珀 = 第 3 天没到、第 5 天到了，灰 = 第 5 天仍不高于基准。悬停显示信号日、基准收盘、第 3 天与第 5 天收盘及各自相对基准的涨跌幅。同一套信号换到 QQQ 的对照见下一节，换到 A 股的对照在再下一节；两者都是本页顶部的标签页（`/qqq` / `/a-shares`），旧地址 `?market=qqq`、`web/qqq.html`、`web/ssec.html` 都会 301 过去。
+鼠标悬停任意一根 K 线，顶部读数栏实时显示当日开高低收（`O / H / L / C`）、涨跌幅、成交量（`Vol`），以及信号日的基准收盘（`basis`）、第 3 天与第 5 天收盘及各自相对基准的涨跌幅。顶部标签页可一键切换 **`Nasdaq-100 (^NDX)`**（`/ndx`）、**`QQQ (ETF)`**（`/qqq`）与 **`A股 · 上证综指 (000001.SS)`**（`/a-shares`）。
 
-### 判定基准是收盘，成交价另存一列
+### 判定基准是收盘（`base_close`），实际成交价（`entry`）另存一列
 
-`base_close` 是箭头那一天的收盘：`^NDX` 与 `QQQ` 取信号当天，A 股页取美股信号之后第一个 A 股交易日。绿 / 琥珀 / 灰、精确率、基率，全部拿 `close3`、`close5` 和它比（`cross.py` / `china.py` 的 `hit3 = close3 > base_close`、`outcome = close5 > base_close`）。
+`base_close` 是发出判断那一天的收盘价：`^NDX` 与 `QQQ` 取信号当天收盘，A 股页取美股信号之后第一个 A 股交易日的收盘。绿 / 琥珀 / 灰、精确率（`precision`）、无条件基率（`base rate`），全部拿 `close3`、`close5` 和 `base_close` 比（`cross.py` / `china.py` 中的 `hit3 = close3 > base_close`、`outcome = close5 > base_close`）。
 
-`entry` 同时写进数据：真正能成交的那个价 = 下一交易日的开盘价（A 股页是信号之后第一个 A 股交易日 09:30 的开盘价）。页面悬停能看到，但**它不决定颜色**。两个问题不一样：
+`entry` 同时写进数据库 `signals` 表：真正能成交的那个价 = 下一交易日的开盘价（A 股页是信号之后第一个 A 股交易日 09:30 的开盘价）。页面悬停能看到，但**它不决定颜色**。两个问题不一样：
 
-- 基准收盘回答「这个判断对不对」——那是你做判断时屏幕上那个价，也是 `close3` / `close5` 唯一可比的对象；
-- 成交价回答「照着做能不能赚」——它含一个隔夜跳空，你付的是跳空之后的价。
+- **基准收盘（`base_close`）**回答「这个方向判断对不对」——那是做判断时屏幕上已定的价格，也是 `close3` / `close5` 唯一不含隔夜执行摩擦的可比基准；
+- **成交价（`entry`）**回答「照着做能不能赚到钱」——它包含一个隔夜跳空，实际下单付的是跳空之后的价格。
 
-两个口径的差（全样本 / 2015 起，百分点超额）：
+两个口径的差（全样本 / 2015 起样本外，相对基率的百分点超额 `lift`）：
 
-| 标的 | 判定 vs 基准收盘（代码口径） | 判定 vs 成交价（开盘） | 差 |
+| 标的 | 判定 vs 基准收盘（代码口径） | 判定 vs 成交价（次日开盘） | 差值 |
 |---|---|---|---|
-| `^NDX` | **+7.0 / +7.6** | +6.5 / +6.7 | 0.5 |
-| `QQQ` | **+7.0 / +7.8** | +5.8 / +5.9 | 1.2 |
-| `000001.SS` | **+5.9 / +6.9** | +5.1 / +6.9 | 0.8 |
+| `^NDX` | **+7.0 / +7.6** | +6.5 / +6.7 | 0.5 pp |
+| `QQQ` | **+7.0 / +7.8** | +5.8 / +5.9 | 1.2 pp |
+| `000001.SS` | **+5.9 / +6.9** | +5.1 / +6.9 | 0.8 pp |
 
-结论没有翻转，但颜色不能声称是可成交收益：差的这 0.5–1.2 个点就是开盘那一跳，你拿不到。要算「能拿到多少」，用 `entry` 那一列，别用颜色。
+结论方向没有翻转，但颜色不能声称是可成交收益：相差的这 0.5–1.2 个百分点就是次日开盘那一跳。要算实际交易能拿到多少，请看 `entry` 列。
 
-### 箭头三种颜色：第 3 天就做到 / 只有第 5 天做到 / 都没做到
+### 箭头三种颜色的分布：第 3 天就做到 / 只有第 5 天做到 / 都没做到
 
 | 颜色 | 含义 | 上证综指 591 | `^NDX` 629 | `QQQ` 629 |
 |---|---|---|---|---|
@@ -151,18 +260,18 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 | 琥珀 | 11.5% | 11.4% | 11.5% |
 | 灰 | 36.8% | 30.2% | 30.2% |
 
-精确率（`precision`）= **第 5 天收盘高于基准**的比例，它不等于绿 + 琥珀：绿只要求第 3 天高，第 5 天又跌回基准之下的那些仍算绿、却不算精确率。四个格子摊开来看（每格三个数依次是上证综指 / `^NDX` / `QQQ`）：
+精确率（`precision`）= **第 5 天收盘高于基准**的比例，它不等于「绿 + 琥珀」：绿只要求第 3 天高，第 5 天又跌回基准之下的那些仍算绿、却不算第 5 天精确率。四个格子摊开来看（每格三个数依次是上证综指 / `^NDX` / `QQQ`）：
 
 | | 第 5 天高于基准 | 第 5 天不高于基准 |
 |---|---|---|
 | 第 3 天高于（绿） | 45.7% / 55.5% / 55.3% | 8.6% / 6.7% / 6.8% |
 | 第 3 天不高于（琥珀 / 灰） | 12.7% / 11.0% / 11.3% | 33.0% / 26.9% / 26.6% |
 
-「第 3 天高、第 5 天又跌回去」的信号只占 6.7%–8.6%，同期基率是 10.2%–10.8%——信号之后的上涨比随便一天更黏，超额主要来自这里。
+「第 3 天高、第 5 天又跌回去」的信号只占 6.7%–8.6%，同期无条件基率是 10.2%–10.8%——信号之后的上涨比随便一天更黏，超额主要来自这里。
 
 ### 按天拆开：上证的第 1 天是负的
 
-「当天」= 第 k 天那根收盘是否高于基准收盘；「累计」= 第 1 到第 k 天里出现过一次。「随便一天」是同一套判定套在全部交易日上的基率。
+「当天」= 第 k 天那根收盘是否高于基准收盘；「累计」= 第 1 到第 k 天里至少出现过一次高于基准。「随便一天」是同一套判定套在全部交易日上的无条件基率。
 
 **上证综指（591 个信号 / 4464 个可比交易日）**
 
@@ -191,69 +300,58 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 
 三条结论：
 
-1. **上证的加速全在第 5 天**：第 1 天 −0.8，累计到第 4 天仍是 −0.3，第 5 天当天 +5.9 才把累计拉到 +0.8。换窗口会直接改写结论：窗口缩到 3 天，上证是 **0.0 个点**（`count` 口径下等于没有）。
-2. **两个美股标的从第 1 天起就有超额**（+3.9 / +3.7），累计超额在第 1–2 天最高，后面只是分母变大；第 5 天当天 +7.0 是全场最高的单日。同样是「第 5 天最强」，但美国是「一路正、最后加速」，A 股是「前四天零、第五天兑现」。
-3. **第 5 天是最后一根**，也是最强的一根。这既是主口径留在 5 天的原因，也是它的弱点：不能事后把窗口再往后挪。
+1. **上证的加速全在第 5 天**：第 1 天 −0.8，累计到第 4 天仍是 −0.3，第 5 天当天 +5.9 才把累计拉到 +0.8。换窗口会直接改写结论：窗口缩到 3 天，上证累计超额是 **0.0 个点**。
+2. **两个美股标的从第 1 天起就有超额**（+3.9 / +3.7），累计超额在第 1–2 天最高，后面只是分母变大；第 5 天当天 +7.0 是全场最高的单日。同样是「第 5 天最强」，但美股是「一路正、最后加速」，A 股是「前四天零、第五天兑现」。
+3. **第 5 天是最后一根**，也是最强的一根。这既是主口径留在 5 天的原因，也是它的限制：这 5 列用的是同一批信号而非 5 个独立样本，事后把窗口改成 3 天等于在同一批数据上挑参数。要改窗口必须在 2015 年之前定死再拿 2015 年之后验，这一步没做，因此主口径保持 5 天不变。
 
-一个必须说的限制：这 5 列用的是同一批信号，不是 5 个独立样本。现在把窗口从 5 天改成 3 天，等于在同一批数据上挑参数，那条 0.0（或 +3.5）不能直接当结论。要改窗口，必须在 2015 年之前定死，再拿 2015 年之后验。这一步没做，所以页面上的主口径仍然是 5 天。
+### 信号构造规则（4 个价格因子 + 宏观日历）
 
-规则由四个因子构成，全部只用当天及以前的收盘：
+基础复合得分由四个跨资产价格因子构成，全部只用当天及以前的收盘：
 
-| 因子 | 看多方向 |
-|---|---|
-| 10 年期收益率 20 日变化 | 下行 |
-| 美元指数 20 日涨跌 | 走弱 |
-| 信用 `HYG/TLT` 20 日涨跌 | 走强 |
-| `^VIX` 相对一年中位 | 偏高 |
+| 因子 | 看多方向 | 经济含义 |
+|---|---|---|
+| 10 年期美债收益率（`^TNX`）20 日变化 | 下行 | 无风险贴现率回落，利好长久期风险资产 |
+| 美元指数（`DX-Y.NYB`）20 日涨跌 | 走弱 | 全球美元流动性边际宽松 |
+| 信用比值（`HYG/TLT`）20 日涨跌 | 走强 | 高收益公司债跑赢长期国债，信用利差收窄、风险偏好改善 |
+| 标普 500 波动率（`^VIX`）相对一年中位 | 偏高 | 隐含波动率处于阶段性高位，提供均值回归空间 |
 
-每个因子在扩张窗口上做 z 分数标准化（均值和标准差只用当天及以前的数据，样本随时间变长，无前视）；四个 z 分数等权平均得到复合分数。复合分数超过「截至当天全部历史」的 90 分位时触发一个做多信号；触发阈值同样逐日扩张，不使用未来数据。
+每个因子在扩张窗口上做 z 分数标准化（均值和标准差只用当天及以前的数据，样本随时间变长，无前视）；四个 z 分数等权平均得到复合分数（`composite`）。复合分数超过「截至当天全部历史」的 90 分位时触发一个做多信号；触发阈值同样逐日扩张，不使用未来数据。
 
-日历那三个事件都进了规则，各有各的用法（日历由 LLM 拉取，`data/events.json`，129 次 FOMC / 192 次 CPI / 192 次 NFP，$0.0016，脚本会校验每年次数和工作日）：
+宏观日历的三个事件（由 `forecast-log events` 抽取至 `data/events.json`，含 129 次 FOMC / 192 次 CPI / 192 次 NFP，成本 $0.0016，脚本自动校验每年次数和工作日）按如下规则进入信号：
 
 | 事件 | 用法 | 依据（相对同期基率的超额，2015 前 / 2015 后） |
 |---|---|---|
-| CPI | 前 3 天内、分数 ≥ 中位 → 触发信号 | +10.7 点 / +5.3 点，两段同向（n=66 / 240） |
-| NFP | 前 3–7 天、分数 ≥ 中位 → 触发信号 | +15.1 点 / +7.6 点（n=54 / 211）；0–2 天两段都低于基率，所以只用 3–7 天 |
-| FOMC | 决议当天 → 不触发 | 当天 +3.5 / −7.1，两段方向相反，不给它加分，只用来否决决议当天 |
+| `CPI`（消费者物价指数） | 发布前 3 天内、复合分数 ≥ 中位 → 触发信号 | +10.7 点 / +5.3 点，两段同向（n=66 / 240） |
+| `NFP`（非农就业人口） | 发布前 3–7 天、复合分数 ≥ 中位 → 触发信号 | +15.1 点 / +7.6 点（n=54 / 211）；0–2 天两段都低于基率，故只取 3–7 天 |
+| `FOMC`（美联储议息会议） | 决议当天 → 否决（不触发） | 当天 +3.5 / −7.1，两段方向相反，仅用来否决决议当天（当天 127 个信号精确率 55.1%，低于基率 4.3 个点） |
 
-这三个窗口是在**现在这个口径**（第 5 天收盘高于基准）下挑的，判定口径后来没有改过。要改成 3 天窗口的话，CPI / NFP 的窗口必须重挑——那一步没做，所以主口径留在 5 天。
+价格侧版本（`composite` + 日历触发 − `FOMC` 当天，不含新闻否决，对应 `signals.flag_price_only`）的实测表现：
 
-| | 观测数 | 信号数 | 精确率（precision） | 无条件基率 | 超额（lift） |
+| 区间 | 观测数 | 信号数 | 精确率（`precision`） | 无条件基率 | 超额（`lift`） |
 |---|---|---|---|---|---|
 | 全部 2008–2026 | 4626 | 726 | 66.0% | 59.4% | +6.6 点 |
 | 2015 之前（定标期） | 1647 | 146 | 65.8% | 59.0% | +6.8 点 |
 | **样本外 2015 起** | 2979 | 580 | **66.0%** | 59.7% | **+6.4 点** |
 
-这是「价格侧」一版（composite + 日历触发 − FOMC 当天，不含新闻否决）。再叠加新闻否决之后是 629 个信号、66.5%（见本节末尾那张表）。
+再叠加默认新闻否决（`news_bearish`）后为 629 个信号、精确率 66.5%、样本外 67.3%。样本外那一行的阈值只用 2015 年之前的数据定，之后没参与任何挑选。
 
-样本外那一行的阈值只用 2015 年之前的数据定，之后没参与任何挑选。这是全项目第一条稳定跑赢无条件基率的信号线。
+四条限制（同步写在页面右侧说明栏）：
 
-三条限制，写在页面右侧，也写在这里：
+- 信号覆盖约 16% 的交易日（726 / 4626）。它是筛子，不是每日预测器。
+- 580 个样本外信号只对应约 116 个不重叠的 5 日窗口，统计上勉强过线，不是稳赚。
+- 去掉日历、只剩 `composite` 时是 229 个信号、63.3%（+3.9）；其中 2015 年前的 35 个只有 45.7%（低于同期基率 59.0% 达 13.7 个点）。日历触发纠正的正是「仅在后半段成立」的问题。
+- 只有「偏多」这一侧，**「该卖」那一侧没做出来**（原因见下文「已排除的尝试」）。
 
-- 信号覆盖约 16% 的交易日（726 / 4626）。它是筛子，不是每日信号。
-- 580 个信号其实只对应约 116 个不重叠的 5 日窗口，是勉强过线，不是稳赚。
-- 没有日历、只剩 composite 一侧时是 229 个信号、63.3%（+3.9）；其中 2015 年前的 35 个只有 45.7%，同期基率 59.0%，低 13.7 个点。日历触发纠正的正是「仅在后半段成立」，并不是凭空抬高分数。
-- 只有「偏多」这一侧。**「该卖」那一侧没做出来**（下面写了为什么）。
+### 换成 QQQ（`/qqq`）：同一套信号，换一只能下单的基金
 
-三件容易忘的事，免得下次重测：
+指数本身不可直接交易，ETF 可以。`/qqq` 标签页用**同一条规则、同一批信号日**，只把基准收盘和窗口内的收盘换成 `QQQ` 的：复合分数、日历触发、新闻否决都不读被预测标的自身的价格，因此信号日完全对齐（629 = 629）：
 
-1. **别把「精确率变高」当成「加信息有用」**。精确率是绝对水平，日历临近日那几天的基率本来就高。要比就比「精确率 − 同期无条件基率」：只勾 composite 是 +3.9（229 个），只靠 CPI 是 +6.6（306 个），只靠 NFP 是 +9.3（265 个），混在一起 +6.6（726 个）。
-2. **窗口是分开挑过的**：CPI 用 0–3 天，NFP 用 3–7 天（0–2 天在 2015 年前低于基率），FOMC 只用来否决决议当天（当天 127 个信号精确率 55.1%，比基率低 4.3 个点）。换窗口请重跑下面那张对照表，不要凭感觉。
-
-2026-11-13 那次读数：分数 −0.065，阈值 0.542，不触发。
-
-### 换成 QQQ：同一套信号，换一只能下单的基金
-
-指数本身不可交易，ETF 可交易。`points.html?market=qqq`（QQQ 标签页）用**同一条规则、同一批信号日**，只把基准收盘和窗口内的收盘换成 QQQ 的：复合分数、日历触发、新闻否决都不读被预测标的自己的价格，所以信号日一个不差（629 = 629），交易日历也对齐（2008-06-18 → 2026-11-13，4626 个共同交易日）。
-
-| | 信号 | 精确率 | 基率 | 超额 | 样本外信号 | 样本外精确率 | 样本外超额 |
+| 标的 | 信号 | 精确率 | 基率 | 超额 | 样本外信号 | 样本外精确率 | 样本外超额 |
 |---|---|---|---|---|---|---|---|
 | `^NDX`（指数） | 629 | 66.5% | 59.4% | +7.0 | 505 | 67.3% | +7.6 |
 | **`QQQ`（ETF）** | 629 | **66.6%** | 59.6% | **+7.0** | 505 | **67.5%** | **+7.8** |
 
-结论：**该规则并不依赖指数点位**；改用可交易的 ETF 后，超额水平保持（全样本一样，样本外高 0.2 个点）。
-
-只有 9 天判定不一致，全部是窗口内收盘与基准相差 2% 以内的平局（`artifacts/cross_qqq.json` 的 `disagreements` 字段逐条列了日期、窗口末尾和目标收益）：
+结论：**该规则不依赖指数点位**；改用可交易的 ETF 后，超额水平保持一致。全历史 629 个信号中仅有 **9 天**判定不一致，全部是窗口末尾收盘与基准相差几个基点（bp）以内的平局跟踪误差（页面右侧 `Days they disagree` 表格逐条列出）：
 
 | 信号日 | 窗口末尾 | 谁判成命中 |
 |---|---|---|
@@ -267,713 +365,249 @@ NDX 的对应结果更低：7 日点位误差中位数 2.1%，随机游走基准
 | 2019-05-09 | 2019-05-16 | `^NDX` ✗ / `QQQ` ✓ |
 | 2020-05-07 | 2020-05-14 | `^NDX` ✗ / `QQQ` ✓ |
 
-上述差异属跟踪误差，不表示「QQQ 的信号更强」。两点说明：
+注：`QQQ` 收盘价未做除息复权，每年四次除息使其相对指数略偏低（方向上对 ETF 更严）。
 
-- QQQ 收盘价**未做复权**：每年四次除息使其相对指数略低，方向上对 ETF 不利（更易被判为第 5 天收盘不高于基准）。
-- 判定分歧为 9 / 629 = 1.4%；换成跟踪同一成分篮子的其他 ETF，分歧不会消失，只会改变位置。两行精确率只差 0.1 个百分点，不应视为结论。
-`forecast-log cross` 一次写两份：`artifacts/cross.json`（NDX）和 `artifacts/cross_qqq.json`（QQQ，含 `comparison` 字段）。
+### 换到上证综指结算（`/a-shares`）：跨市场信号传导检验
 
-### 同一套信号，换到上证综指结算
+`/a-shares`（别名 `/ssec`）标签页中，**美股信号一个字不改**（四个美股跨资产因子、90 分位、CPI / NFP / FOMC、新闻否决完全复用 `ndx`），只把结算尺子换成 A 股上证综合指数（`000001.SS`）：
 
-`points.html?market=ssec`（A 股标签页）。**信号一个字不改**：四个因子、90 分位、CPI / NFP / FOMC、新闻否决，全部是 `cross.json` 里那一份。换掉的只有「拿哪个市场的收盘做尺子」，而且只跟下单有关：
+- **时差与判定基准**：美股 D 日收盘 = 北京时间 D+1 日 04:00，在 A 股 09:30 开盘前完全已知。因此取 D 日之后**第一个 A 股交易日**的收盘作为 `base_close`（同时记录该日 09:30 开盘价为 `entry`）。
+- **结算窗口**：基准日之后第 3 个、第 5 个 A 股交易日收盘；第 5 天高于 `base_close` 记为命中（`outcome = 1`）。
 
-- **判定基准**：美股 D 日收盘 = 北京 D+1 日 04:00，A 股 09:30 开盘前就知道。基准收盘 = D 之后**第一个 A 股交易日**的收盘；成交价 = 同一交易日的开盘价，记在 `entry`，只用于算「能拿到多少」，不参与判定。
-- **窗口**：基准日之后第 3 天、第 5 天两根收盘；第 5 天那根高于基准算命中（`outcome`）。
-
-| | 信号 | 命中 | 基率 | 增量 |
+| 标的与区间 | 信号 | 命中率 | 无条件基率 | 超额增量（`lift`） |
 |---|---|---|---|---|
-| **`000001.SS`（上证综指）** | 591 | 58.4% | 52.5% | **+5.9** |
-| `^NDX`（同一条信号） | 629 | 66.5% | 59.4% | +7.0 |
+| **`000001.SS`（上证综指，全样本）** | 591 | 58.4% | 52.5% | **+5.9** |
+| `^NDX`（同一条信号，全样本） | 629 | 66.5% | 59.4% | +7.0 |
 | `000001.SS`，2015 前 | 116 | 51.7% | 51.3% | **+0.4** |
-| `000001.SS`，2015 起 | 475 | 60.0% | 53.1% | **+6.9** |
-| `^NDX`，2015 起 | 505 | 67.3% | 59.7% | +7.6 |
+| **`000001.SS`，2015 起样本外** | 475 | **60.0%** | 53.1% | **+6.9** |
+| `^NDX`，2015 起样本外 | 505 | 67.3% | 59.7% | +7.6 |
 
-解读：**全样本方向一致，幅度约为美国的八成，但增量全部来自 2015 之后。** 2015 年之前 116 个信号是 +0.4 个点，等于零；2015 年起 +6.9（标准误约 2.3 个点）。按 5 日区块重抽样，全样本 +5.9 的 95% 区间约 +2.7 至 +12.3——不在噪声里，但也不能拿它证明 2015 年之前成立。
+解读：
 
-分十档（同一批信号的复合分数从低到高，每档约 59 个）：51 / 59 / 61 / 59 / 68 / 59 / 44 / 53 / 68 / 62。最高档 61.7 并不比中间档高，第 7 档掉到 44.1——分数的高低不能当强度用。阈值以上都是同一个「偏多」状态，按分数加仓没有依据。
+1. **全样本方向一致，超额幅度约为美股的八成，但增量全部来自 2015 年之后。** 2015 年之前 116 个信号超额仅 +0.4 个点（接近零）；2015 年起为 +6.9 个点（标准误约 2.3 个点）。
+2. **复合分数分十档（从低到高，每档约 59 个信号，对应页面右侧 `Bands of the composite` 表格）**：命中率依次为 `51% / 59% / 61% / 59% / 68% / 59% / 44% / 53% / 68% / 62%`。最高档并不比中间档更准，第 7 档掉到 44%——说明阈值以上都属于同一个「偏多」状态，按分数高低加仓没有实证依据。
+3. **信号个数差异（591 vs 629）**：春节、国庆长假期间 A 股休市，节前与节中发出的多个美股信号会落入节后**同一个** A 股交易日，合并为一次入场。
 
-两处口径差异说明如下：
+## 上下文选择器（`Model Context Factors`）：在浏览器里自由组合因子与判定规则
 
-- 591 ≠ 629 个 flag：中国春节、国庆期间 A 股休市，节前与节后的两个美股信号落在**同一个** A 股交易日，只能下一次单；其余为最近几个交易日结算窗口尚未完成。
-- A 股无条件基率（52.5%）低于 NDX（59.4%）。因此绝对命中率（66.5% 对 58.4%）不可直接比较，应比较各自相对基率的超额。
+信号页顶部的 **Model Context Factors** 浮动面板（[`web/ctxbar.js`](web/ctxbar.js)）允许用户自己决定给模型看哪些信息、用什么逻辑聚合。勾选或切换下拉框后，K 线图上的买卖标记、全样本精确率、3 日快命率、样本外精确率以及最新交易日的 `BUY / NO SIGNAL` 结论**当场重算，无需请求后端**。
 
-`forecast-log fetch` 获取 `000001.SS`，`forecast-log cross` 同时生成 `artifacts/cross_ssec.json`（含 `open`、`entry`、`bands`、`reference`；对照行直接取自 `cross.json` 的汇总，不重算）。
+- **两个快捷预设按钮**：`Price factors only`（仅保留基础 4 因子复合得分）、`Everything available`（开启全部可用上下文）。
+- **按市场独立记忆**：`^NDX`、`QQQ`、`A 股` 三个标签页各自保存勾选状态与规则配置，切换标签页互不覆盖。
+- **可配置的判断函数（Decision Rule）**：
+  - **触发规则（Trigger rule）**：`Any selected trigger (OR)`（默认，任一触发项命中即出信号）/ `Multi-factor consensus (≥ 2)`（至少 2 个触发或加成项同时共振）/ `All selected triggers (AND)`（所选触发项全票通过）。
+  - **否决容忍度（Veto tolerance）**：`Strict veto (any 1 hit cancels)`（默认，任一否决项命中即撤单）/ `Double-confirm veto (≥ 2 hits)`（至少 2 个否决项同时命中才撤单）。
 
-界面语言：三个页面（`index.html`、`points.html`、`agent.html`）的可见文字一律英文，数据键名和本文档保持中文。`points.html` 一页装三个市场（`^NDX` / QQQ / 上证综指），靠顶部标签页切换；`qqq.html`、`ssec.html` 现在只是跳到 `points.html?market=…` 的存根，避免旧链接 404。
+当前支持的全部上下文开关清单：
 
-**写作规则：任何缩写、代码、简写，第一次出现时必须给出全称和一句人话解释。** 包括但不限于 VIX、VXN、NDX、QQQ、HYG、TLT、DXY、CPI、NFP、FOMC、pp。不要在对话、文档、页面文案里丢一个缩写就走。**只写在这张表里不算解释过**——对话是独立上下文，第一次在回复里出现就要当场展开，例：`^NDX`（Nasdaq-100 Index，纳斯达克 100 指数，本项目两个结算标的之一）。下表是该项目出现的全部缩写，新增代码请补一行。
-
-### 术语对照
-
-| 页面上的写法 | 对应的行业词 | 含义 |
-|---|---|---|
-| `signal` | 信号 / 入场触发 | 规则在某个收盘成立的那一天 |
-| `base_close` | 判定基准 | 箭头那一天的收盘价（A 股页 = 信号之后第一个 A 股交易日的收盘） |
-| `entry` | 成交价 | 信号之后第一个交易日的开盘价，唯一你能真正付的价；**不参与判定** |
-| `precision` | 精确率（= 信号命中比例） | 第 5 个交易日的收盘高于 `base_close` 的比例 |
-| `base rate` | 无条件基率（prior） | 不看任何条件，把同一套判定套在全部交易日上 |
-| `lift vs base` | 超额 / 增益 | 精确率减无条件基率，单位百分点 |
-| `composite` | 复合因子得分 | 四个因子 z 分数的等权平均 |
-| `expanding window` | 扩张窗口（递归估计） | 均值、标准差、分位数都用截至当天的全部历史 |
-| `out-of-sample` | 样本外 | 阈值只用 2015 年之前的数据校准 |
-| `conditional trigger` | 条件触发 | 只在事件窗口内、且因子得分达标的额外规则 |
-| `MAE` / `MAPE` | 平均绝对误差 / 平均绝对百分比误差 | 点位误差的两种口径 |
-| `band coverage` | 区间覆盖率 | 实际值落在 10–90% 区间的比例 |
-| `random walk` | 随机游走基准 | 假设价格不变的对照 |
-
-### 缩写与代码：全称 + 一句话人话
-
-| 缩写在页面/代码里 | 全称 | 这是什么 |
-|---|---|---|
-| `^VIX` | CBOE Volatility Index（标普 500 波动率指数） | 期权市场为未来 30 天标普 500 定价的隐含波动率。市场越怕，它越高；平时 13–20，危机 40+。它不是「恐慌指数」这个文学说法，是一个可交易、可结算的数值 |
-| `^VXN` | CBOE NASDAQ-100 Volatility Index | 同一件事，标的换成纳斯达克 100。这个项目结算恐惧指数题用的是它，不是 `^VIX` |
-| `^VIX9D` / `^VIX3M` | 9 天 / 3 个月期限的 VIX | 同一族指数，只是换期限。两者之比就是波动率期限结构的斜率 |
-| `^VVIX` | CBOE VVIX Index（VIX 的波动率） | 「波动率本身有多不稳定」。VIX 平静但 VVIX 很高，说明市场在为突变定价 |
-| `^NDX` | Nasdaq-100 Index | 纳斯达克 100 指数，本项目两个结算标的之一 |
-| `QQQ` | Invesco QQQ Trust | 跟踪 `^NDX` 的 ETF，能真实下单，用来把「指数上算出来的超额」换成「基金上能拿到的」 |
-| `000001.SS` | 上证综合指数 | A 股那份的结算标的，Yahoo 代码是它 |
-| `SPY` / `RSP` | SPDR S&P 500 ETF / Invesco S&P 500 Equal Weight ETF | 市值加权与等权重的标普 500，两者之差是「广度」 |
-| `HYG` | iShares iBoxx High Yield Corporate Bond ETF | 高收益（垃圾级）公司债。它相对国债走强 = 信用风险偏好在改善 |
-| `TLT` | iShares 20+ Year Treasury Bond ETF | 20 年以上美国国债。`HYG/TLT` 的比值把「信用 vs 无风险」放在同一个量纲里 |
-| `^TNX` | 10 年期美国国债收益率（CBOE 报价） | 全球贴现率。利率下行通常利多风险资产 |
-| `DX-Y.NYB` | 美元指数（DXY） | 美元对一篮子货币的强弱。它走弱一般意味着新兴市场流动性压力缓解 |
-| `GC=F` | 黄金期货连续合约 | 备用因子，未进入主信号 |
-| `CPI` | Consumer Price Index（消费者物价指数） | 美国通胀数据。信号规则在它发布前 3 天内允许加分 |
-| `NFP` | Nonfarm Payrolls（非农就业人口） | 美国就业数据。规则在它发布前 3–7 天允许加分 |
-| `FOMC` | Federal Open Market Committee（美联储公开市场委员会） | 它开会议息的那一天，规则不发信号 |
-| `pp` | percentage point（百分点） | 「命中率高 2 个 pp」是绝对差，不是 2% 的相对增幅 |
-| `SE` | standard error（标准误） | 这个估计量自身的不确定度。「+2.7pp ± 2.1」意味着零在区间内 |
-
-## 运行时那一步：每天收盘后 LLM 读一遍新闻
-
-前面那些数字全部是**价格侧**的，LLM 在那些地方只做过离线的事（拉日历）。这一节是另一件事：LLM 真的在每天运行时跑。
-
-一条命令：
-
-```bash
-forecast-log daily            # 收盘后跑，默认 as-of 今天
-forecast-log daily --day 2026-11-13 --no-cache   # 重放某一天
-```
-
-共四步，每步均可复查：
-
-1. **取当天为止的新闻**。GDELT 的 DOC 接口能按日期取历史（支持重放），但免费额度按 IP 限流，经常直接 429；所以后面挂了三个 RSS：WSJ 市场版、Fed 货币政策声明、SEC 新闻稿。谁成功就记谁，失败原因原样写进记录。
-2. **通过闸门**。`published_at > as_of` 的标题一律剔除，剔除条数一并记录。与 `agent/gate.py` 同一标准：宁可少一条，不可多一条未来信息。
-3. **令 LLM 只回答一件事**：当日新闻流的风险偏好（`risk-on` / `neutral` / `risk-off`）、置信度与依据的三条标题。prompt 中明确固定「不输出涨跌概率」——预测仍由四个价格因子完成。
-4. **记录**，四个位置，作用不同：
-
-| 路径 | 进 git | 放什么 |
-|---|---|---|
-| `artifacts/daily/<YYYY-MM-DD>.json` | 是 | 当天那一份完整记录：用过的全部标题（最多 60 条，含 url）、模型、prompt 版本、token 成本、丢弃条数、价格侧读数、标签。**每天一个文件，写一次就不再动** |
-| `artifacts/daily.json` | 是 | 最新一条，页面和 `cross.json` 读它 |
-| `data/news/<YYYY-MM-DD>.json` | 否 | 抓下来的原始响应（GDELT/RSS 全部条目 + 失败原因），只是缓存，同一天重跑不重复请求 |
-| `data/daily.jsonl` | 否 | 一行一天追加，不含标题正文 |
-
-抓取的原始语料存放于不纳入 git 的 `data/news/`，**可复查的是 `artifacts/daily/` 中的记录**：`forecast-log daily` 运行后，当日使用的标题、LLM 看到的输入与输出均记录在此。
-
-跑一次大约 **$0.0003**，一到两秒（不含抓取）。
-
-页面上的表现：`points.html` 的「Latest observation」下面多一行 `Runtime LLM read · 日期 · 模型 / tone · 置信度 · 用了几条标题 · 成本 / drivers: ...`。
-
-**它不修改信号。** 若 LLM 判定 `risk-off` 且置信度 ≥ 0.7，而价格侧当日同时触发信号，页面标记 `contested`：信号保留并计入精确率，分歧仅记录、不执行。依据充分——盲答实验中 LLM 的 Brier 为 0.2293（接近随机猜测），不具备价格判断能力；先积累分歧样本，待其有效性得到验证后再纳入规则。
-
-首次真实运行（2026-11-13）：
-
-| | |
-|---|---|
-| 抓到的标题 | 40 条，来自 gdelt + wsj-markets + fed-monetary + sec-press |
-| GDELT | 两个查询里一个 429，记录里留着失败原因 |
-| LLM 标签 | `risk-off`，置信度 0.62 |
-| 依据 | 英伟达 CEO 卸任与司法部调查、纳指扩大跌幅、收益率上行 |
-| 成本 | $0.00033 |
-
-自动化可通过一条 cron 完成（美东收盘后）：
-
-```cron
-30 21 * * 1-5  cd /path/to/forecast-log && .venv/bin/python -m forecast_log daily && .venv/bin/python -m forecast_log cross
-```
-
-## 新闻关键字：三层检验，均未通过
-
-历史新闻已补至 **2002-01-02 → 2026-11-11，约 6000 个交易日**（2013 年起 3487/3487 完整；2002–2012 补齐 2595 天；2001 年页面格式不同，缺失）。
-
-来源是 Wikipedia 的 `Portal:Current events`（每天一页，按 `published_at` 归档，含经济/市场条目）。选择理由写在 `wiki_news.py`：GDELT 的 DOC 接口虽支持按日期查询，但免费额度按 IP 限流，在本机单个窗口需 8 分钟方返回失败、且均为 429，按周补齐 13 年需数十小时；Wikipedia 每日一页、无需 key、按批 40 天一次请求，13 年可在 7 分钟内完成。
-
-代价需说明：它是**世界新闻摘要**，不是行情快讯。用于判断「当日新闻流风险偏好」足够，用于「单只股票的公告」则不足。
-
-把「读新闻」这件事单独拿出来做对比，见 [`docs/news_ab.md`](docs/news_ab.md)：同一批 490 天历史新闻、同一段提示词、同一温度，DeepSeek 与 Qwen 各读一遍。结果是 kappa 0.479、severity 秩相关 0.770，但 15.5% 的天两家对「要不要撤掉多头信号」意见不同（qwen 更爱报警，多撤一倍）。复现命令 `forecast-log news-ab --per-year 20 --models deepseek-flash,qwen3.8-flash`。
-
-三个文件分工：
-
-| 路径 | 内容 |
-|---|---|
-| `src/forecast_log/keywords.py` | 24 个概念的正则词表 + risk-on / risk-off 两个桶。`daily.py` 和实验脚本共用同一张表 |
-| `src/forecast_log/news_labels.py` | 让 LLM 把一天的标题读成结构化事件（`regime/severity/novelty/events`），含 severity → 幅度倍数的标定表 |
-| `experiments/news_llm_test.py` | 检验这些标签有没有预测价值（方向 / 分档 / 否决），打印带 bootstrap 区间的表 |
-| `src/forecast_log/wiki_news.py` | 补历史：按批 40 天请求，按天落 `data/news/<day>.json`，可中断重跑 |
-
-语料本身（`data/news/`，44 MB，3500 个日文件）不纳入 git，因为它是**可再生的**：
-
-```bash
-forecast-log news-backfill        # 2013-01-01 起补齐，7 分钟，缺哪天补哪天
-forecast-log news-coverage        # 按年 / 按交易日看覆盖率
-```
-
-纳入 git 的是 `artifacts/daily/<day>.json`——实际被使用的那几天的原文、词表与 LLM 标签。
-「那天的判断依据是什么」查这个；「那天的语料长什么样」用上面两条命令重放。
-| `experiments/news_keywords.py` | 三层检验，打印表，写 `artifacts/news_keywords.json` |
-
-### 第一层：单个词（2013 起，5 日后 NDX 上涨率，基率 60.0%；下面这一节都是旧口径）
-
-| 关键字 | 天数 | 全样本 | 2015 前 | 2015 后 | 对基率 |
-|---|---|---|---|---|---|
-| inflation | 98 | 63.3% | 50.0% | 63.8% | +3.3% |
-| recession | 65 | 61.5% | 72.7% | 59.3% | +1.6% |
-| housing | 95 | 61.1% | 63.6% | 60.7% | +1.1% |
-| election | 2008 | 60.9% | 63.9% | 60.5% | +0.9% |
-| geopolitics | 2773 | 59.9% | 60.6% | 59.8% | −0.0% |
-| rate cut | 228 | 57.9% | 63.2% | 57.4% | −2.1% |
-| fed | 46 | 56.5% | 69.2% | 51.5% | −3.4% |
-| oil | 139 | 53.2% | 68.8% | 51.2% | −6.7% |
-| gdp | 37 | 48.6% | 100.0% | 45.7% | −11.3% |
-
-**两段均高于基率且超额 > 2 个百分点的：无。** 方向与直觉相反的亦不少（`oil`、`fed`、`gdp` 均为负）——这不构成信号，只能说明「新闻所述内容已反映在价格中」。
-
-### 第二层：将词频汇总为净调子，分五档
-
-净调子 = `(risk-on 概念数 − risk-off 概念数) / 当天条目数`。五档的上涨率是 60.7 / 58.6 / 61.6 / 59.0 / 59.7，**没有单调性**。当天条目数分五档也一样（60.5 / 61.3 / 60.6 / 59.5 / 57.8）。归一化与分桶均无法改善。
-
-### 第三层：新闻作为信号的否决条件（唯一接近显著的一层）
-
-取 `cross.json` 已发出的信号日，按当日新闻分组统计精确率：
-
-| 分组（`riskoff_hits` = 当日命中的 risk-off 关键词个数） | n | 精确率 | 2015 后 |
+| 勾选项 | 类型（`kind`） | 适用市场 | 规则说明 |
 |---|---|---|---|
-| ≥ 2 个 | 227 | **61.7%** | **61.9%**（n=197） |
-| 1 个 | 299 | **69.9%** | 71.3%（n=244） |
-| 0 个 | 103 | 67.0% | 68.8%（n=64） |
-| 全部信号日 | 629 | 66.5% | 67.3% |
+| `Cross-asset composite (4 factors)` | `trigger`（**必选锁定**） | 全部 | 4 个跨资产因子扩张窗口 z 分数等权平均 ≥ 90 分位（唯一必选基础项） |
+| `CPI window (3 days before)` | `trigger`（默认勾选） | 全部 | CPI 发布前 3 天内且复合分数 ≥ 历史中位数 |
+| `NFP window (3-7 days before)` | `trigger`（默认勾选） | 全部 | 非农就业发布前 3–7 天且复合分数 ≥ 历史中位数 |
+| `FOMC decision day` | `veto`（默认勾选） | 全部 | 美联储议息决议当天一律不出信号 |
+| `News veto` 单选组（`surprise.jsonl` / `DeepSeek` / `Qwen`） | `veto`（默认选中 `surprise.jsonl`） | 全部 | 互斥单选组：可选择 `None`（关闭新闻否决）、默认 `surprise.jsonl`（1520 天强利空意外否决），或 `news-ab` 产出的 `DeepSeek` / `Qwen` 强利空否决（`severity ≥ 0.6`） |
+| `News score — Strong bullish surprise` | `boost`（默认关闭） | 全部 | LLM 标注为强利多意外的日子，在价格侧未触发时补一个信号 |
+| `Keyword scan — Risk-off headlines (≥ 2)` | `veto`（默认关闭） | 全部 | 正则词表扫描当日新闻标题，命中 ≥ 2 个避险概念词时撤销信号 |
+| `^NDX / QQQ trend filter — Below 20-day MA` | `veto`（默认关闭） | `ndx` / `qqq` | 收盘价低于 20 日均线时否决买入（本土趋势过滤） |
+| `^NDX / QQQ overnight gap > +1.5%` | `veto`（默认关闭） | `ndx` / `qqq` | 次日开盘相比信号日收盘高开超过 +1.5% 时否决追高 |
+| `A-share trend filter — Below 20-day MA` | `veto`（默认关闭） | `ssec` | 上证综指收盘低于 20 日均线时否决买入 |
+| `A-share open gap > +1.0%` | `veto`（默认关闭） | `ssec` | 上证综指次日开盘高开超过 +1.0% 时否决追高 |
+| `A-share 5-day pullback < -3%` | `boost`（默认关闭） | `ssec` | 上证综指过去 5 日累计跌幅超 3% 时补充超跌反弹信号 |
 
-方向大体符合预期：risk-off 词命中 ≥ 2 个的那组低 7.5 个百分点（61.7% 对 69.2%），2015 年后的两段差距是 9.4 个点。但「0 个」那组（67.0%）并不比「1 个」高，不是单调的；而且这是在同一批 629 个信号上切三刀，组的边界是看完结果才划的（前面第一层已经因为这个理由被否过）。该量级不足以纳入模型，只记账。
+### 为什么前端能毫秒级重算
 
-现行处理为**仅记录、不修改信号**：
+`artifacts_db.py` 在保存信号时，将每个上下文开关在每一天的取值（0/1 或命中计数）按 4 bit 一个槽位打包进 `signals.factors_packed` 整数列，并在 `/api/cross/<market>` 返回时解包为 `components` 数组与 `contexts` 清单。前端 `ctxbar.js` 直接在内存数组中按位运算与布尔规则过滤，默认勾选在前端算出的 **629 个信号 / 66.5% 精确率（样本外 505 / 67.3%）** 与后端 `forecast-log cross` 完全一致。
 
-- `artifacts/daily/<day>.json` 里有 `keywords`（命中的概念、两边桶计数、净调子）和 `veto_watch`
-- `points.html` 的运行时卡片多一行 `keyword scan · 40 headlines · 3 concepts: fed, ipo, crypto · risk-off 0 / risk-on 0`
-- 若实际执行否决，页面会注明「仅记录、未执行」，并附 61.4% / 69.5% 两个数值
+要新增一个上下文开关，只需在 `cross.py` 的 `CONTEXTS`（或 `artifacts_db.py` 的 `_contexts_for_market`）中加一行定义并在 `components` 中导出对应列，页面会自动渲染出复选框与生效起点（`available_from`）。
 
-### 若要使该层成立，尚缺的条件
+### 新闻因子进模型的实测账本：代价与收益并列展示
 
-1. **按时间点取新闻的付费源**（NewsAPI 的 archive、RavenPack、Benzinga 或 Bloomberg）。Wikipedia 每日一页仅 30 条摘要，市场类条目不足三分之一，噪声过大——这是三层检验均未通过的首要原因。
-2. **每条新闻的时间戳到分钟**，当前仅有日期，无法区分「盘前 / 盘中 / 盘后」，而三者对次日的影响截然不同。
-3. **样本量**。250 个「信号日 + risk-off ≥2」样本不足以支持 6 个百分点的判断，需再积累约 3 年数据方可达到 2σ。
-4. **事件级别而不是词级别**：当前检验的是「标题中是否出现 `oil`」；规范做法是抽取事件（主体、动作、对象）后再打分，属另一项工程。
+`cross.py` 的默认组合包含一条新闻否决规则（`flag` vs `flag_price_only`），页面右侧 `News factor: with vs without` 表格将两套结果并排展示：
 
-## LLM 在这个项目里到底干了什么
-
-先给结论：
-
-**LLM 负责把非结构化信息变成结构化字段，预测由价格模型做。方向判断上，LLM 没有通过任何一次检验。**
-
-### 它确实在决策路径里的地方：事件日历
-
-`forecast-log events` 让 LLM 从文档里抽出 2011–2026 的 FOMC / CPI / NFP 日期（129 / 192 / 192 条，$0.0016，逐年校验）。这些日期直接进了 `cross.py` 的规则：CPI 前 3 天、NFP 前 3–7 天是触发条件，FOMC 决议当天是否决条件。
-
-效果是实测的：没有日历之前，2015 年前那段是 35 个信号、精确率 45.7%（基率 59.0%，低 13.7 个点）；加上日历以后是 146 个信号、65.8%（+6.8）。整条信号线的覆盖率从 5% 提到 16%。
-
-需要说明：**这些日期属公开事实，改用手工表格或日历 API 亦可完成，LLM 在此并非必需**，仅节省人工。
-
-### 它在运行时里干的事，以及量到的效果
-
-| 用法 | 效果 | 结论 |
+| 指标 | 含新闻否决（`With news`） | 纯价格与日历（`Price only`） |
 |---|---|---|
-| 在评测台里按 8 步工具循环取证（96 题） | Brier 0.1830，摘掉工具是 0.2273 | 增益来自**工具**，三个模型都在 0.183 附近，和不用 LLM 的类比模型持平 |
-| 每天读新闻给一个调子（`artifacts/daily/`） | 页面显示 + `contested` 记账 | **方向无增量**：否决票 +2.8 个点，95% 区间 [−0.3, +5.9]，跨 0 |
-| 每天把标题读成结构化事件（3486 天，$0.67） | `regime / severity / novelty / events` | **方向无增量**：`regime=risk_off` 差 −0.9 个点 [−1.4, +1.4]，severity 分档不单调 |
-
-三种用法的方向检验见下文各节，均未通过显著性检验。
-
-### 问起来怎么答（一句话版本）
-
-> LLM 在这个项目里做信息抽取和证据编排：把事件日历、新闻标题变成结构化字段喂给价格侧模型，并在评测流程里驱动工具循环、记录完整 trace。方向预测本身由跨资产价格因子做，因为实测 LLM 单独判断方向的 Brier 是 0.2293，和抛硬币没差别；接上工具后能到 0.1830，但那个增益来自工具和闸门，不是来自模型的判断。
-
-若要求 LLM 自身作为预测器，本项目未实现，亦不作此声称。
-
-### 一个被撤回的结论
-
-我一度把 LLM 的 `severity` 拿去做**幅度**预测（5 日后 |NDX 涨跌幅|）：四分位 1.69% → 1.91% → 2.01% → 2.52%，控制掉尾随波动率后偏相关还有 0.071。统计上成立，但**本项目目标限于涨跌方向，不含幅度**，因此不计入成果；页面上的该行已移除，`daily` 也不再为此额外调用一次。表格与脚本保留在 `experiments/news_llm_test.py` 与 `artifacts/news_labels/`，作为「已尝试、与本题目无关」的记录。
-
-## 上下文选择器：用户自己决定给模型看什么
-
-`points.html` 顶部有 **Model Context Factors** 面板：勾选哪些信息，信号数、精确率、样本外精确率、最后一个交易日的结论当场重算（不用点按钮）。两个预设按钮：`Price factors only`、`Everything available`。每个市场（`^NDX` / QQQ / A 股）各自记住自己的勾选与规则，切标签页不会互相覆盖。
-
-面板底部还能换**判定函数**（把「任一命中」改成「多因子共振」或「全票通过」），也就是同一个因子集合用不同聚合方式跑：
-
-- 触发：`Any selected trigger (OR)`（默认）/ `Multi-factor consensus (≥ 2)` / `All selected triggers (AND)`。
-- 否决：`Strict veto (any 1 hit cancels)`（默认）/ `Double-confirm veto (≥ 2 hits)`。
-
-现在的上下文清单：
-
-| 勾选项 | 类型 | 数据 |
-|---|---|---|
-| Cross-asset composite (4 factors) · **必选** | 触发 | 四个 z 分数的等权平均，≥ 90 分位。**锁死不可取消**——关掉它就没有任何信号 |
-| CPI window (3 days before) | 触发 | 分数 ≥ 中位且在 CPI 前 3 天内 |
-| NFP window (3-7 days before) | 触发 | 分数 ≥ 中位且在非农前 3–7 天 |
-| FOMC decision day | 否决 | 决议当天不出信号 |
-| News (LLM) | 否决 | 每天一次 LLM 读完当天标题；判为强利空意外就撤掉那天信号（1520 天标注） |
-| News score — Strong bullish surprise | 加成 | 同一批标注里判为强利多意外的日子；只在价格侧没触发时补一个信号 |
-| Keyword scan — Risk-off headlines（≥ 2） | 否决 | 正则扫当天标题，命中 2 个及以上避险关键词就撤信号 |
-| `^NDX`/QQQ：Below 20-day MA | 否决 | 收盘低于 20 日均线时不出信号（趋势过滤） |
-| `^NDX`/QQQ：overnight gap > +1.5% | 否决 | 次日开盘比信号收盘高 1.5% 以上，不追 |
-| A 股：Below 20-day MA / gap > +1.0% | 否决 | 上证综指版本的同一对过滤，阈值按 A 股调 |
-| A 股：5-day pullback < −3% | 加成 | 上证综指 5 日跌幅超 3% 时补一个超跌反弹信号 |
-
-后五项是**默认关闭**的候选开关：加进去是为了能在页面上一个个单独试（一次只动一个），不是已经验证过的结论。默认勾选没变，所以上文所有数字都还是默认组合算出来的。
-
-
-### 三层逻辑须区分
-
-| 层 | 谁在做 | 能不能单独出信号 |
-|---|---|---|
-| **触发**（composite / CPI / NFP） | 价格侧 | 能。`composite` 是唯一必选的基础项 |
-| **否决**（FOMC 当天 / News） | 日历、LLM | 不能。只能撤掉已有信号 |
-| 加成（bullish 新闻 / A 股超跌） | LLM、A 股价格 | 不能单独出信号；只在没有触发时补一个，默认关闭 |
-
-因此「不选择任何触发条件」= 0 个信号；界面会锁定 composite，状态行同时显示该组上下文的**数据起点**（`from 2011-01-01`），因为新闻数据始于 2002 年、日历始于 2011 年。
-
-### 为什么前端能秒算，而不用重跑后端
-
-`cross.py` 把每个信息源导出成**独立的一列 0/1 标签**（`cross.json` 的 `components`），外加一份 `contexts` 清单。页面按 `kind` 套用规则：
-
-```js
-trigger → 按所选模式：任一命中 / ≥ 2 个共振 / 全部命中
-boost   → 触发没成立时按同一套模式补信号
-veto    → 命中则撤销当天信号；可选「≥ 2 个否决才撤销」
-```
-
-默认勾选（composite + CPI + NFP + FOMC + news bearish）在前端重算得到 **629 个信号 / 66.5%，样本外 505 / 67.3%**，与 `forecast-log cross` 的输出完全一致——前端与命令行为同一套规则，并非两套实现。
-
-### 以后要加新的上下文
-
-只改一个地方：`cross.py` 的 `CONTEXTS` 清单 + `components` 里加一列。页面自动长出勾选框，前端代码不用动。
-
-```python
-{"key": "cal_pce", "label": "PCE window (2 days before)", "kind": "trigger",
- "note": "core PCE release proximity", "available_from": "2013-01-01"},
-```
-
-前提不变：新增列要么具备可检验的历史（两段同向、区间不跨 0），要么如新闻否决那样**并列显示代价与收益**，不得只报告有利的一栏。
-
-### 选择器现在能给出的组合（实测）
-
-| 勾选 | 信号 | 精确率 | 样本外精确率 |
-|---|---|---|---|
-| 只勾 composite | 229 | 63.3% | 66.5% |
-| 默认（composite + 日历 + FOMC + 新闻否决） | 629 | 66.5% | 67.3% |
-| 全开（再加 bullish 加成 + risk-off 关键词否决） | 用页面自己看 | | |
-
-「全开」一行有意不写死数值：其随每日数据变动，且这正是供用户自行点选查看的用途。
-
-## 新闻因子进模型了：代价和收益并排写
-
-按要求将其纳入判断因子。`cross.py` 中现有一条实际规则：
-
-```python
-# 信号日 + LLM 判为「强利空意外」⇒ 撤掉这个信号
-if flag and label["surprise"] == "strong" and label["direction"] == "bearish":
-    flag = 0
-```
-
-标签来自 `artifacts/surprise/`（1520 天，LLM 只答「是否超出预期 / 方向」，不答概率）。
-
-**两套结果同时计算、同时显示**，页面以一张表并列：
-
-| 信号数 | 629 | 726 |
-| 精确率 | 66.5% | 66.0% |
-| 样本外信号（2015 起） | 505 | 580 |
+| 全样本信号数 | 629 | 726 |
+| 全样本精确率 | 66.5% | 66.0% |
+| 样本外信号数（2015 起） | 505 | 580 |
 | 样本外精确率 | 67.3% | 66.0% |
 
-被否决的信号 97 个（13%）。这些被撤掉的信号自身精确率 **62.9%**，比留下的 629 个（66.5%）低 3.6 个点；样本外差距更大：被撤的 75 个是 57.3%（基率 59.7%，低 2.4），留下的 505 个是 67.3%（+7.6）。两段方向一致，都是扣分。
+被 `surprise.jsonl`（强利空意外）撤掉的 97 个信号（占 13%）自身精确率为 **62.9%**，比留下的 629 个（66.5%）低 3.6 个百分点；样本外被撤掉的 75 个信号精确率为 **57.3%**（低于同期基率 59.7%），留下的 505 个为 **67.3%**（+7.6 点）。在 Context 面板中将 `News veto` 切换为 `None`，即可随时对比不带新闻否决的原始曲线。
 
-结论应当直说：**该否决规则应当删掉**，它删掉的恰是比较差的一批信号。全样本 −3.6 个点、样本外 −10.0 个点，两个方向都不支持保留。现在之所以还挂着，是因为它已经进了默认组合与页面控件，改动需要同时重跑三页；但账已经摆在上面，不再用「噪声量级」替它辩护。
+## 第三个页面（`/agent`）：带硬性时间闸门的研究型 Agent 与多模型评测台
 
-被保留的理由曾经是：规则在同一批数据上确定（in-sample 选择），且 `strong bearish` 那批日子在两段样本里都不比基率高。这条依旧成立——它现在成了「应该删掉」的理由，而不是「留着无害」的理由。
+除了统计类比与跨资产规则，项目在 `src/forecast_log/agent/` 下实现了一套完整的研究型智能体与自动化评测台（6 个核心模块、约 1,700 行代码，配离线单元测试）：
 
-页面右侧「News factor: with vs without」那张表和这段说明是同时出现的。如需撤销该规则，删除 `NEWS_VETO` 段落即可；`flag_price_only` 列始终为价格侧原值，可直接比较。
-
-## 多模型对比
-
-同一个题集、同一套工具、同一个闸门，换模型重跑，加 `--merge` 并进同一张表：
-
-```bash
-forecast-log agent-eval --limit 96 --stride 60 --workers 6 --model deepseek-chat --also-blind --merge
-forecast-log agent-eval --limit 96 --stride 60 --workers 6 --model deepseek-flash --merge
-forecast-log agent-eval --limit 96 --stride 60 --workers 6 --model deepseek-v4-pro --merge
-```
-
-`--merge` 只并**同一批题**：题集不一样就直接报错退出。不同题集上的 Brier 放在一张表里比，是这个项目最不能犯的错。
-
-并进去之后还会**按「每行都答了」的交集重算所有行**。原因是换模型之后答得上来的题不一样（下面那张表里 chat 答了 90/96、flash 90/96、v4-pro 84/96），直接拿各自的 Brier 相比等于比不同的题。所以报告里存了每道题的预测概率（`pairs`）和结果（`outcomes`），合并时在交集上重算，交集多大写在 `scored_on_shared`，表格里每行的 `n` 就是它。
-
-结果（2026-11-13，`^VXN`，96 题考卷，交集 74 题）：
-
-| 预测者 | Brier | ECE | 方向 | n | $/条 | p50 | 工具调用 | 失败 |
-|---|---|---|---|---|---|---|---|---|
-| 类比模型（无 LLM） | **0.1830** | 0.080 | 69% | 74 | 0 | 0.04s | 1 | 0 |
-| agent deepseek-chat | **0.1830** | **0.037** | 70% | 74 | $0.00122 | 8.8s | 6.4 | 6 |
-| agent deepseek-v4-pro | 0.1836 | 0.056 | 69% | 74 | $0.00225 | 33.7s | 7.9 | 12 |
-| agent deepseek-flash | 0.1842 | 0.069 | 65% | 74 | $0.00232 | 18.2s | 7.6 | 6 |
-| agent deepseek-chat blind | 0.2273 | 0.084 | 58% | 74 | $0.00022 | 2.4s | 1 | 0 |
-| 常数 0.5 | 0.2500 | 0.068 | 43% | 74 | 0 | — | 0 | 0 |
-| 基率 | 0.2550 | 0.130 | 59% | 74 | 0 | — | 1 | 0 |
-
-该表的三点结论：
-
-1. **更换模型对 Brier 几乎无影响，影响的是成本与延迟**。三个具备工具调用能力的模型均落在 0.183–0.184，与不使用 LLM 的类比模型同一水平。这说明分数来自工具与闸门，而非模型——这也是「LLM 不是预测器」的实测依据。
-2. **差异体现在标定与成本**。chat 的 ECE 0.037 最优（预测 0.8 的档位实际发生率即为 0.8）；v4-pro 延迟增加 4 倍、成本增加 2 倍，准确性并未提高。
-3. **移除工具后 Brier 上升 0.044**（0.2273 对 0.1830），即工具的边际贡献。
-
-### 换一家供应商：DeepSeek 与 Qwen 在同一批题上
-
-```bash
-# 先跑 DeepSeek（会建新文件，不动上面那张四模型的表）
-forecast-log agent-eval --limit 96 --stride 60 --workers 4 \
-  --model deepseek-flash --out artifacts/agent_eval_qwen.json
-# 再并进 Qwen。key 只存在 .env 里，脚本负责导出成 FORECAST_LOG_*
-scripts/with-qwen.sh forecast-log agent-eval --limit 96 --stride 60 --workers 3 \
-  --out artifacts/agent_eval_qwen.json --merge
-```
-
-为什么另起一张表而不是并进上面那张：`data/raw/vxn.json` 重新取过（2001-01-23 起，6490 根），题池变大，均衡抽样选出的锚点跟着变，现在是 96 道、旧表是 84 道。**不同题集不能放一张表**，所以新表另存 `artifacts/agent_eval_qwen.json`。
-
-结果（2026-11-15，`^VXN`，96 道题，两家都答上的交集 **87** 道）：
-
-| 预测者 | Brier | ECE | 方向 | n | $/条 | p50 | 工具调用 | 失败 |
-|---|---|---|---|---|---|---|---|---|
-| agent deepseek-flash | **0.1610** | 0.072 | **77.0%** | 87 | $0.0024 | 19.3s | 7.7 | 6 |
-| 类比模型（无 LLM） | 0.1671 | **0.058** | 71.3% | 87 | 0 | 0.02s | 1 | 0 |
-| agent qwen3.8-flash | 0.1671 | 0.080 | 74.7% | 87 | $0.0040 | 43.1s | 7.3 | 4 |
-| 常数 0.5 | 0.2500 | 0.075 | 42.5% | 87 | 0 | — | 0 | 0 |
-| 基率 | 0.2551 | 0.155 | 57.5% | 87 | 0 | — | 1 | 0 |
-
-87 道题，实际发生率 42.4%。两家都跑同一套工具与闸门，唯一区别是 base URL、模型名和价格。
-
-四点结论：
-
-1. **分不出高低。** 逐题配对相减（flash 的 Brier 减 qwen 的），均值 −0.0061，95% 区间 **[−0.0165, +0.0031]**，跨 0；flash 只在 41% 的题上更好。按这道题集的分辨力，不能说哪家更准。
-2. **两家都赢过常数 0.5 和基率，但没有一家明显赢过类比模型**（不用 LLM 的统计模型）：flash 0.1610 对 0.1671，qwen 0.1671 对 0.1671。这与上一张表的结论一致：分数来自工具与闸门，不来自模型。
-3. **差价与延迟差是真实且稳定的。** qwen3.8-flash 单价 ¥0.8/¥2.7 每百万 token（约 $0.11/$0.37），实测 $0.0040/条，是 flash 的 1.7 倍；p50 43.1 秒，是 flash 的 2.2 倍（思考型模型，推理 token 也计费）。
-4. **失败率接近。** 96 道里 qwen 有 4 道没给出答案、flash 6 道；两家都满足「答不上来就报错，不猜」。`--merge` 在交集上重算，所以上表的每个数都对应同一批 87 道题。
-
-### 思考型模型在该层遇到的四类问题
-
-切换到 `deepseek-flash` / `deepseek-v4-pro` 后，评测台完成数一度从「96 题全部作答」降至「13 题」。四类原因均已修复，并有测试覆盖：
-
-| 症状 | 真因 | 改法 |
-|---|---|---|
-| 下一轮 HTTP 400 `reasoning_content must be passed back` | 思考型模型要求多轮里回传上一轮思考 | `Reply.reasoning` + `_assistant_message()` 带上 `reasoning_content` |
-| 始终未返回可解析回复，耗尽 8 步预算 | 回复只有 thinking、`content` 空、也没有 tool_calls，循环里直接 `continue` | 空回复时返回提示「尚未提交」，最后两步将工具固定为 `submit_forecast` |
-| 回复空、`finish_reason=length` | 推理 token 也算进 `max_tokens`，1600 不够 | 命中这个模式就翻倍重试，上限 16000 |
-| HTTP 400 `Thinking mode does not support this tool_choice` | 这类模型连 `"auto"` 都不接受这个字段 | 捕获这个 400，去掉 `tool_choice` 重发（`tools` 本身是支持的） |
-
-仍有 6–12 道题未能作答（表中 `失败` 列），原因是步数预算与该类模型的推理长度相互挤压，未继续压缩——如实记录，不记为 0。
-
-价格表仅登记 `deepseek-chat` / `deepseek-reasoner`。使用价目表未收录的模型时，成本列显示 `$0.00`——此为缺省值而非免费，token 数仍照常记录。如需准确成本，通过 `FORECAST_LOG_PRICE_INPUT` / `FORECAST_LOG_PRICE_OUTPUT` 显式传入。
-
-## 每一项单独测，产物分开存
-
-一次只改一个变量。「组合」只发生在 `cross.py` 的最终规则里，对比实验里不允许混。
-
-| 被测什么 | 单独的实验 | 单独的产物 |
-|---|---|---|
-| 四个跨资产因子（各自分桶，不取平均） | `experiments/cross_asset_lab.py` | 只打印表 |
-| 价格自身特征 | `experiments/direction_lab.py` | 只打印表 |
-| 单个新闻关键字／词频 | `experiments/news_keywords.py` | `artifacts/news_keywords.json` |
-| LLM 把新闻读成标签（一次一个模型） | `forecast-log news-ab --models <一个模型> --label-only` | `artifacts/news_ab/<模型>/<日期>.json` |
-| 两个模型的新闻解读差别 | `forecast-log news-ab --models A,B` | `artifacts/news_ab/report.{json,md}` |
-| agent 层：一个模型一次评测 | `forecast-log agent-eval --model <一个>` | `artifacts/agent_eval_qwen.json`（换 `--out` 另存） |
-| 新闻否决用哪一路（关 / A / B / 两家） | `forecast-log news-veto` | `artifacts/news_veto/report.json` |
-
-## 已排除的尝试
-
-以下路径无需重复。脚本保留在 `experiments/`，运行一次即可复现。
-
-| 做法 | 结果 | 结论 |
-|---|---|---|
-| 价格自身特征 + 逻辑回归（已删，脚本留在 `experiments/direction_lab.py`） | Brier 0.2472，按基率作答 0.2410 | 劣于常数预测 |
-| 概率往基率收缩（0.2–0.7） | 分块 bootstrap 区间全部跨 0，收缩到 1.0 才可靠地更好 | 排序里也没有信息 |
-| logit 对齐基率 / 强正则 0.3 | 0.2480 / 0.2472 | 无效 |
-| 目标改成「超过漂移」 | 0.2555，常数 0.2502 | 更差：模型学的全是漂移 |
-| 11 个价格因子各自分桶（低/高 10%） | 10 个跨基率 | 只有「离 200 日均线最低 10%」存活 |
-| 12 个跨资产因子各自分桶 | 12 个全跨基率 | 单个因子单独用都没用 |
-| 六条跨资产特征一起进模型 | 0.2443，常数 0.2417 | 一起用也没用 |
-| 卖信号：复合最低 10% / 收益率急升 / 美元急升 / 全历史收紧 | 43.8% / 48.8% / 48.6% / 44.9%（基率 42.2%） | 全部区间跨基率，分段还不稳 |
-| 新闻「意外」当方向信号（LLM 标 surprise × direction，1523 天，$0.23） | strong bearish 上涨率 61.1% 对基率 60.3%；信号日上 62.5% 对 65.9%，差 −3.4 个点，95% 区间 [−9.4, +9.4] | 方向一致但不显著，且独立检验里连方向都不对，不采纳 |
-| LLM 事件标签当方向信号（regime=risk_off） | 差 −0.9 个点，95% 区间 [−1.4, +1.4]；severity 分档 63.3/56.0/60.0/60.5 不单调 | 方向无增量，不采纳 |
-| LLM 标签当信号否决票（severity ≥ 0.6） | 精确率 60.6%（n=94）对全信号 66.5% | 方向对但样本太少，和正则版本同一个量级，只记账 |
-| 日历当第五个因子（和四个 z 平均） | 2015 前 30 个点命中 50.0%；留出期信号数从 193 降至 45、命中 62.2% | 稀释了原信号，改为第二条触发线方成立 |
-| CPI 窗口内把门槛提到 95 / 97 分位 | 2015 后命中 64.8% / 64.4%（原 66.3%），点数基本不变 | 分数高的 CPI 日并不更准 |
-| NFP 用 0–2 天（而非 3–7 天） | 2015 前 52.1%，低于基率 57.1% | 窗口选错就等于加噪声 |
-| FOMC 前后 0–2 天当加分项 | 2015 前 63.0%、2015 后 56.8%，方向翻转 | 只能用来否决决议当天 |
-
-表内数值均在**更宽松的旧口径**（「5 个交易日内任一根收盘高于当日收盘」）下测得，包括下文「抄底」一节。页面现行口径是「第 5 天收盘高于基准收盘」，比它更严，这些实验未重测——结论方向不受影响，但旧数值偏乐观，具体数字会下降。
-
-唯一存活的一条也说明：指数位于 200 日均线下方最低 10% 时，其后 5 个交易日上涨概率仅 **49.4%**，同期基率 58.2%，99.5% 区间 [42.2%, 54.9%]（11 次比较已做 Bonferroni 校正）。这不构成卖出信号，只说明**抄底不具备额外收益**。
-
-### 多头方向有效、空头方向失效的原因
-
-1. **上行由漂移主导，下行由跳变主导。** 指数上行由慢变量驱动（流动性宽松、信用改善、波动率处于低位），这些状态持续数周，可被状态变量提前识别。下跌则以跳变形式出现：跳空、波动率一夜翻倍，事前缺乏缓慢前兆，只能由波动率本身预判。
-2. **无条件基率本身不利。** 上涨基率 60%，下跌 42%。空头信号需将 42% 提升至 55% 以上才具备价值，而现有全部因子的效果仅达 44–49%；多头信号只需将 60% 提升至 66%。
-3. **样本量不足。** 收益率与美元有 1985 年以来的历史（约 2061 个独立窗口），信用与广度仅始于 2008 年。仅取「收益率 + 美元」最极端的 5%，也仅 516 个交易日 ≈ 9 个独立块，置信区间宽达 ±7 个百分点，即使存在真实效应也难以识别。
-
-因此「何时应减仓」无法由方向模型给出；可做的是「后续波动率是否放大」，属另一问题，尚未开展。
-
-## 运行
-
-想直接看页面，只跑一条：
-
-```bash
-make            # 建 .venv → 装依赖 → 起看板 http://127.0.0.1:8731/
-```
-
-完整流程（算一遍数据、跑测试）：
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-forecast-log fetch
-forecast-log backtest
-forecast-log cross
-pytest
-```
-
-`forecast-log cross` 重算第二个页面用到的 `artifacts/cross.json`，以及 QQQ 对照页用的 `artifacts/cross_qqq.json` 和 A 股对照页用的 `artifacts/cross_ssec.json`。
-
-实验台（不进页面，只打印表）：
-
-```bash
-PYTHONPATH=src:experiments .venv/bin/python experiments/direction_lab.py
-PYTHONPATH=src:experiments .venv/bin/python experiments/cross_asset_lab.py
-```
-
-`fetch` 把 Yahoo 日线收盘写到 `data/raw/`：两个结算品种（`^VXN`、`^NDX`）、三个前瞻输入（`^VIX9D`、`^VIX3M`、`^VVIX`）、第二个页面用的跨资产行情（`^TNX`、`DX-Y.NYB`、`HYG`、`TLT`、`SPY`、`RSP`、`GC=F`、`^VIX`），QQQ 对照页用的 `QQQ`，以及 A 股那一份的 `000001.SS`。取不到的会跳过并打印原因，不会中断。输入取不到时模型自动只用价格自身。`backtest` 从历史上每一个已完成的交易日出发，只用那天及以前的收盘做概率，再和后来的实际收盘对照。概率不会等于单次的 0 或 1。对齐的是：报 20% 的那些日子里，后来大约有两成越过门槛。`backtest` 同时写出 `artifacts/timeline.json`（含 7 日对账的每一行）和 `artifacts/backtest_report.json`（含分步长的那张表）。
-
-图在 `web/points.html`（5 个交易日内的多头信号点；顶部标签页切换 `^NDX` / QQQ / 上证综指三个结算标的）和 `web/index.html`（fear index）。仓库根目录一条命令：
-
-```bash
-make            # 等价于 make dev，默认 8731 端口；首次会自动建 .venv 并装依赖
-make dev PORT=9000
-make stop       # 停掉占着端口的进程
-make help       # 列出所有命令
-```
-
-等价写法：`forecast-log serve 8731`、`python3 serve.py 8731`、`python -m forecast_log serve 8731`（后两者不需要先 `pip install`）。
-
-地址不带 `.html`、也不带 `/web/` 前缀：
-
-| 页面 | 地址 |
+| 模块文件 | 核心职责 |
 |---|---|
-| 信号页（默认 `^NDX`） | <http://127.0.0.1:8731/>、`/ndx`、`/signals` |
-| 同一套信号换到 QQQ | <http://127.0.0.1:8731/qqq> |
-| 同一套信号换到上证综指 | <http://127.0.0.1:8731/a-shares>（别名 `/ssec`） |
-| `^VXN` 区间图（fear index） | <http://127.0.0.1:8731/volatility>（别名 `/vxn`） |
-| agent 评测台 | <http://127.0.0.1:8731/agent> |
-| 行情刷新 | `GET/POST /api/refresh` |
+| `agent/gate.py` | 定义 `AsOf` 与 `LookAheadError`，对晚于决策时刻的数据一律抛出硬异常 |
+| `agent/llm.py` | 原生 `urllib` 直连 `/chat/completions`，处理工具调用、重试、思考型模型 `reasoning_content` 回传及精确 token/美元成本记账 |
+| `agent/tools.py` | 提供 7 个受闸门保护的取证工具：历史价格、序列统计、历史基率、类比模型、新闻检索、文档阅读、预测市场报价 |
+| `agent/loop.py` | 无第三方框架的 8 步工具循环、提交格式与证据日期校验、违规退回重答与完整 `Trace` 记录 |
+| `agent/ensemble.py` | 独立运行 N 次并按 **log-odds（对数几率）** 对称池化，输出均值概率与 logit 标准差（`spread`） |
+| `agent/eval.py` | 从历史日线自动出题、运行参照模型与 Agent、严格按共同作答交集计算 Brier / LogLoss / ECE / 成本 / 延迟 |
 
-旧地址仍然可用，一律 301 到新地址：`/web/points.html?market=qqq` → `/qqq`、`/web/` 和 `/web/index.html` → `/volatility`、`/web/agent.html` → `/agent`、`/web/qqq.html` → `/qqq`、`/web/ssec.html` → `/a-shares`。静态资源同样省掉前缀：`/theme.css`、`/ctxbar.js`、`/fonts/*`、`/vendor/*`（`/web/...` 也还能取到）。
+### 1. 七个受闸门保护的工具
 
-应使用它而非 `python3 -m http.server`：前者带 `Cache-Control: no-store`，否则修改后浏览器仍会加载旧页面，表现为未生效。页面右下角有 build 标记（当前 `r4`），不一致即为缓存所致。
-
-服务带一个刷新入口：`GET/POST /api/refresh`（加 `?force=1` 强制拉；也可以 `make refresh`）。启动时若 `artifacts/cross*.json` 的 `fetched_at` 不是北京时间今天，会在后台自动拉一次 Yahoo 日线（含当天未收盘的 A 股开盘价，所以收盘前的 `BUY` 标记是「待定」），再重跑 `cross`。信号页右上角的「↻ 刷新行情」就是调这个接口。缺 OHLCV 的旧缓存仍能读，只是 K 线那几列会是 `null`。
-
-图上虚线标注在**发出预测当日**，而非结算日。若标注于结算日，「7 日后的点位预测」将等同于实际值右移 7 日——实际序列一周自相关为 0.93，任何诚实的 7 日点位预测都约等于当日点位，如此绘制必然被读作滞后。
-
-选择「N 天后」时，横轴即为目标日：色带为 N 个交易日前给出的 10%–90% 区间，蓝线为该日实际收盘，两者对齐方可观察偏差。右侧保留的扇形为当日出发、尚未到期的预测。
-
-页面只画 fear index（`^VXN`）。三道题里 NDX 那道不进图，只在 `artifacts/` 里留数。
-
-`forecast-log lock` 给三道题各写一次 `forecasts/<id>.json`。文件已经存在就拒绝改写。结算日美东收盘之后运行 `forecast-log resolve`，然后 `forecast-log score`。这三道题还没到结算日，现在只能做回测。
-
-## agent 那一层
-
-上述内容均为统计方法：取状态、统计历史类比、给出概率。岗位要求的是能检索资料、推理并给出校准概率的 agent，因此增加了一层实现。六个文件、约 1700 行，另有 19 个离线测试（324 行，不需要 key、不联网）。
-
-| 文件 | 行 | 干什么 |
+| 工具名 | 返回内容 | 设计目的 |
 |---|---|---|
-| `agent/gate.py` | 90 | `AsOf` 和 `LookAheadError`。晚于决策时刻的数据一律抛异常 |
-| `agent/llm.py` | 271 | `urllib` 直连 `/chat/completions`：工具调用、重试、token 和美元记账。不装 SDK |
-| `agent/tools.py` | 404 | 七个带闸门的工具：价格、统计、基率、类比模型、新闻检索、读文档、市场报价 |
-| `agent/loop.py` | 355 | 工具循环、提交校验、trace。没有框架 |
-| `agent/ensemble.py` | 60 | 多次独立跑，log-odds 池化 |
-| `agent/eval.py` | 539 | 自动出题、参照模型、Brier/ECE/成本/延迟、并发 |
+| `price_history` | 截至 `as_of` 的最近 N 根日线收盘价 | 提供原始价格序列证据 |
+| `series_stats` | 当前点位、z 分数、历史分位、5/21/252 日涨跌幅、已实现波动率 | 将长序列压缩为核心状态摘要 |
+| `base_rate` | 该门槛在指定步长上的历史无条件命中率（仅用 `<= as_of` 样本） | 提供最基础的统计先验 |
+| `analogue_forecast` | 仓库自身的 `estimate.py` 类比模型输出（概率 + 中位路径） | 将统计模型降级为供 Agent 参考与质疑的一个输入源 |
+| `search_news` | 检索 `data/forecast.db` 中 `published_at <= as_of` 的历史新闻标题 | 提供时点受控的文本证据 |
+| `read_doc` | 按 `doc_id` 读取单篇新闻全文（同样经发布时间闸门校验） | 深读具体新闻事件 |
+| `market_implied` | 外部预测市场隐含报价（无报价时返回 `available: false`） | 预留预测市场基准接口 |
 
-### 闸门是该层唯一不可省略的机制
-
-```python
-def check(self, day: date, source: str) -> date:
-    if day > self.session:
-        raise LookAheadError(...)
-    return day
-```
-
-三处调用，均为前视泄漏可能隐藏的环节：
-
-1. **工具返回值**。`price_history`、`base_rate`、`analogue_forecast`、`series_stats` 先按 `date <= as_of.session` 过滤，再调用一次闸门确认。该重复校验为刻意设计。
-2. **文档时间戳**。`search_news` / `read_doc` 校验的是决策**时刻**，而非交易日：as-of 当日 14:00 发布的电讯，16:15 做决策者可见；收盘之后发布的则不可使用。
-3. **提交的证据**。每条 `evidence[].date` 在答案被接受前通过闸门。若模型引用未来日期，整条提交被退回，理由写回对话并要求重来；被拒记录保留在 trace 中。
-
-采用抛异常而非截断：截断后的结果与正确答案形式一致，任何测试都无法区分；异常会在第一份 trace 中立即暴露。
-
-### 七个工具
-
-| 工具 | 返回 | 为什么有它 |
-|---|---|---|
-| `price_history` | 最近 N 根日线收盘 | 原始证据 |
-| `series_stats` | 点位、z 分数、分位、5/21/252 日涨跌、已实现波动 | 把 400 个数压成 15 个 |
-| `base_rate` | 这道门槛在这个步长上的历史命中率 | 最笨、最难打过的那个数 |
-| `analogue_forecast` | 仓库原来那套模型：概率 + 中位路径 | 旧答案，降级成一个输入 |
-| `search_news` | 带发布时间、匹配关键词的文档 | 检索这条路 |
-| `read_doc` | 按 id 读一篇 | 同一个闸门 |
-| `market_implied` | 预测市场报价，没有就 `available: false` | 有价格时该对的那个价 |
-
-`analogue_forecast` 需单独说明：`estimate.py` 中的模型原本**即**答案，现为一个已知存在缺陷的工具（它复述自身邻居池的分布，无法识别状态切换）。采信程度由 agent 决定并写入 rationale——这正是人工复核时需要查看的环节。
-
-新闻检索为空实现：`data/news/` 不存在时，`search_news` 返回空语料并在 payload 中说明，模型必须在 rationale 中说明仅能看到价格数据。接入真实数据源只需实现一个类，闸门已按 `published_at` 准备好。不构造模拟语料，因为模拟语料只会使评测结果虚高。
-
-### 循环
+### 2. 8 步工具循环与提交校验
 
 ```
 系统提示（契约）
   ↓
-模型 ──工具调用──► 闸门 ──► JSON 结果（截断到 2.4KB）
-  ↑                              │
-  └────────── 对话记录 ◄──────────┘
+模型 ──工具调用──► 时间闸门（gate.py）──► JSON 结果（单条截断至 2.4KB）
+  ↑                                          │
+  └────────────── 对话历史记录 ◄──────────────┘
   ↓
-submit_forecast ──► 校验 ──► 接受
-                      │
-                      └── 退回 ──► 写回对话，重来
+submit_forecast ──► 格式与证据日期校验 ──► 接受并写入 Trace
+                           │
+                           └── 违规退回（如引用未来日期/缺证据）──► 写回对话要求重答
 ```
 
-以下几点属有意的设计选择：
+- **8 步预算与强制收尾**：正常推理需 5–6 次工具调用；最后两步将工具固定为 `submit_forecast` 防止思考型模型耗尽步数。
+- **退回留痕**：若概率越界、缺少证据、推理过短或引用了 `as_of` 之后的日期，提交会被退回并记录在 `Trace.rejections` 中。
 
-- **8 步**。实测正常运行需 5–6 次工具调用；达到 8 步的多为模型规划失效，此时给出猜测不如不给。
-- **每条工具结果截断 2.4KB**，并显示 `… [truncated, n chars]`，使模型知道所获内容仅为开头部分。
-- **提交通过工具调用完成**，而非正文中的 JSON：schema 先由 provider 校验，失败在循环内重试，成本低于整段重问。
-- **退回是一等状态**：概率出界、缺证据、rationale 太短、引用了未来日期，都退回并在 `Trace.rejections` 留痕。
-- **不装 SDK**。120 行 `urllib` 打通 `/chat/completions`：DeepSeek、OpenAI、OpenRouter、vLLM、Ollama 是同一段代码，换个 base URL 就行。
+### 3. 同题集多模型评测与消融结论（`web/agent.html`）
 
-### 集成
+评测台从历史日线自动生成四类门槛考题（默认运行前两类以避免罕见事件噪声）：
 
-`agent/ensemble.py` 独立跑 N 次，按 **log-odds** 池化。概率取平均是非对称的：0.05 受 0.5 的拉动幅度大于 0.95，池化结果整体向中间偏移。logit 平均是对称的，两次结果 0.05 / 0.95 池化后为 0.5——这是对「两者不一致」最恰当的表述。logit 的标准差作为 `spread` 一起返回。
-
-### 评测台
-
-题目由价格历史自动生成，结果均已揭晓，无需等待。门槛分四类题型，因为仅使用一种题型会使某类预测者系统性占优：
-
-| 题型 | 门槛 | 基率 |
+| 题型（`family`） | 门槛定义 | 历史基率 |
 |---|---|---|
-| `level` | 今天的收盘 | ~55% |
-| `quantile` | 过去两年 60 分位 | ~40% |
-| `band_up` | +5% | ~20% |
-| `band_down` | −5% | ~20% |
+| `level` | 当日收盘价本身（预测 N 日后是否高于今日收盘） | ~55% |
+| `quantile` | 过去两年（504 个交易日）的 60 分位数 | ~40% |
+| `band_up` / `band_down` | 当日收盘价 +5% / −5% | ~20% |
 
-默认仅运行前两种：罕见事件区间需数百道题才具判别力，在 96 道题中放入 24 道 `band_up` 只会得到噪声结果。需运行全部四种时使用 `--modes level,quantile,band_up,band_down`。
+所有预测者作答同一批题目，且 `--merge` **严格只在所有模型共同作答的交集（`scored_on_shared`）上重算分数**。
 
-所有预测者作答同一批题目，仅在**交集**上评分，任何模型均无法回避难题。参照是：常数 0.5、基率、类比模型、agent，以及 `--also-blind`（同一个模型、同一批题、工具全拿掉）。
+**第一组评测：DeepSeek 系列模型与消融对比（`^VXN`，96 题考卷，交集 74 题）**
 
-| 预测者 | Brier | LogLoss | ECE | 方向 | $/条 | p50 秒 | 工具 |
-|---|---|---|---|---|---|---|---|
-| agent deepseek-chat | 0.1631 | 0.4815 | 0.036 | 72.9% | 0.00114 | 7.57 | 6.17 |
-| analogue model | 0.1636 | 0.4719 | 0.053 | 71.9% | 0.00000 | 0.04 | 1.00 |
-| agent deepseek-chat blind | 0.2293 | 0.6486 | 0.115 | 55.2% | 0.00020 | 2.27 | 1.00 |
-| constant 0.5 | 0.2500 | 0.6931 | 0.073 | 42.7% | 0.00000 | 0.00 | 0.00 |
-| base rate | 0.2647 | 0.7953 | 0.162 | 55.2% | 0.00000 | 0.02 | 1.00 |
-| 参照：始终 0.5 | 0.2500 | 0.6931 | — | — | 0 | 0 | 0 |
+| 预测者 | Brier | ECE | 方向命中 | 题数 `n` | $/条 | `p50` 延迟 | 平均工具调用 | 失败数 |
+|---|---|---|---|---|---|---|---|---|
+| 类比模型（无 LLM） | **0.1830** | 0.080 | 69% | 74 | $0 | 0.04s | 1.0 | 0 |
+| `agent deepseek-chat` | **0.1830** | **0.037** | 70% | 74 | $0.00122 | 8.8s | 6.4 | 6 |
+| `agent deepseek-v4-pro` | 0.1836 | 0.056 | 69% | 74 | $0.00225 | 33.7s | 7.9 | 12 |
+| `agent deepseek-flash` | 0.1842 | 0.069 | 65% | 74 | $0.00232 | 18.2s | 7.6 | 6 |
+| `agent deepseek-chat blind`（无工具） | 0.2273 | 0.084 | 58% | 74 | $0.00022 | 2.4s | 1.0 | 0 |
+| 常数 `0.5` | 0.2500 | 0.068 | 43% | 74 | $0 | — | 0 | 0 |
+| 历史基率（`base rate`） | 0.2550 | 0.130 | 59% | 74 | $0 | — | 1.0 | 0 |
 
-96 道题，实际发生率 42.7%。
+**第二组评测：跨供应商 DeepSeek vs Qwen 同题集对比（`^VXN`，96 题考卷，交集 87 题）**
 
-| 题型 | n | constant 0.5 | base rate | analogue model | agent deepseek-chat | agent deepseek-chat blind |
-|---|---|---|---|---|---|---|
-| level | 48 | 0.2500 | 0.2506 | 0.2410 | 0.2353 | 0.2458 |
-| quantile | 48 | 0.2500 | 0.2788 | 0.0863 | 0.0908 | 0.2128 |
+| 预测者 | Brier | ECE | 方向命中 | 题数 `n` | $/条 | `p50` 延迟 | 平均工具调用 | 失败数 |
+|---|---|---|---|---|---|---|---|---|
+| `agent deepseek-flash` | **0.1610** | 0.072 | **77.0%** | 87 | $0.0024 | 19.3s | 7.7 | 6 |
+| 类比模型（无 LLM） | 0.1671 | **0.058** | 71.3% | 87 | $0 | 0.02s | 1.0 | 0 |
+| `agent qwen3.8-flash` | 0.1671 | 0.080 | 74.7% | 87 | $0.0040 | 43.1s | 7.3 | 4 |
+| 常数 `0.5` | 0.2500 | 0.075 | 42.5% | 87 | $0 | — | 0 | 0 |
+| 历史基率（`base rate`） | 0.2551 | 0.155 | 57.5% | 87 | $0 | — | 1.0 | 0 |
 
-四点解读：
+核心实证结论：
 
-1. **工具即构成预测本身。** 同一模型、同一批题目，移除全部工具后 Brier 由 0.1631 升至 0.2293，方向命中率由 72.9% 降至 55.2%（略低于基率）。DeepSeek 自身对 VXN 点位无预测能力，其全部作用在于决定调用哪个工具、调用次数与采信结果。
-2. **agent 与类比模型持平（0.1631 vs 0.1636），标定更优（ECE 0.036 vs 0.053）。** 这并不表示「agent 更准」，而是「agent 复述了模型的判断」：其在 `quantile` 题型略逊（0.0908 vs 0.0863），在 `level` 题型略优（0.2353 vs 0.2410）。因此在纯数值题上，agent 应用于解释与留痕，而非替代耗时 0.04 毫秒的模型。这也是报表同时列出 $/条与 p50 秒的原因。
-3. **基率 0.2647 劣于随机猜测。** 绝对点位上的历史命中率会受漂移影响：2003 年的 VXN>46 与当前的 VXN>46 并非同一事件。该点与 `ndx-2026-11-30-gt-baseline` 一题一致——门槛即当日收盘，历史基率仅 1.15%，依基率作答将显著劣于基准；该次 agent 的 rationale 中即写明「门槛等于当日收盘，因此这属于随机事件，而非基率问题」。
-4. **闸门从未被触发（gate_hits 均为 0）。** 模型未尝试读取未来数据。这并不说明闸门无用，而是其成本极低、可在「万一」情形下常驻；`tests/test_agent.py` 中有三个用例专门验证其拦截能力。
+1. **预测能力来自工具与闸门，而非 LLM 本身的先验**：同一模型摘掉工具后（`blind`），Brier 从 `0.1631–0.1830` 恶化至 `0.2273–0.2293`，退化到接近常数抛硬币。
+2. **不同模型之间 Brier 难分高下，真正拉开差距的是校准度（ECE）、成本与延迟**：`deepseek-flash` 与 `qwen3.8-flash` 逐题 Brier 差值的 95% 置信区间为 `[−0.0165, +0.0031]`（跨 0），但 `qwen3.8-flash` 单题成本高 1.7 倍、中位延迟高 2.2 倍。
+3. **三道实时锁定题目的影子预测（`forecast-log agent-forecast --runs 3`）**：
 
-### 三道真题的影子预测
-
-`forecast-log agent-forecast --runs 3`，每次独立跑，按 log-odds 池化。影子记录写在 `artifacts/agent/`，**不改** `forecasts/`：
-
-| 题 | 锁定（类比模型） | 影子（3 次池化） | 单次 | spread | 工具 | 成本 |
+| 题目 ID | 锁定概率（类比模型） | Agent 影子预测（3 次 log-odds 池化） | 单次输出 | 分歧度 `spread` | 工具调用 | 成本 |
 |---|---|---|---|---|---|---|
 | `vxn-2026-11-20-gt-30` | 0.3150 | **0.2995** | 0.32 / 0.27 / 0.31 | 0.10 | 20 | $0.0034 |
 | `vxn-2026-11-30-gt-30` | 0.3250 | **0.2557** | 0.28 / 0.22 / 0.27 | 0.14 | 20 | $0.0036 |
 | `ndx-2026-11-30-gt-baseline` | 0.5800 | **0.5134** | 0.55 / 0.52 / 0.47 | 0.13 | 19 | $0.0040 |
 
-三个方向都和锁定记录一致，幅度都更靠近中间。谁对谁错，11-20 和 11-30 收盘之后各自写进 `resolutions.json`，两边都要打分。差别是：锁定记录只有一个数，影子记录有一份六次工具调用、逐条日期的 trace，可以事后读它当时在想什么。
+## 每日盘后新闻解读与历史新闻三层检验
 
-### 尚未实现的部分
-
-- ~~**没有新闻源**~~：现在有了。运行时走 GDELT + 三个 RSS（`forecast-log daily`），历史 2013 年起 3487 个交易日补齐（Wikipedia `Portal:Current events`）。仍然缺的是**能按分钟取的时间戳**和**真正的财经快讯**——现在这份是每天 30 条世界新闻摘要，够做展示，不够做信号（三层检验的结果见上一节）。评测台上 `search_news` 仍然拿到空的，因为那批历史题没有对应的新闻语料。
-- **未实现政策模拟**。多主体模拟需要「多个 agent 在同一经济模型中行动」；`ensemble.py` 具备多主体机制，但缺少该经济模型。
-- **未使用队列、数据库与服务**。全部为文件与 CLI，`forecasts/` 依赖约定不可改写（`lock` 拒绝覆盖），而非数据库约束。这是后续应完成的工作，当前不宜声称。
-
-### 跑法
+### 1. 每日收盘后 LLM 读新闻（`forecast-log daily`）
 
 ```bash
-cp .env.example .env                   # 填 DEEPSEEK_API_KEY 一行就行，.env 已 gitignore
-forecast-log agent-forecast --runs 3   # 三道题的影子预测，不碰 forecasts/
-forecast-log agent-eval --limit 96 --stride 60 --also-blind
-pytest tests/test_agent.py             # 19 个测试，不联网、不需要 key
+forecast-log daily                               # 收盘后跑，默认 as-of 今天
+forecast-log daily --day 2026-11-13 --no-cache   # 指定日期重放
 ```
 
-页面在 `web/agent.html`（读 `artifacts/agent_eval_summary.json`），和另外几张图同一个 `serve.py`。`FORECAST_LOG_MODEL` 和 `FORECAST_LOG_BASE_URL` 把同一段代码指到任何 OpenAI 兼容端点，包括本地的 vLLM 或 Ollama。设计说明写在 [`docs/agent.md`](docs/agent.md)。
+执行流程共四步，全部可复查：
 
-## 附录：招聘要求
+1. **多源抓取**：抓取 GDELT DOC 接口与三个财经 RSS（WSJ 市场版、Fed 货币政策声明、SEC 新闻稿），原始响应缓存于 `data/forecast.db` 的 `news` 表及 `data/news/<YYYY-MM-DD>.json`。
+2. **时间闸门过滤**：严格剔除 `published_at > as_of` 的越界标题，并记录剔除条数（`dropped_after_as_of`）。
+3. **LLM 结构化风险定调**：提示词固定要求只输出当日新闻流的风险偏好（`risk-on` / `neutral` / `risk-off`）、置信度与三条依据标题，**不输出涨跌概率**。
+4. **落盘留痕与分歧标记（`contested`）**：完整输入标题、模型版本、token 成本与标签写入纳入 Git 的 `artifacts/daily/<YYYY-MM-DD>.json` 与 `artifacts/daily.json`（单次成本约 `$0.0003`）。若 LLM 判定 `risk-off`（置信度 ≥ 0.7）而价格侧当日触发买入信号，信号页将其标为 `contested`（仅记录分歧，不静默修改价格信号）。
 
-客户没有在帖子里具名。下面是职位页的中文要求，2026-11-12 读取。页面是中英对照，英文以链接为准。
+### 2. 历史新闻与关键词三层检验（均未通过显著性）
 
-- 职位页：<https://moledao.io/jobs/moledaoofficial/ai-agent-engineer-forecasting/2471vt/>
-- 帖子：<https://x.com/phoebe_mole/status/2120449710087356533>
-- 帖子写月薪 SGD 8,000–14,000。职位页写薪资面议。
+历史新闻通过 `forecast-log news-backfill` 从 Wikipedia `Portal:Current events` 补齐至 **2002-01-02 → 2026-11-16，共 6,078 个交易日、127,845 条新闻**（存入 `data/forecast.db` 的 `news` 表）。在 `experiments/news_keywords.py`、`experiments/news_llm_test.py` 与 [`docs/news_ab.md`](docs/news_ab.md) 中进行了三层检验：
 
-逐条对照（哪条算「有」、哪条算「半」、哪条是「无」，以及「更用上 LLM」具体该加在哪四件事）写在 [`docs/goals.md`](docs/goals.md)。
+- **第一层（单个关键词，24 个概念词表）**：2013 年起各关键词出现日之后 5 日 `^NDX` 上涨率与基率对比，没有任何一个词在 2015 年前后两段均高于基率超过 2 个百分点（`oil`、`fed`、`gdp` 甚至为负），说明常见宏观词条在日线收盘时已反映在价格中。
+- **第二层（净调子词频分五档）**：`(risk-on 概念数 − risk-off 概念数) / 当天条目数` 五分位档上涨率依次为 `60.7% / 58.6% / 61.6% / 59.0% / 59.7%`，无单调性。
+- **第三层（作为多头信号的否决条件）**：在 629 个信号日上，当日命中 ≥ 2 个 `risk-off` 关键词的 227 个信号精确率为 61.7%（低于 1 个关键词组的 69.9%），但 0 个关键词组为 67.0%，整体不单调且属于事后切分。
+- **多模型读新闻 A/B 对比（`forecast-log news-ab`）**：DeepSeek 与 Qwen 对同一批 490 天历史新闻独立打标，Kappa 一致性为 `0.479`、严重度秩相关 `0.770`，但在 15.5% 的交易日上对「是否撤掉多头信号」意见相反（详见 [`docs/news_ab.md`](docs/news_ab.md)）。
 
-**职位：** AI Agent 工程师 · 预测方向（AI Agent Engineer, Forecasting）
+结论：**LLM 在本项目中负责将非结构化文本（日历文档、新闻流）抽取为结构化字段并驱动工具取证循环，方向预测本身完全由跨资产价格因子完成。**
 
-**条件：** 新加坡 / 远程（新加坡时区），全职。需要生产级智能体经验。
+## 已排除的尝试（保留在 `experiments/` 供复现）
 
-**一句话：** 搭建会查资料、会推理、会预测的智能体，再让现实给它打分。
+为避免重复踩坑，以下经回测证伪的路径均保留了复现脚本：
 
-**关于客户：** 一家做 AI 预测的早期创业公司。产品对真实世界的事件给出概率判断，包括政策决定、市场走向和地缘结果。每条预测都在答案揭晓前锁定、公开，等现实兑现后评分。同一套引擎还驱动政策模拟：AI 智能体在真实经济模型中对变化作出反应，影响是算出来的，而不是写出来的。使命是让机构在不确定中做出更好的决策。团队由研究员和工程师组成，已经在和机构客户合作，看重做出来的东西，而不是头衔。
+| 尝试方向 | 实测结果 | 排除原因 |
+|---|---|---|
+| 价格自身特征 + 逻辑回归（`experiments/direction_lab.py`） | Brier `0.2472`，按基率常数作答 `0.2410` | 劣于常数预测 |
+| 概率向基率线性收缩（0.2–0.7） | 分块 bootstrap 置信区间全部跨 0，收缩到 1.0 才最好 | 模型输出的排序里没有增量信息 |
+| 11 个价格因子 / 12 个跨资产因子单独分桶（`cross_asset_lab.py`） | 除「离 200 日均线最低 10%」外全部跨基率 | 单因子独立使用无法稳定跑赢基率（离 200 日均线最低 10% 后 5 日上涨率仅 49.4% vs 基率 58.2%，说明抄底无额外收益） |
+| 做空 / 减仓信号（复合分数最低 10% / 收益率急升 / 美元急升） | 精确率 `43.8%–48.8%`（下跌基率 `42.2%`） | 置信区间全部跨基率；股指上行由慢变量漂移主导，下行由跳空与波动率突变主导，慢变量无法提前捕捉急跌 |
+| 将宏观日历作为第 5 个因子与 4 个价格 z 分数平均 | 2015 年前命中率仅 50.0%，样本外信号数从 193 暴跌至 45 | 稀释了原复合信号，改为独立条件触发线方成立 |
+| `NFP` 取发布前 0–2 天 / `FOMC` 前后当加分项 | 2015 年前低于基率或前后两段方向翻转 | 窗口选错即引入噪声，`NFP` 仅取前 3–7 天，`FOMC` 仅用于否决决议日当天 |
 
-**工作职责：**
+## 术语与代码对照表
 
-1. 搭建做研究的智能体。智能体能搜索、阅读文档和数据、调用工具、一步步推理，对开放的现实问题给出经过校准的概率。
-2. 大规模运行模拟。在政策和市场模拟中编排大量 AI 角色，做到稳定、可复现、成本可控。
-3. 让每条预测都可追溯。证据按时间冻结，不泄露未来信息，预测提前锁定，推理过程完整留痕。每条预测都能被评分、被解释。
-4. 先衡量，再改进。搭建评测框架和回测，跟踪质量、成本和延迟，只上线经得起检验的改进。
-5. 交付给机构客户。和研究员、产品经理协作，把智能体做成生产级服务和 API，达到专业客户对安全和稳定性的要求。
+**写作规则：任何缩写、代码、简写，第一次出现时必须给出全称和一句人话解释。**
 
-**背景要求：**
+### 1. 页面与模型术语对照
 
-- 生产级智能体工程经验（核心）：3 年以上软件工程经验，并且亲手上线过至少一个有真实用户在用的大模型智能体或多步骤 AI 系统。
-- 扎实的 Python 与后端能力：异步服务、API、数据管道、数据库和云服务。代码清晰、有测试，别人能在上面继续开发。
-- 评测思维：先建评测，再说改进。知道智能体会悄悄地出错。
-- 熟悉当下的模型：在多家模型和开源模型上做过工具调用、检索、结构化输出和上下文管理。对成本和延迟的取舍有判断。
-- AI 原生的工作方式：每天用编程智能体加速开发和交付，也会审查它们写的代码。
-- 能独当一面、表达清晰：喜欢小团队，能从设计一路负责到上线，并能用英文把技术取舍讲清楚。
+| 页面/代码写法 | 对应行业术语 | 一句话含义 |
+|---|---|---|
+| `signal` / `flag` | 信号 / 入场触发 | 跨资产看多规则在某日收盘成立 |
+| `base_close` | 判定基准收盘价 | 信号对应基准日的收盘价（美股取信号日收盘，A 股取美股信号后第一个 A 股交易日收盘） |
+| `entry` | 实际可成交价 | 信号后第一个交易日的开盘价，仅用于衡量隔夜跳空后的可交易收益，**不参与颜色与命中判定** |
+| `precision` / `hit` | 精确率（命中率） | 信号发出后第 5 个交易日收盘高于 `base_close` 的比例 |
+| `base rate` | 无条件基率（prior） | 不看任何信号，把同一套 5 日上涨判定套在全部交易日上的自然上涨比例 |
+| `lift vs base` | 超额增益（单位 `pp`） | 精确率减去无条件基率的百分点差值 |
+| `composite` | 复合因子得分 | 4 个跨资产因子扩张窗口 z 分数的等权平均值 |
+| `expanding window` | 扩张窗口（递归估计） | 均值、标准差、分位数均只使用截至当日的全部历史数据计算，杜绝前视泄漏 |
+| `out-of-sample` | 样本外检验 | 规则与分位设计在 2015 年前定死，2015 年及之后的数据仅做检验 |
+| `MAE` / `MAPE` | 平均绝对误差 / 平均绝对百分比误差 | 衡量点位预测偏差的两种指标 |
+| `band coverage` | 区间覆盖率 | 实际收盘价落在模型 10%–90% 预测区间内的比例 |
+| `Brier` / `ECE` | Brier 分数 / 期望校准误差 | 衡量概率预测准确性（越低越好，`0.5` 常数基准为 `0.25`）与概率校准度的核心指标 |
 
-**加分项：**
+### 2. 行情代码与宏观缩写对照
 
-- 附上最满意的智能体、代码仓库或评测。预测机器人或公开的预测记录尤其加分。
-- 做过多智能体系统，或对市场、机构、人群行为的多主体建模。
-- 搜索与信息管道：大规模爬取、新闻与数据源接入、按时间检索或信息抽取。
-- 接触过预测、预测市场或金融数据，或者为数据要求严格的客户交付过 AI 系统。
+| 代码/缩写 | 全称 | 这是什么 |
+|---|---|---|
+| `^VIX` | CBOE Volatility Index（标普 500 波动率指数） | 期权市场为未来 30 天标普 500 定价的隐含波动率，平时 13–20，危机时 40+ |
+| `^VXN` | CBOE NASDAQ-100 Volatility Index（纳斯达克 100 波动率指数） | 标的换成纳斯达克 100 的隐含波动率指数，`/vxn` 页面与波动率考题的结算标的 |
+| `^VIX9D` / `^VIX3M` | 9 天 / 3 个月期限的 VIX 指数 | 同一族隐含波动率指数的不同期限，两者之比刻画波动率期限结构斜率 |
+| `^VVIX` | CBOE VVIX Index（VIX 的波动率指数） | 衡量 VIX 期权自身的隐含波动率，反映市场是否在为波动率突变定价 |
+| `^NDX` | Nasdaq-100 Index（纳斯达克 100 指数） | 纳斯达克 100 指数，跨资产信号看板的主结算标的 |
+| `QQQ` | Invesco QQQ Trust（纳指 100 ETF） | 跟踪 `^NDX` 的可交易 ETF，用于验证指数信号在真实可下单标的上的表现 |
+| `000001.SS` | SSE Composite Index（上证综合指数） | A 股跨市场信号检验的结算标的 |
+| `HYG` | iShares iBoxx High Yield Corporate Bond ETF | 高收益（垃圾级）公司债 ETF，相对国债走强代表信用风险偏好改善 |
+| `TLT` | iShares 20+ Year Treasury Bond ETF | 20 年以上美国长期国债 ETF，与 `HYG` 构成 `HYG/TLT` 信用风险偏好比值 |
+| `^TNX` | 10-Year US Treasury Yield（10 年期美国国债收益率） | 全球资产定价基准贴现率，收益率下行通常利好风险资产 |
+| `DX-Y.NYB` | US Dollar Index（美元指数 DXY） | 美元对一篮子主要货币的强弱指数，走弱通常意味全球流动性压力缓解 |
+| `SPY` / `RSP` / `GC=F` | 标普 500 ETF / 标普 500 等权重 ETF / 黄金期货连续合约 | 库内同步维护的跨资产辅助品种（用于市场广度与避险对照实验） |
+| `CPI` | Consumer Price Index（美国消费者物价指数） | 美国月度通胀数据，发布前 3 天内允许复合分数在 ≥ 中位数时触发做多信号 |
+| `NFP` | Nonfarm Payrolls（美国非农就业人口） | 美国月度就业数据，发布前 3–7 天内允许复合分数在 ≥ 中位数时触发做多信号 |
+| `FOMC` | Federal Open Market Committee（美联储公开市场委员会） | 美联储议息会议，决议日当天规则强制否决（不出信号） |
+| `pp` / `SE` | percentage point（百分点）/ standard error（标准误） | `pp` 表示两个百分比的绝对差值；`SE` 表示统计估计量自身的不确定度 |
 
-**他们提供的：** 做被现实打分、而不是靠演示打分的智能体。小团队，写的东西直接交付给机构用户，与研究员紧密合作，对整套智能体系统负责。
+## 附录：项目背景与相关文档
+
+- 工程交付精简概览：[`SUBMISSION.md`](SUBMISSION.md)
+- Agent 架构与设计细节：[`docs/agent.md`](docs/agent.md)
+- DeepSeek vs Qwen 历史新闻解读 A/B 报告：[`docs/news_ab.md`](docs/news_ab.md)
+- Cloudflare Workers + D1 部署说明：[`deploy/README.md`](deploy/README.md)
+- 目标对齐说明：[`docs/goals.md`](docs/goals.md)

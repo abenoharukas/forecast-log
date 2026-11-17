@@ -19,7 +19,6 @@ const PAGES = {
   "/qqq": "/web/points.html",
   "/a-shares": "/web/points.html",
   "/ssec": "/web/points.html",
-  "/volatility": "/web/index.html",
   "/vxn": "/web/index.html",
   "/agent": "/web/agent.html",
 };
@@ -27,10 +26,11 @@ const PAGES = {
 const LEGACY_MARKET = { ndx: "/ndx", qqq: "/qqq", ssec: "/a-shares" };
 
 const LEGACY = {
-  "/web": "/volatility",
-  "/web/index.html": "/volatility",
-  "/web/index": "/volatility",
-  "/index.html": "/volatility",
+  "/volatility": "/vxn",
+  "/web": "/vxn",
+  "/web/index.html": "/vxn",
+  "/web/index": "/vxn",
+  "/index.html": "/vxn",
   "/web/points": "/ndx",
   "/points": "/ndx",
   "/web/qqq.html": "/qqq",

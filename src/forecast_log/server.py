@@ -32,7 +32,6 @@ PAGES = {
     "/qqq": "web/points.html",
     "/a-shares": "web/points.html",
     "/ssec": "web/points.html",
-    "/volatility": "web/index.html",
     "/vxn": "web/index.html",
     "/agent": "web/agent.html",
 }
@@ -51,10 +50,11 @@ LEGACY_MARKET = {"ndx": "/ndx", "qqq": "/qqq", "ssec": "/a-shares"}
 
 # 旧地址（带 .html / 带 /web/）永久跳转到新地址
 LEGACY = {
-    "/web": "/volatility",
-    "/web/index.html": "/volatility",
-    "/web/index": "/volatility",
-    "/index.html": "/volatility",
+    "/volatility": "/vxn",
+    "/web": "/vxn",
+    "/web/index.html": "/vxn",
+    "/web/index": "/vxn",
+    "/index.html": "/vxn",
     "/web/points": "/ndx",
     "/points": "/ndx",
     "/web/qqq.html": "/qqq",
@@ -296,7 +296,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"或者换端口：forecast-log serve {args.port + 1}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    print(f"看板已启动： http://127.0.0.1:{args.port}/  （信号页 /ndx · /qqq · /a-shares；波动率区间 /volatility；评测 /agent）", flush=True)
+    print(f"看板已启动： http://127.0.0.1:{args.port}/  （信号页 /ndx · /qqq · /a-shares；VXN /vxn；评测 /agent）", flush=True)
     print("（Ctrl+C 停止）", flush=True)
     try:
         server.serve_forever()

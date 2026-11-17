@@ -55,7 +55,7 @@ artifacts/cross*.json  →  /api/ingest  →  D1 表
 
 ## 现在还没搬的两页
 
-`/volatility`（`artifacts/timeline.json`，3.5 MB，七层嵌套）和 `/agent`
+`/vxn`（`artifacts/timeline.json`，3.5 MB，七层嵌套）和 `/agent`
 （两份 `agent_eval*_summary.json`）仍然读静态文件。把这两份也搬进 D1 需要各自的表
 （timeline 是 rolling / ladder / forward / vxn / ndx / daily / questions 七组序列），
 是下一步的工作，不影响信号页。

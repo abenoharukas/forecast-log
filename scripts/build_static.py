@@ -23,7 +23,7 @@ ARTIFACTS = (
     "cross.json",  # /ndx
     "cross_qqq.json",  # /qqq
     "cross_ssec.json",  # /a-shares
-    "timeline.json",  # /volatility
+    "timeline.json",  # /vxn
     "agent_eval_summary.json",  # /agent（DeepSeek 标签）
     "agent_eval_qwen_summary.json",  # /agent（Qwen 标签）
 )

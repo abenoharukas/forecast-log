@@ -285,11 +285,11 @@ def test_all_refresh_symbols_and_intraday_cooldown(tmp_path):
     assert check3["needs_refresh"] is True
 
 
-def test_unified_bars_table_preserves_both_ohlcv_and_signals_without_session_table(tmp_path):
-    from forecast_log.artifacts_db import load_cross_market, save_cross_market
-    from forecast_log.db import connect, db_path, get_series, upsert_series
+def test_four_core_tables_schema_and_orthogonal_signals_join(tmp_path):
+    from forecast_log.artifacts_db import load_agent_eval, load_cross_market, save_agent_eval, save_cross_market
+    from forecast_log.db import connect, db_path, get_news_fetch, get_series, has_news_fetch, save_news_fetch, upsert_series
 
-    # 1. 先写原始行情到 bars（带 4 位小数原始精度）
+    # 1. 纯净股价写入 bars（保留 4 位小数原始精度，无信号列）
     upsert_series(
         tmp_path,
         Series(
@@ -303,44 +303,87 @@ def test_unified_bars_table_preserves_both_ohlcv_and_signals_without_session_tab
         ),
     )
 
-    # 2. 写入信号列到同一张 bars 表，不应冲掉原始行情精度
+    # 2. 纯信号写入独立的 signals 表（不重复存 OHLCV）
     save_cross_market(
         tmp_path,
         "qqq",
         {
             "instrument": "QQQ",
-            "first_session": "2026-11-13",
-            "last_session": "2026-11-16",
             "fetched_at": "2026-11-16T21:30:00-05:00",
-            "question": {"horizon": 5, "text": "q", "rule": "r"},
             "time": ["2026-11-13", "2026-11-16"],
-            "close": [650.12, 661.75],
             "flag": [1, 0],
+            "flag_price_only": [1, 0],
             "score": [0.82, 0.12],
             "threshold": [0.54, 0.54],
-            "components": {"f1": [1, 0], "f2": [2, 1]},
-            "latest": {"date": "2026-11-16", "flag": 0, "score": 0.12, "threshold": 0.54},
+            "outcome": [1, None],
+            "hit3": [1, None],
+            "components": {"composite": [1, 0], "cal_cpi": [0, 1]},
         },
     )
 
-    # 确认库内不存在冗余的 session 表
+    # 3. 新闻写入单张 news 表（含空日占位）
+    save_news_fetch(tmp_path, {"as_of": "2026-11-12", "source": "test", "documents": []})
+    save_news_fetch(
+        tmp_path,
+        {
+            "as_of": "2026-11-13",
+            "source": "test",
+            "documents": [{"id": "d1", "published_at": "2026-11-13", "title": "headline", "text": "body", "url": "https://e.com"}],
+        },
+    )
+    assert has_news_fetch(tmp_path, date(2026, 11, 12))
+    assert get_news_fetch(tmp_path, date(2026, 11, 12))["documents"] == []
+    assert len(get_news_fetch(tmp_path, date(2026, 11, 13))["documents"]) == 1
+
+    # 4. 做题结果写入扁平表 agent_eval
+    save_agent_eval(
+        tmp_path,
+        "deepseek",
+        {
+            "n": 1,
+            "scored_on_shared": 1,
+            "generated_at": "2026-11-15T00:00:00Z",
+            "bench": ["VXN-2026-01-05-h5"],
+            "question_meta": {
+                "VXN-2026-01-05-h5": {
+                    "symbol": "^VXN",
+                    "as_of": "2026-01-05",
+                    "as_of_close": 19.5,
+                    "resolve_session": "2026-01-12",
+                    "horizon": 5,
+                    "family": "level",
+                    "threshold": 19.5,
+                    "text": "Will ^VXN close above 19.5?",
+                    "outcome": 1,
+                }
+            },
+            "predictors": {
+                "agent deepseek-chat": {"answers": {"VXN-2026-01-05-h5": 0.8}, "cost_usd_total": 0.01, "cost_usd_per_forecast": 0.01},
+                "constant 0.5": {"answers": {"VXN-2026-01-05-h5": 0.5}},
+            },
+            "config": {"symbol": "^VXN", "model": "deepseek-chat", "models_merged": ["deepseek-chat"]},
+        },
+    )
+    ag = load_agent_eval(tmp_path, "deepseek")
+    assert ag is not None and ag["n"] == 1
+    assert ag["predictors"]["agent deepseek-chat"]["brier"] == pytest.approx(0.04)
+
+    # 确认全库严格只存在 4 张核心业务表
     conn = connect(db_path(tmp_path))
     try:
-        tables = {
+        tables = sorted(
             r["name"]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-        }
+        )
+        sig_cols = {r["name"] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
+        bar_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bars)").fetchall()}
     finally:
         conn.close()
-    assert "session" not in tables
-    assert "bars" in tables
+    assert tables == ["agent_eval", "bars", "news", "signals"]
+    assert "close" not in sig_cols and "open" not in sig_cols
+    assert "flag" not in bar_cols and "factors_packed" not in bar_cols
 
-    # 原始 4 位精度仍在 bars 中保留
-    raw_series = get_series(tmp_path, "QQQ")
-    assert raw_series.bars[0].close == 650.1234
-    assert raw_series.bars[1].is_closed is False
-
-    # 3. 再次刷新行情（收盘后更新最新价与 is_closed=True），不应冲掉已算好的信号列
+    # 更新 bars 收盘价与状态后，load_cross_market 自动通过关联拿到最新 OHLCV 与收盘状态
     upsert_series(
         tmp_path,
         Series(
@@ -353,16 +396,16 @@ def test_unified_bars_table_preserves_both_ohlcv_and_signals_without_session_tab
             ),
         ),
     )
-
+    assert get_series(tmp_path, "QQQ").bars[0].close == 650.1234
     loaded = load_cross_market(tmp_path, "qqq")
-    assert loaded is not None
     assert loaded["close"] == [650.12, 662.0]
     assert loaded["volume"] == [100, 500]
     assert loaded["flag"] == [1, 0]
-    assert loaded["score"] == [0.82, 0.12]
-    assert loaded["components"] == {"f1": [1, 0], "f2": [2, 1]}
-    assert loaded["is_closed"] == [1, 1]
+    assert loaded["components"]["composite"] == [1, 0]
+    assert loaded["components"]["cal_cpi"] == [0, 1]
+    assert loaded["summary"]["flagged"] == 1
     assert loaded["latest"]["is_closed"] is True
+
 
 
 

@@ -97,51 +97,21 @@ def all_refresh_symbols(root: Path = ROOT) -> list[str]:
     )
 
 
-def _timeline_needs_update(root: Path = ROOT) -> bool:
-    """检查 bars 表中的 ^VXN / ^NDX 最新日期或收盘价是否领先于 timeline_close 表。"""
-    from forecast_log.db import connect, db_path
-
-    path = db_path(root)
-    if not path.is_file():
-        return False
-    conn = connect(path)
-    try:
-        for db_sym, tl_sym in (("^VXN", "vxn"), ("^NDX", "ndx")):
-            bar_row = conn.execute(
-                "SELECT date, close FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1",
-                (db_sym,),
-            ).fetchone()
-            tl_row = conn.execute(
-                "SELECT date, close FROM timeline_close WHERE symbol = ? ORDER BY idx DESC LIMIT 1",
-                (tl_sym,),
-            ).fetchone()
-            if bar_row is None:
-                continue
-            if tl_row is None or str(tl_row["date"]) != str(bar_row["date"]):
-                return True
-            if abs(float(tl_row["close"]) - float(bar_row["close"])) > 1e-4:
-                return True
-        return False
-    finally:
-        conn.close()
-
-
 def _refresh_timeline_bg(root: Path = ROOT) -> None:
     if not _TIMELINE_LOCK.acquire(blocking=False):
         return
     try:
-        if _timeline_needs_update(root):
-            from forecast_log.commands import backtest_command
+        from forecast_log.artifacts_db import load_timeline
 
-            backtest_command(root)
+        load_timeline(root)
     except Exception as exc:
-        print(f"后台更新 VXN timeline 失败：{exc}", flush=True)
+        print(f"后台预热 VXN timeline 缓存失败：{exc}", flush=True)
     finally:
         _TIMELINE_LOCK.release()
 
 
 def refresh_cross_data(sync_timeline: bool = False) -> dict:
-    """从 Yahoo 并发增量拉取全库所有品种的未收盘（is_closed=0）及新增 K 线，更新单表 bars 与时间轴。"""
+    """从 Yahoo 并发增量拉取全库所有品种的未收盘（is_closed=0）及新增 K 线，更新 bars 与 signals 表。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     from forecast_log.artifacts_db import (
@@ -179,13 +149,12 @@ def refresh_cross_data(sync_timeline: bool = False) -> dict:
 
     cross_command(ROOT)
 
-    timeline_updating = _timeline_needs_update(ROOT)
-    if timeline_updating:
-        if sync_timeline:
-            _refresh_timeline_bg(ROOT)
-            timeline_updating = False
-        else:
-            threading.Thread(target=_refresh_timeline_bg, args=(ROOT,), daemon=True).start()
+    if sync_timeline:
+        _refresh_timeline_bg(ROOT)
+        timeline_updating = False
+    else:
+        threading.Thread(target=_refresh_timeline_bg, args=(ROOT,), daemon=True).start()
+        timeline_updating = True
 
     post_status = cross_market_status(ROOT)
     post_unclosed_bars = unclosed_bars_summary(ROOT)

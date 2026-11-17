@@ -1,36 +1,23 @@
-"""看板数据读写层：cross 信号（统一存储于单张 `bars` 表）、VXN timeline、agent 评测结果。
+"""看板数据读写层：全部基于 `forecast.db` 的 4 张核心表（`bars`、`signals`、`news`、`agent_eval`）。
 
-本地全部存进 `data/forecast.db`（行情与信号共享单张 `bars` 表，不再冗余拆出 `session` 表）；
-同时保留 `SESSION_COLUMNS` 与 `build_cross_bundle` 导出以兼容 `scripts/publish_d1.py`。
+- Cross 信号页（`/ndx`、`/qqq`、`/a-shares`）：只把纯信号列存进 `signals` 表，查询时通过 `LEFT JOIN bars`
+  关联客观 OHLCV，并在内存中毫秒级聚合出命中率汇总、对比表、分位数分箱及静态筛选项配置。
+- VXN 波动率页（`/vxn`）：不落任何 `timeline_*` 表，直接基于 `bars` 向量化现算并按最新 K 线指纹缓存。
+- Agent 评测页（`/agent`）：直接读写扁平表 `agent_eval`（一行对应一道题×一个预测模型），实时计算 Brier/LogLoss/ECE。
 """
 
 from __future__ import annotations
 
+import statistics
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from forecast_log.db import connect, db_path
+import numpy as np
+
+from forecast_log.db import SIGNAL_COLUMNS, _extract_agent_rows_from_doc, connect, db_path
 
 PRICE_FLOAT_COLUMNS = ("open", "high", "low", "close")
-
-SIGNAL_COLUMNS = (
-    "entry",
-    "entry_at",
-    "base_close",
-    "close3",
-    "close5",
-    "hit3",
-    "flag",
-    "flag_price_only",
-    "news_veto",
-    "score",
-    "threshold",
-    "outcome",
-    "target",
-    "peak",
-    "peak_at",
-    "us_date",
-)
 
 SESSION_COLUMNS = (
     *PRICE_FLOAT_COLUMNS,
@@ -56,6 +43,14 @@ CROSS_SCALAR_ROOTS = (
     "news",
     "latest",
 )
+
+HOLDOUT_DEFAULT = "2015-01-01"
+
+_TIMELINE_MEM_CACHE: dict[Path, tuple[tuple, dict]] = {}
+_NEWS_PROVENANCE_CACHE: dict[Path, tuple[int, dict]] = {}
+
+
+# ------------------------------------------------------------------ D1 同步辅助（保留供 publish_d1.py 调用）
 
 
 def classify(value: Any) -> tuple[str, str | None]:
@@ -86,70 +81,297 @@ def walk(prefix: str, value: Any, out: list[tuple[str, str, str | None]], sep: s
         out.append((prefix, kind, text))
 
 
-def cast(kind: str, value: str | None) -> Any:
-    if kind == "list":
-        return []
-    if kind == "obj":
-        return {}
-    if value is None:
-        return None
-    if kind == "num":
-        return float(value)
-    if kind == "int":
-        return int(value)
-    if kind == "bool":
-        return value in ("1", "true")
-    return value
+# ------------------------------------------------------------------ Cross 静态定义与实时聚合
 
 
-def set_path(root: dict, path: str, value: Any) -> None:
-    parts = path.split(".")
-    cursor: Any = root
-    for i in range(len(parts) - 1):
-        key: Any = int(parts[i]) if parts[i].isdigit() else parts[i]
-        if isinstance(cursor, list):
-            while len(cursor) <= key:
-                cursor.append(None)
-        if cursor[key] is None or (isinstance(cursor, dict) and key not in cursor):
-            cursor[key] = [] if parts[i + 1].isdigit() else {}
-        elif isinstance(cursor, dict) and key not in cursor:
-            cursor[key] = [] if parts[i + 1].isdigit() else {}
-        cursor = cursor[key]
-    last: Any = int(parts[-1]) if parts[-1].isdigit() else parts[-1]
-    if isinstance(cursor, list):
-        while len(cursor) <= last:
-            cursor.append(None)
-    cursor[last] = value
+def _question_meta(market: str, instrument: str) -> dict[str, Any]:
+    if market == "ssec":
+        from forecast_log.china import HORIZON, TARGET_NAME
+
+        return {
+            "name": TARGET_NAME,
+            "question": {
+                "horizon": HORIZON,
+                "text": (
+                    f"Same cross-asset risk appetite long → is the {TARGET_NAME} close {HORIZON} A-share sessions "
+                    "later above the basis close?"
+                ),
+                "factors": [
+                    "The signal is untouched: four US cross-asset factors, 90th percentile of expanding history",
+                    "Add: within 3 days before CPI, or 3-7 days before NFP, with the score at or above the median",
+                    "Remove: no point on the FOMC decision day, and no point on days with a strong bearish surprise",
+                ],
+                "rule": (
+                    "Nothing in the signal changes. A US signal dated D is known at 04:00 Beijing the next morning, "
+                    "so the first A-share session after D is the one that settles it. That session's close is the "
+                    f"basis of the call; the call is a hit if the close {HORIZON} A-share sessions later is above it. "
+                    "The open of that session is recorded as `entry` — the price you could actually pay — but it "
+                    "does not decide the call."
+                ),
+            },
+        }
+
+    from forecast_log.cross import HORIZON, QUANTILE
+
+    return {
+        "name": None,
+        "question": {
+            "horizon": HORIZON,
+            "text": (
+                f"Cross-asset risk appetite long → is the {instrument} close {HORIZON} sessions later "
+                "above the basis close?"
+            ),
+            "factors": [
+                "Factor 1 — 10Y Treasury yield down over 20 sessions",
+                "Factor 2 — dollar index weaker over 20 sessions",
+                "Factor 3 — credit HYG/TLT stronger over 20 sessions",
+                "Factor 4 — VIX above its one-year median",
+                "Add: within 3 days before CPI, or 3-7 days before NFP, with the average at or above the median (calendar pulled by the LLM)",
+                "Remove: no point on the FOMC decision day",
+                "Remove: LLM reads a strong bearish surprise in the day's news (news veto; see the with/without table)",
+            ],
+            "rule": (
+                f"Average the four standardised factors; mark a point above the {int(QUANTILE * 100)}th percentile "
+                "of all history up to that day, or within 3 days before CPI / 3-7 days before NFP with the score "
+                "at or above the median; no point on the FOMC decision day; and the news veto removes signals on "
+                "days the LLM labels as a strong bearish surprise. A point is issued on a close, so that close "
+                "is the basis of the call: the close 3 sessions later and the close 5 sessions later are compared "
+                f"against it, and the call is a hit when the day-{HORIZON} close is above the basis. The next "
+                "session's open is recorded as `entry` — the price you could actually pay — but it does not "
+                "decide the call."
+            ),
+        },
+    }
 
 
-def _set_path_clean(root: dict, path: str, value: Any) -> None:
-    parts = path.split("\x1f") if "\x1f" in path else path.split(".")
-    cursor: Any = root
-    for i in range(len(parts) - 1):
-        part = parts[i]
-        next_is_idx = parts[i + 1].isdigit()
-        if part.isdigit():
-            idx = int(part)
-            while len(cursor) <= idx:
-                cursor.append([] if next_is_idx else {})
-            if cursor[idx] is None:
-                cursor[idx] = [] if next_is_idx else {}
-            cursor = cursor[idx]
-        else:
-            if part not in cursor or cursor[part] is None:
-                cursor[part] = [] if next_is_idx else {}
-            cursor = cursor[part]
-    last = parts[-1]
-    if last.isdigit():
-        idx = int(last)
-        while len(cursor) <= idx:
-            cursor.append(None)
-        cursor[idx] = value
-    else:
-        cursor[last] = value
+def _contexts_for_market(
+    root: Path,
+    market: str,
+    instrument: str,
+    dates: list[str],
+    signal_dates: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    from forecast_log.cross import CONTEXTS, _news_providers
+
+    first_day = dates[0] if dates else None
+    ref_dates = signal_dates if signal_dates is not None else dates
+    ref_first_day = ref_dates[0] if ref_dates else first_day
+    base = [
+        {**item, "available_from": item.get("available_from") or ref_first_day}
+        if item["key"] == "composite"
+        else dict(item)
+        for item in CONTEXTS
+    ]
+    _, news_contexts = _news_providers(root, ref_dates)
+    extra: list[dict[str, Any]] = []
+    if market == "qqq":
+        extra.extend(
+            [
+                {
+                    "key": "qqq_below_ma20",
+                    "label": f"{instrument} trend filter — Below 20-day MA",
+                    "kind": "veto",
+                    "note": f"veto signal when {instrument} closes below its 20-session moving average",
+                    "available_from": first_day,
+                },
+                {
+                    "key": "qqq_gap_veto",
+                    "label": f"{instrument} overnight gap > +1.5%",
+                    "kind": "veto",
+                    "note": f"veto entry when {instrument} next-session open gaps up more than 1.5% above signal close",
+                    "available_from": first_day,
+                },
+            ]
+        )
+    elif market == "ssec":
+        extra.extend(
+            [
+                {
+                    "key": "ssec_below_ma20",
+                    "label": "A-share trend filter — Below 20-day MA",
+                    "kind": "veto",
+                    "note": "上证综指收盘低于 20 日均线时否决买入（本土趋势过滤）",
+                    "available_from": first_day,
+                },
+                {
+                    "key": "ssec_gap_veto",
+                    "label": "A-share open gap > +1.0%",
+                    "kind": "veto",
+                    "note": "A 股次日高开超过 +1.0% 时否决追高",
+                    "available_from": first_day,
+                },
+                {
+                    "key": "ssec_oversold_boost",
+                    "label": "A-share 5-day pullback < -3%",
+                    "kind": "boost",
+                    "note": "上证综指 5 日跌幅超 3% 时补一个超跌反弹信号",
+                    "available_from": first_day,
+                },
+            ]
+        )
+
+    cleaned: list[dict[str, Any]] = []
+    for item in [*base, *news_contexts, *extra]:
+        out: dict[str, Any] = {"key": item["key"]}
+        for field in ("label", "kind", "group", "group_label", "note", "available_from"):
+            if item.get(field):
+                out[field] = item[field]
+        if item.get("required"):
+            out["required"] = True
+        if item.get("threshold") is not None:
+            out["threshold"] = item["threshold"]
+        cleaned.append(out)
+    return cleaned
 
 
-# ------------------------------------------------------------------ Cross 信号（单表 bars）
+def _cached_news_provenance(root: Path) -> dict[str, Any]:
+    resolved_root = root.resolve()
+    surprise_file = resolved_root / "artifacts" / "surprise.jsonl"
+    mtime = surprise_file.stat().st_mtime_ns if surprise_file.is_file() else -1
+    cached = _NEWS_PROVENANCE_CACHE.get(resolved_root)
+    if cached is not None and cached[0] == mtime:
+        return dict(cached[1])
+    from forecast_log.cross import _news_labels
+
+    _, prov = _news_labels(root)
+    _NEWS_PROVENANCE_CACHE[resolved_root] = (mtime, dict(prov))
+    return dict(prov)
+
+
+def _compute_us_tally(rows: list[Any], flag_col: str, holdout: str = HOLDOUT_DEFAULT) -> dict[str, Any]:
+    resolved = [r for r in rows if r["outcome"] is not None]
+
+    def _split(sample: list[Any]) -> dict[str, float | None]:
+        if not sample:
+            return {"hit3": None, "hit45": None, "miss": None}
+        three = sum(1 for r in sample if r["hit3"] == 1) / len(sample)
+        later = sum(1 for r in sample if r["outcome"] == 1 and r["hit3"] == 0) / len(sample)
+        return {
+            "hit3": round(three, 4),
+            "hit45": round(later, 4),
+            "miss": round(1.0 - three - later, 4),
+        }
+
+    flagged = [r for r in resolved if r[flag_col]]
+    held = [r for r in resolved if r["date"] >= holdout]
+    held_flag = [r for r in held if r[flag_col]]
+    f_split = _split(flagged)
+    b_split = _split(resolved)
+    return {
+        "n": len(resolved),
+        "base_rate": round(sum(int(r["outcome"]) for r in resolved) / len(resolved), 4) if resolved else None,
+        "flagged": len(flagged),
+        "hit": round(sum(int(r["outcome"]) for r in flagged) / len(flagged), 4) if flagged else None,
+        "holdout_n": len(held),
+        "holdout_base_rate": round(sum(int(r["outcome"]) for r in held) / len(held), 4) if held else None,
+        "holdout_flagged": len(held_flag),
+        "holdout_hit": round(sum(int(r["outcome"]) for r in held_flag) / len(held_flag), 4) if held_flag else None,
+        "hit3": f_split["hit3"],
+        "hit45": f_split["hit45"],
+        "miss": f_split["miss"],
+        "base3": b_split["hit3"],
+        "base45": b_split["hit45"],
+        "holdout_from": holdout,
+    }
+
+
+def _compute_ssec_summary_and_bands(rows: list[Any], ndx_doc: dict | None, holdout: str = HOLDOUT_DEFAULT) -> tuple[dict, list, dict | None, int]:
+    n = len(rows)
+
+    def _hit3_at(idx: int) -> bool:
+        r = rows[idx]
+        if r["hit3"] is not None:
+            return int(r["hit3"]) == 1
+        if idx + 3 < n and r["close"] is not None and rows[idx + 3]["close"] is not None:
+            return float(rows[idx + 3]["close"]) > float(r["close"])
+        return False
+
+    def _hit5_at(idx: int) -> bool:
+        r = rows[idx]
+        if r["outcome"] is not None:
+            return int(r["outcome"]) == 1
+        if idx + 5 < n and r["close"] is not None and rows[idx + 5]["close"] is not None:
+            return float(rows[idx + 5]["close"]) > float(r["close"])
+        return False
+
+    def _split(indices: list[int]) -> dict[str, float | None]:
+        if not indices:
+            return {"hit3": None, "hit45": None, "miss": None}
+        three = sum(1 for idx in indices if _hit3_at(idx)) / len(indices)
+        later = sum(1 for idx in indices if (not _hit3_at(idx)) and _hit5_at(idx)) / len(indices)
+        return {
+            "hit3": round(three, 4),
+            "hit45": round(later, 4),
+            "miss": round(1.0 - three - later, 4),
+        }
+
+    def _window_summary(low: str) -> dict[str, Any]:
+        usable = [i for i, r in enumerate(rows) if r["date"] >= low and r["outcome"] is not None]
+        chosen = [i for i in usable if rows[i]["flag"]]
+        base = round(sum(int(rows[i]["outcome"]) for i in usable) / len(usable), 4) if usable else None
+        hit = round(sum(int(rows[i]["outcome"]) for i in chosen) / len(chosen), 4) if chosen else None
+        c_split = _split(chosen)
+        u_split = _split(usable)
+        return {
+            "sessions": len(usable),
+            "signals": len(chosen),
+            "hit": hit,
+            "base_rate": base,
+            "lift": None if hit is None or base is None else round(hit - base, 4),
+            "hit3": c_split["hit3"],
+            "hit45": c_split["hit45"],
+            "miss": c_split["miss"],
+            "base3": u_split["hit3"],
+            "base45": u_split["hit45"],
+        }
+
+    bands: list[dict[str, Any]] = []
+    reference: dict[str, Any] | None = None
+    if ndx_doc is not None and ndx_doc.get("time") and ndx_doc.get("score"):
+        us_days = ndx_doc["time"]
+        us_scores = ndx_doc["score"]
+        scored = []
+        pointer = 0
+        for r in rows:
+            if not r["flag"] or r["outcome"] is None:
+                continue
+            day = r["date"]
+            while pointer + 1 < len(us_days) and us_days[pointer + 1] < day:
+                pointer += 1
+            if us_scores[pointer] is not None:
+                scored.append((float(us_scores[pointer]), int(r["outcome"])))
+        if scored:
+            ordered = sorted(scored)
+            size = len(ordered) // 10
+            if size > 0:
+                for band in range(10):
+                    chunk = ordered[band * size : (band + 1) * size] if band < 9 else ordered[9 * size :]
+                    bands.append(
+                        {"band": band + 1, "hit": round(sum(h for _, h in chunk) / len(chunk), 4)}
+                    )
+        ns = ndx_doc.get("summary") or {}
+        if ns.get("hit") is not None and ns.get("base_rate") is not None:
+            reference = {
+                "instrument": "^NDX",
+                "signals": ns["flagged"],
+                "hit": ns["hit"],
+                "base_rate": ns["base_rate"],
+                "lift": round(ns["hit"] - ns["base_rate"], 4),
+                "holdout_signals": ns["holdout_flagged"],
+                "holdout_hit": ns["holdout_hit"],
+                "holdout_base_rate": ns["holdout_base_rate"],
+                "holdout_lift": round(ns["holdout_hit"] - ns["holdout_base_rate"], 4)
+                if ns.get("holdout_hit") is not None and ns.get("holdout_base_rate") is not None
+                else None,
+            }
+
+    signals_seen = sum(1 for r in rows if r["flag"])
+    summary = {
+        "all": _window_summary("1900"),
+        "holdout": _window_summary(holdout),
+        "holdout_from": holdout,
+    }
+    return summary, bands, reference, signals_seen
 
 
 def build_cross_bundle(doc: dict, market: str) -> dict:
@@ -157,21 +379,26 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
 
     nodes: list[tuple[str, str, str | None]] = []
     for key in CROSS_SCALAR_ROOTS:
-        if key in doc:
+        if key in doc and doc[key] is not None:
             walk(key, doc[key], nodes)
-    if "calendar" in doc:
+    if doc.get("calendar") is not None:
         walk("calendar", doc["calendar"], nodes)
     if isinstance(doc.get("question"), dict) and "factors" in doc["question"]:
         walk("question.factors", doc["question"]["factors"], nodes)
 
     components = doc.get("components") or {}
-    factor_keys = list(components.keys())
-    positions = {key: i for i, key in enumerate(factor_keys)}
+    contexts_in = doc.get("contexts") or []
+    ordered_keys = [c["key"] for c in contexts_in] if contexts_in else list(components.keys())
+    for k in components:
+        if k not in ordered_keys:
+            ordered_keys.append(k)
+    positions = {key: i for i, key in enumerate(ordered_keys)}
 
     instrument = str(doc.get("instrument") or DEFAULT_INSTRUMENTS.get(market, market))
     tz_name = "Asia/Shanghai" if (market == "ssec" or instrument.endswith((".SS", ".SZ"))) else "America/New_York"
-    fetched_at = doc.get("fetched_at")
+    fetched_at = doc.get("fetched_at") or ""
     times = doc.get("time") or []
+    latest_block = doc.get("latest") if isinstance(doc.get("latest"), dict) else {}
 
     sessions = []
     for index, day in enumerate(times):
@@ -180,14 +407,20 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
             series = components.get(key) or []
             if index < len(series) and series[index]:
                 mask |= int(series[index]) << (4 * slot)
-        row = {"date": day, "factors_packed": mask}
+        row: dict[str, Any] = {"date": day, "factors_packed": mask}
+        is_latest_day = day == latest_block.get("date")
         for column in SESSION_COLUMNS:
             series = doc.get(column)
-            row[column] = series[index] if isinstance(series, list) and index < len(series) else None
+            val = series[index] if isinstance(series, list) and index < len(series) else None
+            if val is None and is_latest_day and column in latest_block:
+                val = latest_block[column]
+                if isinstance(val, bool) and column in ("flag", "flag_price_only", "news_veto"):
+                    val = 1 if val else 0
+            row[column] = val
         if row.get("is_closed") is None:
             from datetime import date as _date
 
-            row["is_closed"] = 1 if is_session_closed(_date.fromisoformat(day), tz_name, fetched_at) else 0
+            row["is_closed"] = 1 if is_session_closed(_date.fromisoformat(day), tz_name, fetched_at or None) else 0
         else:
             row["is_closed"] = 1 if row["is_closed"] else 0
         sessions.append(row)
@@ -205,7 +438,7 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
             "note": ctx.get("note"),
             "available_from": ctx.get("available_from"),
         }
-        for position, ctx in enumerate(doc.get("contexts") or [])
+        for position, ctx in enumerate(contexts_in)
     ]
 
     question = doc.get("question") or {}
@@ -222,30 +455,32 @@ def build_cross_bundle(doc: dict, market: str) -> dict:
             "rule": question.get("rule"),
             "first_session": first_session,
             "last_session": last_session,
-            "fetched_at": doc.get("fetched_at"),
+            "fetched_at": fetched_at,
         },
         "nodes": nodes,
         "contexts": contexts,
-        "factor_keys": [[i, key] for i, key in enumerate(factor_keys)],
+        "factor_keys": [[i, key] for i, key in enumerate(ordered_keys)],
         "sessions": sessions,
     }
 
 
 def save_cross_market(root: Path, market: str, doc: dict) -> int:
-    """将信号列增量写入统一单表 `bars`：绝不删除历史行，且局部更新信号列不覆盖已有原始行情。"""
+    """仅将纯信号列增量写入独立的 `signals` 表，不重复存 OHLCV，也不生成任何配置碎表。"""
     bundle = build_cross_bundle(doc, market)
-    symbol = str(bundle["row"]["instrument"])
+    fetched_at = str(bundle["row"]["fetched_at"] or datetime.now(timezone.utc).isoformat(timespec="seconds"))
     conn = connect(db_path(root))
     try:
         existing = {
             row["date"]: row
             for row in conn.execute(
                 """
-                SELECT date, open, high, low, close, volume, flag, score, outcome, factors_packed, is_closed
-                FROM bars
-                WHERE symbol = ?
+                SELECT s.date, s.flag, s.score, s.outcome, s.factors_packed, s.fetched_at,
+                       COALESCE(b.is_closed, 1) AS is_closed
+                FROM signals s
+                LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
+                WHERE s.market = ?
                 """,
-                (symbol,),
+                (bundle["row"]["instrument"], market),
             ).fetchall()
         }
         all_sessions = bundle["sessions"]
@@ -254,200 +489,200 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
             prev = existing.get(s["date"])
             if (
                 prev is None
-                or (prev["flag"] is None and s.get("flag") is not None)
-                or (prev["score"] is None and s.get("score") is not None)
                 or prev["is_closed"] == 0
                 or not s.get("is_closed", 1)
                 or (prev["outcome"] is None and s.get("outcome") is not None)
             ):
-                # 若某一天之前未收盘、刚入库或尚未写过信号，其前 7 个交易日的入场价/3日/5日结算窗口可能依赖它，一并重算覆盖
                 for back in range(max(0, idx - 7), idx + 1):
                     dirty_indices.add(back)
 
-        # 尾部最近 7 个交易日若信号、结算或收盘状态发生变化，也一并增量同步
         for idx in range(max(0, len(all_sessions) - 7), len(all_sessions)):
             s = all_sessions[idx]
             prev = existing.get(s["date"])
             if (
                 prev is None
                 or prev["flag"] != s.get("flag")
+                or prev["score"] != s.get("score")
                 or prev["outcome"] != s.get("outcome")
                 or prev["factors_packed"] != s.get("factors_packed")
-                or prev["is_closed"] != s.get("is_closed")
-                or (prev["close"] is not None and s.get("close") is not None and round(float(prev["close"]), 2) != round(float(s["close"]), 2))
+                or prev["fetched_at"] != fetched_at
             ):
                 dirty_indices.add(idx)
 
-        sessions_to_write = [all_sessions[i] for i in sorted(dirty_indices)]
+        if not dirty_indices and all_sessions:
+            # 至少刷新最后一行上的 fetched_at 水位线，确保 _needs_refresh 能读到最新重算时刻
+            dirty_indices.add(len(all_sessions) - 1)
 
-        with conn:
-            r = bundle["row"]
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO market (market, instrument, name, horizon, question, rule, first_session, last_session, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    r["market"],
-                    r["instrument"],
-                    r["name"],
-                    r["horizon"],
-                    r["question"],
-                    r["rule"],
-                    r["first_session"],
-                    r["last_session"],
-                    r["fetched_at"],
-                ),
-            )
-            if sessions_to_write:
-                cols = ("symbol", "date", *SESSION_COLUMNS, "factors_packed")
-                placeholders = ",".join("?" for _ in cols)
-                signal_updates = ",\n                        ".join(
-                    f"{col} = excluded.{col}" for col in (*SIGNAL_COLUMNS, "factors_packed")
-                )
+        sessions_to_write = [all_sessions[i] for i in sorted(dirty_indices)]
+        if sessions_to_write:
+            cols = ("market", "date", *SIGNAL_COLUMNS, "factors_packed", "fetched_at")
+            placeholders = ",".join("?" for _ in cols)
+            updates = ", ".join(f"{c} = excluded.{c}" for c in (*SIGNAL_COLUMNS, "factors_packed", "fetched_at"))
+            with conn:
                 conn.executemany(
                     f"""
-                    INSERT INTO bars ({",".join(cols)})
+                    INSERT INTO signals ({",".join(cols)})
                     VALUES ({placeholders})
-                    ON CONFLICT(symbol, date) DO UPDATE SET
-                        open   = COALESCE(bars.open, excluded.open),
-                        high   = COALESCE(bars.high, excluded.high),
-                        low    = COALESCE(bars.low, excluded.low),
-                        close  = COALESCE(bars.close, excluded.close),
-                        volume = COALESCE(bars.volume, excluded.volume),
-                        {signal_updates}
+                    ON CONFLICT(market, date) DO UPDATE SET {updates}
                     """,
-                    [tuple([symbol, s["date"], *[s.get(c) for c in SESSION_COLUMNS], s["factors_packed"]]) for s in sessions_to_write],
+                    [
+                        tuple([market, s["date"], *[s.get(c) for c in SIGNAL_COLUMNS], s["factors_packed"], fetched_at])
+                        for s in sessions_to_write
+                    ],
                 )
-            conn.executemany(
-                "INSERT OR REPLACE INTO factor_key (market, position, key) VALUES (?, ?, ?)",
-                [(market, pos, key) for pos, key in bundle["factor_keys"]],
-            )
-            conn.executemany(
-                """
-                INSERT OR REPLACE INTO contexts (market, position, key, label, kind, required, threshold, group_name, group_label, note, available_from)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        market,
-                        c["position"],
-                        c["key"],
-                        c["label"],
-                        c["kind"],
-                        c["required"],
-                        c["threshold"],
-                        c["group_name"],
-                        c["group_label"],
-                        c["note"],
-                        c["available_from"],
-                    )
-                    for c in bundle["contexts"]
-                ],
-            )
-            conn.executemany(
-                "INSERT OR REPLACE INTO market_node (market, path, kind, value) VALUES (?, ?, ?, ?)",
-                [(market, path, kind, value) for path, kind, value in bundle["nodes"]],
-            )
         return len(sessions_to_write)
     finally:
         conn.close()
 
 
-def load_cross_market(root: Path, market: str) -> dict | None:
+def load_cross_market(root: Path, market: str, _include_cross_ref: bool = True) -> dict | None:
     path = db_path(root)
     if not path.is_file():
         return None
+    instrument = DEFAULT_INSTRUMENTS.get(market, market)
     conn = connect(path)
     try:
-        meta = conn.execute("SELECT * FROM market WHERE market = ?", (market,)).fetchone()
-        if meta is None:
-            return None
         rows = conn.execute(
             """
-            SELECT * FROM bars
-            WHERE symbol = ?
-              AND (? IS NULL OR date >= ?)
-              AND (? IS NULL OR date <= ?)
-            ORDER BY date ASC
+            SELECT
+                s.*,
+                b.open,
+                b.high,
+                b.low,
+                b.close,
+                b.volume,
+                COALESCE(b.is_closed, 1) AS is_closed,
+                COALESCE(NULLIF(s.fetched_at, ''), b.fetched_at, '') AS eff_fetched_at
+            FROM signals s
+            LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
+            WHERE s.market = ?
+            ORDER BY s.date ASC
             """,
-            (
-                meta["instrument"],
-                meta["first_session"],
-                meta["first_session"],
-                meta["last_session"],
-                meta["last_session"],
-            ),
+            (instrument, market),
         ).fetchall()
-        if not rows:
-            return None
-        nodes = conn.execute("SELECT path, kind, value FROM market_node WHERE market = ?", (market,)).fetchall()
-        contexts = conn.execute("SELECT * FROM contexts WHERE market = ? ORDER BY position", (market,)).fetchall()
-        factors = conn.execute("SELECT position, key FROM factor_key WHERE market = ? ORDER BY position", (market,)).fetchall()
-
-        doc: dict[str, Any] = {}
-        if meta["name"]:
-            doc["name"] = meta["name"]
-        doc["instrument"] = meta["instrument"]
-        doc["question"] = {"horizon": meta["horizon"], "text": meta["question"], "rule": meta["rule"]}
-        doc["fetched_at"] = meta["fetched_at"]
-        doc["first_session"] = meta["first_session"]
-        doc["last_session"] = meta["last_session"]
-        doc["time"] = [row["date"] for row in rows]
-
-        for column in SESSION_COLUMNS:
-            if column in PRICE_FLOAT_COLUMNS:
-                values = [round(float(row[column]), 2) if row[column] is not None else None for row in rows]
-            else:
-                values = [row[column] for row in rows]
-            if any(v is not None for v in values):
-                doc[column] = values
-
-        doc["components"] = {}
-        for f in factors:
-            pos = f["position"]
-            key = f["key"]
-            doc["components"][key] = [(row["factors_packed"] >> (4 * pos)) & 0xF for row in rows]
-
-        doc["contexts"] = []
-        for row in contexts:
-            out: dict[str, Any] = {"key": row["key"]}
-            if row["label"]:
-                out["label"] = row["label"]
-            if row["kind"]:
-                out["kind"] = row["kind"]
-            if row["required"]:
-                out["required"] = True
-            if row["threshold"] is not None:
-                out["threshold"] = row["threshold"]
-            if row["group_name"]:
-                out["group"] = row["group_name"]
-                out["group_label"] = row["group_label"]
-            if row["note"]:
-                out["note"] = row["note"]
-            if row["available_from"]:
-                out["available_from"] = row["available_from"]
-            doc["contexts"].append(out)
-
-        for row in nodes:
-            _set_path_clean(doc, row["path"], cast(row["kind"], row["value"]))
-
-        if isinstance(doc.get("latest"), dict) and rows:
-            doc["latest"]["is_closed"] = bool(rows[-1]["is_closed"])
-
-        return doc
     finally:
         conn.close()
+
+    if not rows:
+        return None
+
+    qmeta = _question_meta(market, instrument)
+    dates = [str(r["date"]) for r in rows]
+    ndx_doc = (
+        load_cross_market(root, "ndx", _include_cross_ref=False)
+        if (_include_cross_ref and market in ("qqq", "ssec"))
+        else None
+    )
+    contexts = _contexts_for_market(
+        root,
+        market,
+        instrument,
+        dates,
+        signal_dates=(ndx_doc["time"] if (market == "ssec" and ndx_doc) else None),
+    )
+
+    doc: dict[str, Any] = {}
+    if qmeta.get("name"):
+        doc["name"] = qmeta["name"]
+    doc["instrument"] = instrument
+    doc["question"] = qmeta["question"]
+    doc["fetched_at"] = str(rows[-1]["eff_fetched_at"] or "")
+    doc["first_session"] = dates[0]
+    doc["last_session"] = dates[-1]
+    doc["time"] = dates
+
+    for column in SESSION_COLUMNS:
+        if column in PRICE_FLOAT_COLUMNS:
+            values = [round(float(r[column]), 2) if r[column] is not None else None for r in rows]
+        else:
+            values = [r[column] for r in rows]
+        if any(v is not None for v in values):
+            doc[column] = values
+
+    doc["components"] = {
+        ctx["key"]: [(int(r["factors_packed"]) >> (4 * pos)) & 0xF for r in rows]
+        for pos, ctx in enumerate(contexts)
+    }
+    doc["contexts"] = contexts
+
+    last = rows[-1]
+    if market == "ssec":
+        summary, bands, reference, signals_seen = _compute_ssec_summary_and_bands(rows, ndx_doc)
+        doc["summary"] = summary
+        doc["bands"] = bands
+        if reference is not None:
+            doc["reference"] = reference
+        doc["signals_seen"] = signals_seen
+        doc["latest"] = {
+            "date": last["date"],
+            "open": round(float(last["open"]), 2) if last["open"] is not None else None,
+            "high": round(float(last["high"]), 2) if last["high"] is not None else None,
+            "low": round(float(last["low"]), 2) if last["low"] is not None else None,
+            "close": round(float(last["close"]), 2) if last["close"] is not None else None,
+            "volume": last["volume"],
+            "us_date": last["us_date"]
+            or (
+                ndx_doc["time"][int(np.searchsorted(ndx_doc["time"], last["date"], side="left")) - 1]
+                if ndx_doc and ndx_doc.get("time") and int(np.searchsorted(ndx_doc["time"], last["date"], side="left")) > 0
+                else None
+            ),
+            "flag": int(last["flag"] or 0),
+            "is_closed": bool(last["is_closed"]),
+        }
+    else:
+        from forecast_log.cross import _calendar_provenance, _runtime_context, comparison
+
+        doc["summary"] = _compute_us_tally(rows, "flag")
+        doc["summary_price_only"] = _compute_us_tally(rows, "flag_price_only")
+        cal_prov = _calendar_provenance(root)
+        if cal_prov is not None:
+            doc["calendar"] = cal_prov
+        news_prov = _cached_news_provenance(root)
+        news_prov["vetoed_signals"] = sum(int(r["news_veto"] or 0) for r in rows if r["outcome"] is not None)
+        doc["news"] = news_prov
+        rt_ctx = _runtime_context(root)
+        if rt_ctx is not None:
+            doc["context"] = rt_ctx
+        if market == "qqq" and _include_cross_ref:
+            ndx_doc = load_cross_market(root, "ndx", _include_cross_ref=False)
+            if ndx_doc is not None and ndx_doc.get("time") == doc["time"]:
+                doc["comparison"] = comparison(ndx_doc, doc)
+        doc["latest"] = {
+            "date": last["date"],
+            "open": round(float(last["open"]), 2) if last["open"] is not None else None,
+            "high": round(float(last["high"]), 2) if last["high"] is not None else None,
+            "low": round(float(last["low"]), 2) if last["low"] is not None else None,
+            "close": round(float(last["close"]), 2) if last["close"] is not None else None,
+            "volume": last["volume"],
+            "score": round(float(last["score"]), 4) if last["score"] is not None else None,
+            "threshold": round(float(last["threshold"]), 4) if last["threshold"] is not None else None,
+            "flag": int(last["flag"] or 0) if last["flag"] is not None else 0,
+            "flag_price_only": int(last["flag_price_only"] or 0) if last["flag_price_only"] is not None else 0,
+            "news_veto": bool(last["news_veto"]),
+            "is_closed": bool(last["is_closed"]),
+        }
+
+    return doc
 
 
 def cross_fetched_at(root: Path, market: str) -> str | None:
     path = db_path(root)
     if not path.is_file():
         return None
+    instrument = DEFAULT_INSTRUMENTS.get(market, market)
     conn = connect(path)
     try:
-        row = conn.execute("SELECT fetched_at FROM market WHERE market = ?", (market,)).fetchone()
-        return row["fetched_at"] if row else None
+        row = conn.execute(
+            "SELECT fetched_at FROM signals WHERE market = ? ORDER BY date DESC LIMIT 1",
+            (market,),
+        ).fetchone()
+        if row and row["fetched_at"]:
+            return str(row["fetched_at"])
+        bar_row = conn.execute(
+            "SELECT fetched_at FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+            (instrument,),
+        ).fetchone()
+        return str(bar_row["fetched_at"]) if (bar_row and bar_row["fetched_at"]) else None
     finally:
         conn.close()
 
@@ -458,26 +693,34 @@ def cross_sessions_summary(root: Path) -> dict[str, str | None]:
         return {}
     conn = connect(path)
     try:
-        rows = conn.execute("SELECT market, last_session FROM market").fetchall()
-        return {row["market"]: row["last_session"] for row in rows}
+        rows = conn.execute(
+            "SELECT market, MAX(date) AS last_session FROM signals GROUP BY market"
+        ).fetchall()
+        return {str(row["market"]): row["last_session"] for row in rows}
     finally:
         conn.close()
 
 
 def cross_market_status(root: Path) -> dict[str, dict[str, Any]]:
-    """基于单表 `bars` 返回各市场最新交易日、抓取时间、是否已收盘以及所有未收盘交易日清单。"""
+    """基于 `signals` 与 `bars` 返回各市场最新交易日、抓取时间、是否已收盘及未收盘日期。"""
     path = db_path(root)
     if not path.is_file():
         return {}
     conn = connect(path)
     try:
-        markets = conn.execute("SELECT market, instrument, last_session, fetched_at FROM market").fetchall()
+        markets = [
+            str(r["market"])
+            for r in conn.execute("SELECT DISTINCT market FROM signals ORDER BY market ASC").fetchall()
+        ]
         out: dict[str, dict[str, Any]] = {}
-        for m in markets:
-            mkt = str(m["market"])
-            inst = str(m["instrument"])
-            last_row = conn.execute(
-                "SELECT date, close, is_closed FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+        for mkt in markets:
+            inst = DEFAULT_INSTRUMENTS.get(mkt, mkt)
+            sig_row = conn.execute(
+                "SELECT date, fetched_at FROM signals WHERE market = ? ORDER BY date DESC LIMIT 1",
+                (mkt,),
+            ).fetchone()
+            last_bar = conn.execute(
+                "SELECT date, close, is_closed, fetched_at FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1",
                 (inst,),
             ).fetchone()
             unclosed = [
@@ -489,10 +732,11 @@ def cross_market_status(root: Path) -> dict[str, dict[str, Any]]:
             ]
             out[mkt] = {
                 "instrument": inst,
-                "last_session": last_row["date"] if last_row else m["last_session"],
-                "last_close": round(float(last_row["close"]), 2) if (last_row and last_row["close"] is not None) else None,
-                "fetched_at": m["fetched_at"],
-                "is_closed": bool(last_row["is_closed"]) if last_row is not None else True,
+                "last_session": last_bar["date"] if last_bar else (sig_row["date"] if sig_row else None),
+                "last_close": round(float(last_bar["close"]), 2) if (last_bar and last_bar["close"] is not None) else None,
+                "fetched_at": (sig_row["fetched_at"] if (sig_row and sig_row["fetched_at"]) else None)
+                or (last_bar["fetched_at"] if last_bar else None),
+                "is_closed": bool(last_bar["is_closed"]) if last_bar is not None else True,
                 "unclosed_dates": unclosed,
             }
         return out
@@ -500,7 +744,7 @@ def cross_market_status(root: Path) -> dict[str, dict[str, Any]]:
         conn.close()
 
 
-# ------------------------------------------------------------------ VXN timeline
+# ------------------------------------------------------------------ VXN timeline（纯读 bars 实时计算 + 内存缓存）
 
 
 def build_timeline_bundle(doc: dict) -> dict:
@@ -589,134 +833,59 @@ def build_timeline_bundle(doc: dict) -> dict:
     }
 
 
+def _timeline_fingerprint(vxn, ndx) -> tuple:
+    return (
+        len(vxn.bars),
+        vxn.bars[-1].date.isoformat(),
+        vxn.bars[-1].close,
+        vxn.bars[-1].is_closed,
+        len(ndx.bars),
+        ndx.bars[-1].date.isoformat(),
+        ndx.bars[-1].close,
+        ndx.bars[-1].is_closed,
+    )
+
+
 def save_timeline(root: Path, doc: dict) -> None:
-    """增量更新 timeline 各表：追加新增交易日并刷新尾部最近 5 个交易日（覆盖盘中未收盘记录），绝不清空历史表。"""
-    bundle = build_timeline_bundle(doc)
-    conn = connect(db_path(root))
-    try:
-        close_max = {
-            r["symbol"]: r["m"]
-            for r in conn.execute("SELECT symbol, MAX(idx) AS m FROM timeline_close GROUP BY symbol").fetchall()
-            if r["m"] is not None
-        }
-        rolling_max = {
-            r["symbol"]: r["m"]
-            for r in conn.execute("SELECT symbol, MAX(idx) AS m FROM timeline_rolling GROUP BY symbol").fetchall()
-            if r["m"] is not None
-        }
-        daily_max = {
-            r["symbol"]: r["m"]
-            for r in conn.execute("SELECT symbol, MAX(idx) AS m FROM timeline_daily GROUP BY symbol").fetchall()
-            if r["m"] is not None
-        }
-        ladder_max = {
-            r["horizon"]: r["m"]
-            for r in conn.execute("SELECT horizon, MAX(idx) AS m FROM timeline_ladder GROUP BY horizon").fetchall()
-            if r["m"] is not None
-        }
+    """时间轴不再向 SQLite 写入任何冗余表，仅更新当前进程内存缓存。"""
+    from forecast_log.bars import has_series, load_series
 
-        new_closes = [r for r in bundle["closes"] if r[1] >= max(0, close_max.get(r[0], -1) - 5)]
-        new_rolling = [r for r in bundle["rolling"] if r[1] >= max(0, rolling_max.get(r[0], -1) - 5)]
-        new_daily = [r for r in bundle["daily"] if r[1] >= max(0, daily_max.get(r[0], -1) - 5)]
-        new_ladder = [r for r in bundle["ladder"] if r[2] >= max(0, ladder_max.get(r[1], -1) - 5)]
-
-        with conn:
-            if new_closes:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO timeline_close (symbol, idx, date, close) VALUES (?, ?, ?, ?)",
-                    new_closes,
-                )
-            if new_rolling:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO timeline_rolling (symbol, idx, time, as_of, anchor, median, low, high, actual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    new_rolling,
-                )
-            if new_daily:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO timeline_daily (symbol, idx, time, median, low, high, actual, previous, risk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    new_daily,
-                )
-            if new_ladder:
-                conn.executemany(
-                    "INSERT OR REPLACE INTO timeline_ladder (symbol, horizon, idx, median, low, high) VALUES (?, ?, ?, ?, ?, ?)",
-                    new_ladder,
-                )
-            conn.executemany(
-                "INSERT OR REPLACE INTO timeline_node (path, kind, value) VALUES (?, ?, ?)",
-                bundle["nodes"],
-            )
-    finally:
-        conn.close()
+    if has_series(root, "^VXN") and has_series(root, "^NDX"):
+        vxn = load_series(root, "^VXN")
+        ndx = load_series(root, "^NDX")
+        _TIMELINE_MEM_CACHE[root.resolve()] = (_timeline_fingerprint(vxn, ndx), doc)
 
 
 def load_timeline(root: Path) -> dict | None:
-    path = db_path(root)
-    if not path.is_file():
+    """直接基于 `bars` 实时向量化计算 VXN 时间轴，并在进程内按最新 K 线指纹缓存。"""
+    from forecast_log.backtest import PATH_HORIZON, forecast_rows, rolling_paths, timeline_document
+    from forecast_log.bars import has_series, load_series
+    from forecast_log.features import load_matrix
+
+    if not (has_series(root, "^VXN") and has_series(root, "^NDX")):
         return None
-    conn = connect(path)
-    try:
-        closes = conn.execute("SELECT symbol, date, close FROM timeline_close ORDER BY symbol, idx").fetchall()
-        if not closes:
-            return None
-        rolling = conn.execute("SELECT * FROM timeline_rolling ORDER BY symbol, idx").fetchall()
-        daily = conn.execute("SELECT * FROM timeline_daily ORDER BY symbol, idx").fetchall()
-        ladder = conn.execute("SELECT * FROM timeline_ladder ORDER BY horizon, idx").fetchall()
-        nodes = conn.execute("SELECT path, kind, value FROM timeline_node WHERE path NOT LIKE 'questions.%'").fetchall()
 
-        doc: dict[str, Any] = {
-            "rolling": {"vxn": {}, "ndx": {}},
-            "ladder": {"vxn": {"columns": {}}},
-            "forward": {},
-            "vxn": {"time": [], "close": []},
-            "ndx": {"time": [], "close": []},
-            "daily": {"vxn": {}, "ndx": {}},
-        }
+    resolved_root = root.resolve()
+    vxn = load_series(root, "^VXN")
+    ndx = load_series(root, "^NDX")
+    fp = _timeline_fingerprint(vxn, ndx)
 
-        for row in closes:
-            sym = row["symbol"]
-            doc[sym]["time"].append(row["date"])
-            doc[sym]["close"].append(row["close"])
+    cached = _TIMELINE_MEM_CACHE.get(resolved_root)
+    if cached is not None and cached[0] == fp:
+        return cached[1]
 
-        for sym in ("vxn", "ndx"):
-            rows = [r for r in rolling if r["symbol"] == sym]
-            doc["rolling"][sym] = {
-                "time": [r["time"] for r in rows],
-                "as_of": [r["as_of"] for r in rows],
-                "anchor": [r["anchor"] for r in rows],
-                "median": [r["median"] for r in rows],
-                "low": [r["low"] for r in rows],
-                "high": [r["high"] for r in rows],
-                "actual": [r["actual"] for r in rows],
-            }
-            drows = [r for r in daily if r["symbol"] == sym]
-            doc["daily"][sym] = {
-                "time": [r["time"] for r in drows],
-                "median": [r["median"] for r in drows],
-                "low": [r["low"] for r in drows],
-                "high": [r["high"] for r in drows],
-                "actual": [r["actual"] for r in drows],
-                "previous": [r["previous"] for r in drows],
-                "risk": [r["risk"] for r in drows],
-            }
-
-        cols = doc["ladder"]["vxn"]["columns"]
-        for row in ladder:
-            h = str(row["horizon"])
-            if h not in cols:
-                cols[h] = {"median": [], "low": [], "high": []}
-            cols[h]["median"].append(row["median"])
-            cols[h]["low"].append(row["low"])
-            cols[h]["high"].append(row["high"])
-
-        for row in nodes:
-            _set_path_clean(doc, row["path"], cast(row["kind"], row["value"]))
-
-        return doc
-    finally:
-        conn.close()
+    extra = load_matrix(root, [bar.date for bar in vxn.bars])
+    rows = forecast_rows(vxn, ndx, extra)
+    paths = {
+        "vxn": rolling_paths(vxn, PATH_HORIZON, extra),
+        "ndx": rolling_paths(ndx, PATH_HORIZON),
+    }
+    doc = timeline_document(vxn, ndx, rows, extra, paths)
+    _TIMELINE_MEM_CACHE[resolved_root] = (fp, doc)
+    return doc
 
 
-# ------------------------------------------------------------------ Agent eval
+# ------------------------------------------------------------------ Agent eval（扁平表 agent_eval）
 
 
 def build_agent_bundle(doc: dict, dataset: str) -> dict:
@@ -738,40 +907,170 @@ def build_agent_bundle(doc: dict, dataset: str) -> dict:
 
 
 def save_agent_eval(root: Path, dataset: str, doc: dict) -> None:
-    bundle = build_agent_bundle(doc, dataset)
+    rows = _extract_agent_rows_from_doc(dataset, doc)
+    if not rows:
+        return
     conn = connect(db_path(root))
     try:
         with conn:
-            r = bundle["row"]
-            conn.execute(
-                "INSERT OR REPLACE INTO agent_dataset (dataset, n, scored_on_shared, generated_at) VALUES (?, ?, ?, ?)",
-                (r["dataset"], r["n"], r["scored_on_shared"], r["generated_at"]),
-            )
             conn.executemany(
-                "INSERT OR REPLACE INTO agent_node (dataset, path, kind, value) VALUES (?, ?, ?, ?)",
-                [(dataset, path, kind, value) for path, kind, value in bundle["nodes"]],
+                """
+                INSERT OR REPLACE INTO agent_eval (
+                    dataset, question_id, predictor, symbol, as_of, as_of_close,
+                    resolve_session, horizon, family, threshold, question_text, outcome,
+                    probability, cost_usd_total, cost_usd_per_forecast, latency_p50_s,
+                    latency_p95_s, tool_calls_mean, gate_hits, failures,
+                    generated_at, config_model, models_merged
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
             )
     finally:
         conn.close()
 
 
 def load_agent_eval(root: Path, dataset: str) -> dict | None:
+    from forecast_log.agent.eval import brier, ece, log_loss, reliability
+
     path = db_path(root)
     if not path.is_file():
         return None
     conn = connect(path)
     try:
-        meta = conn.execute("SELECT * FROM agent_dataset WHERE dataset = ?", (dataset,)).fetchone()
-        if meta is None:
-            return None
-        nodes = conn.execute("SELECT path, kind, value FROM agent_node WHERE dataset = ?", (dataset,)).fetchall()
-        doc: dict[str, Any] = {
-            "n": meta["n"],
-            "scored_on_shared": meta["scored_on_shared"],
-            "generated_at": meta["generated_at"],
-        }
-        for row in nodes:
-            _set_path_clean(doc, row["path"], cast(row["kind"], row["value"]))
-        return doc
+        rows = conn.execute(
+            "SELECT * FROM agent_eval WHERE dataset = ? ORDER BY as_of ASC, horizon ASC, question_id ASC",
+            (dataset,),
+        ).fetchall()
     finally:
         conn.close()
+
+    if not rows:
+        return None
+
+    first = rows[0]
+    generated_at = str(first["generated_at"] or "")
+    config_model = str(first["config_model"] or "")
+    merged_list = [m for m in str(first["models_merged"] or "").split(",") if m]
+
+    question_meta: dict[str, dict[str, Any]] = {}
+    pred_answers: dict[str, dict[str, float]] = {}
+    pred_telemetry: dict[str, sqlite3.Row] = {}
+
+    for r in rows:
+        qid = str(r["question_id"])
+        pname = str(r["predictor"])
+        if qid not in question_meta:
+            question_meta[qid] = {
+                "as_of": r["as_of"],
+                "as_of_close": r["as_of_close"],
+                "family": r["family"],
+                "horizon": int(r["horizon"]),
+                "outcome": int(r["outcome"]),
+                "resolve_session": r["resolve_session"],
+                "symbol": r["symbol"],
+                "text": r["question_text"],
+                "threshold": float(r["threshold"]),
+            }
+        pred_answers.setdefault(pname, {})
+        pred_telemetry.setdefault(pname, r)
+        if r["probability"] is not None:
+            pred_answers[pname][qid] = float(r["probability"])
+
+    bench = list(question_meta.keys())
+    alive_sets = [set(ans.keys()) for ans in pred_answers.values() if ans]
+    shared_ids = set.intersection(*alive_sets) if alive_sets else set()
+    ordered_shared = sorted(shared_ids, key=lambda k: (question_meta[k]["resolve_session"], k))
+    outcomes = {qid: question_meta[qid]["outcome"] for qid in ordered_shared}
+
+    predictors_out: dict[str, dict[str, Any]] = {}
+    for pname in sorted(pred_answers.keys()):
+        ans = pred_answers[pname]
+        tel = pred_telemetry[pname]
+        if not ans or not ordered_shared:
+            predictors_out[pname] = {
+                "brier": None,
+                "log_loss": None,
+                "ece": None,
+                "hit_direction": None,
+                "mean_probability": None,
+                "observed_rate": round(statistics.fmean(outcomes.values()), 4) if outcomes else None,
+                "cost_usd_total": float(tel["cost_usd_total"] or 0.0),
+                "cost_usd_per_forecast": tel["cost_usd_per_forecast"],
+                "latency_p50_s": tel["latency_p50_s"],
+                "latency_p95_s": tel["latency_p95_s"],
+                "tool_calls_mean": float(tel["tool_calls_mean"] or 0.0),
+                "gate_hits": int(tel["gate_hits"] or 0),
+                "failures": int(tel["failures"] or 0),
+                "reliability": [],
+                "answers": {},
+                "pairs": {},
+                "by_family": {},
+                "n": 0,
+            }
+            continue
+
+        pairs_list = [(ans[qid], question_meta[qid]["outcome"]) for qid in ordered_shared]
+        families = sorted({question_meta[qid]["family"] for qid in ordered_shared})
+        by_family = {}
+        for fam in families:
+            fpairs = [(ans[qid], question_meta[qid]["outcome"]) for qid in ordered_shared if question_meta[qid]["family"] == fam]
+            if fpairs:
+                by_family[fam] = {
+                    "n": len(fpairs),
+                    "brier": round(brier(fpairs), 4),
+                    "observed": round(statistics.fmean(o for _, o in fpairs), 3),
+                }
+
+        predictors_out[pname] = {
+            "brier": round(brier(pairs_list), 4),
+            "log_loss": round(log_loss(pairs_list), 4),
+            "ece": round(ece(pairs_list), 4),
+            "hit_direction": round(
+                statistics.fmean(1.0 if (p >= 0.5) == (o == 1) else 0.0 for p, o in pairs_list),
+                4,
+            ),
+            "mean_probability": round(statistics.fmean(p for p, _ in pairs_list), 4),
+            "observed_rate": round(statistics.fmean(o for _, o in pairs_list), 4),
+            "cost_usd_total": float(tel["cost_usd_total"] or 0.0),
+            "cost_usd_per_forecast": tel["cost_usd_per_forecast"],
+            "latency_p50_s": tel["latency_p50_s"],
+            "latency_p95_s": tel["latency_p95_s"],
+            "tool_calls_mean": float(tel["tool_calls_mean"] or 0.0),
+            "gate_hits": int(tel["gate_hits"] or 0),
+            "failures": int(tel["failures"] or 0),
+            "reliability": reliability(pairs_list),
+            "answers": {qid: round(p, 6) for qid, p in ans.items()},
+            "pairs": {qid: round(ans[qid], 6) for qid in ordered_shared},
+            "by_family": by_family,
+            "n": len(ordered_shared),
+        }
+
+    references: dict[str, Any] = {}
+    if ordered_shared:
+        half_pairs = [(0.5, question_meta[qid]["outcome"]) for qid in ordered_shared]
+        references = {
+            "constant_0.5": {"brier": round(brier(half_pairs), 4), "log_loss": round(log_loss(half_pairs), 4)},
+            "observed_rate": round(statistics.fmean(question_meta[qid]["outcome"] for qid in ordered_shared), 4),
+        }
+
+    modes = sorted({m["family"] for m in question_meta.values()})
+    symbol = str(first["symbol"] or "^VXN")
+    return {
+        "n": len(ordered_shared),
+        "scored_on_shared": len(ordered_shared),
+        "generated_at": generated_at,
+        "bench": bench,
+        "questions": ordered_shared,
+        "outcomes": outcomes,
+        "question_meta": question_meta,
+        "predictors": predictors_out,
+        "references": references,
+        "config": {
+            "symbol": symbol,
+            "limit": len(bench),
+            "modes": modes,
+            "model": config_model,
+            "models_merged": merged_list,
+        },
+    }

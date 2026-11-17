@@ -118,6 +118,49 @@ class AnalogModel:
             return len(self.closes)
         return int(usable[MIN_CANDIDATES - 1]) + horizon
 
+    def _build_estimate(
+        self,
+        index: int,
+        horizon: int,
+        threshold: float,
+        chosen: np.ndarray,
+        cand_count: int,
+        with_path: bool,
+    ) -> Estimate:
+        closes = self.closes
+        level = float(closes[index])
+        need = float(threshold) / level
+        rule = "analog" if cand_count > chosen.size else "all_analogues"
+        path = ()
+        if with_path:
+            steps = np.arange(1, horizon + 1)
+            multiples = closes[chosen[:, None] + steps[None, :]] / closes[chosen][:, None]
+            meds = np.median(multiples, axis=0)
+            q10, q90 = np.quantile(multiples, [0.10, 0.90], axis=0)
+            probs = np.mean(multiples > need, axis=0)
+            path = tuple(
+                PathPoint(
+                    horizon=int(step),
+                    median=level * float(meds[k]),
+                    low=level * float(q10[k]),
+                    high=level * float(q90[k]),
+                    probability=float(probs[k]),
+                )
+                for k, step in enumerate(steps)
+            )
+            last = multiples[:, -1]
+        else:
+            last = closes[chosen + horizon] / closes[chosen]
+        return Estimate(
+            probability=float(np.mean(last > need)),
+            sample_size=int(chosen.size),
+            rule=rule,
+            median_close=float(level * np.median(last)),
+            as_of_close=level,
+            horizon=horizon,
+            path=path,
+        )
+
     def forecast(
         self,
         index: int,
@@ -153,39 +196,52 @@ class AnalogModel:
         take = min(neighbours, candidate.size)
         chosen = candidate[np.argpartition(distance, take - 1)[:take]]
         chosen.sort()
-        rule = "analog" if candidate.size > take else "all_analogues"
+        return self._build_estimate(index, horizon, threshold, chosen, int(candidate.size), with_path)
 
-        level = float(closes[index])
-        need = float(threshold) / level
-        path = ()
-        if with_path:
-            path = tuple(
-                PathPoint(
-                    horizon=step,
-                    median=level * float(np.median(multiple)),
-                    low=level * float(np.quantile(multiple, 0.10)),
-                    high=level * float(np.quantile(multiple, 0.90)),
-                    probability=float(np.mean(multiple > need)),
+    def forecast_batch(
+        self,
+        indices: list[int] | np.ndarray,
+        horizon: int,
+        thresholds: list[float] | np.ndarray,
+        neighbours: int = NEIGHBOURS,
+        with_path: bool = False,
+        chunk_size: int = 192,
+    ) -> list[Estimate]:
+        """分块向量化批量预测，与逐行调用 `forecast()` 数值严格等价。"""
+        idx_arr = np.asarray(indices, dtype=int)
+        thr_arr = np.asarray(thresholds, dtype=float)
+        if idx_arr.size == 0:
+            return []
+        n = len(self.closes)
+        valid_cand = np.flatnonzero(self.complete & (np.arange(n) >= LONG_LOOKBACK))
+        sc = self.state[valid_cand]
+        out: list[Estimate] = []
+        for b0 in range(0, idx_arr.size, chunk_size):
+            b1 = min(b0 + chunk_size, idx_arr.size)
+            q_idx = idx_arr[b0:b1]
+            max_cand_pos = int(np.searchsorted(valid_cand, int(q_idx[-1]) - horizon, side="right"))
+            sc_sub = sc[:max_cand_pos]
+            diff = self.state[q_idx, None, :] - sc_sub[None, :, :]
+            dist_mat = (diff * diff).sum(axis=2)
+            for k, i in enumerate(q_idx):
+                ii = int(i)
+                limit_pos = int(np.searchsorted(valid_cand, ii - horizon, side="right"))
+                if limit_pos < MIN_CANDIDATES:
+                    raise ValueError("not enough finished analogues for this horizon")
+                d_row = dist_mat[k, :limit_pos]
+                take = min(neighbours, limit_pos)
+                chosen = valid_cand[np.argpartition(d_row, take - 1)[:take]]
+                chosen.sort()
+                out.append(
+                    self._build_estimate(ii, horizon, float(thr_arr[b0 + k]), chosen, limit_pos, with_path)
                 )
-                for step in range(1, horizon + 1)
-                for multiple in (closes[chosen + step] / closes[chosen],)
-            )
-        last = closes[chosen + horizon] / closes[chosen]
-        return Estimate(
-            probability=float(np.mean(last > need)),
-            sample_size=int(chosen.size),
-            rule=rule,
-            median_close=float(level * np.median(last)),
-            as_of_close=level,
-            horizon=horizon,
-            path=path,
-        )
+        return out
 
 
 def index_of(bars: list[Bar] | tuple[Bar, ...], as_of) -> int:
     for position, bar in enumerate(bars):
         if bar.date == as_of:
-            return position
+            return bar_pos if False else position
     raise ValueError(f"no bar on {as_of.isoformat()}")
 
 

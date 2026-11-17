@@ -34,13 +34,13 @@ def _rows(series: Series, horizon: int, threshold_at, extra=None) -> list[dict]:
     bars = series.bars
     closes = np.array([bar.close for bar in bars], dtype=float)
     model = AnalogModel(closes, extra)
+    indices = [i for i in range(model.first_index(horizon), len(bars) - horizon) if model.complete[i]]
+    thresholds = [float(threshold_at(i, closes)) for i in indices]
+    estimates = model.forecast_batch(indices, horizon, thresholds, with_path=False)
     rows = []
-    for i in range(model.first_index(horizon), len(bars) - horizon):
-        # The model only reads closes[0..i]; analogues finish at or before i.
-        threshold = float(threshold_at(i, closes))
-        estimate = model.forecast(i, horizon, threshold)
+    for i, threshold, est in zip(indices, thresholds, estimates):
         actual = float(closes[i + horizon])
-        rows.append(_row(bars[i], bars[i + horizon].date, estimate, actual, actual > threshold))
+        rows.append(_row(bars[i], bars[i + horizon].date, est, actual, actual > threshold))
     return rows
 
 
@@ -286,9 +286,11 @@ def daily_forecasts(series: Series, extra=None) -> dict:
     closes = np.array([bar.close for bar in bars], dtype=float)
     model = AnalogModel(closes, extra)
     start = model.first_index(1) + 1
+    ts = [t for t in range(start, len(bars)) if model.complete[t - 1]]
+    ests = model.forecast_batch([t - 1 for t in ts], 1, [1.0] * len(ts), with_path=True)
     rows = []
-    for t in range(start, len(bars)):
-        point = model.forecast(t - 1, 1, 1.0, with_path=True).path[0]
+    for t, est in zip(ts, ests):
+        point = est.path[0]
         rows.append(
             {
                 "time": bars[t].date.isoformat(),
@@ -377,11 +379,12 @@ def rolling_paths(series: Series, horizon: int = PATH_HORIZON, extra=None) -> li
     closes = np.array([bar.close for bar in bars], dtype=float)
     model = AnalogModel(closes, extra)
     start = model.first_index(horizon) + 1
+    indices = [i for i in range(start, len(bars)) if model.complete[i]]
+    estimates = model.forecast_batch(indices, horizon, [closes[i] for i in indices], with_path=True)
     rows = []
     # Runs to the last printed session: a forecast made today still has a path, it just has
     # no `actual` yet for the steps that are still in the future (None, never dropped early).
-    for i in range(start, len(bars)):
-        estimate = model.forecast(i, horizon, closes[i], with_path=True)
+    for i, estimate in zip(indices, estimates):
         recent = np.diff(np.log(closes[i - horizon : i + 1]))
         rows.append(
             {

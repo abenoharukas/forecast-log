@@ -30,8 +30,8 @@ data: ## 拉最新一份 data/forecast.db（已存在则跳过）
 data-refresh: ## 强制重新下载最新的 data/forecast.db
 	@FORCE=1 bash scripts/fetch_db.sh
 
-data-publish: ## 把当前 data/forecast.db 覆盖发布到 data-latest（同名覆盖，需要 gh 登录）
-	@gh release upload data-latest data/forecast.db --clobber
+data-publish: ## 把当前 data/forecast.db 覆盖发布到 data-latest（需要 gh 登录）
+	@bash scripts/publish_db.sh
 
 $(PY): pyproject.toml
 	@test -d $(VENV) || python3 -m venv $(VENV)

@@ -46,5 +46,15 @@ if ! head -c 15 "$tmp" | grep -q 'SQLite format 3'; then
   exit 1
 fi
 
+# 有 sqlite3 就再查一遍页级完整性（头对了不代表文件完整）
+if command -v sqlite3 >/dev/null 2>&1; then
+  check=$(sqlite3 "$tmp" 'PRAGMA quick_check;' 2>&1 | head -1)
+  if [ "$check" != 'ok' ]; then
+    rm -f "$tmp"
+    echo "下载的数据库完整性检查失败：$check" >&2
+    exit 1
+  fi
+fi
+
 mv "$tmp" "$dest_path"
 printf '已就位 %s（%s）\n' "$DEST" "$(du -h "$dest_path" | cut -f1)"

@@ -1,10 +1,11 @@
-"""SQLite 极简存储层：全库仅保留 4 张纯粹的业务实体表（`bars`、`signals`、`news`、`agent_eval`）。
+"""SQLite 极简存储层：全库仅保留 5 张纯粹的业务实体表（`bars`、`signals`、`news`、`agent_eval`、`chat_messages`）。
 
-4 张核心表职责：
-1. `bars`       —— 全品种客观日线行情（OHLCV、是否收盘 `is_closed`、抓取时间戳 `fetched_at`）
-2. `signals`    —— 跨资产买入信号与结算结果（不含重复 OHLCV，读取时按品种关联 `bars`）
-3. `news`       —— 每日新闻标题、正文与抓取来源记录
-4. `agent_eval` —— LLM 盲测做题结果扁平表（一行对应一道题×一个预测模型）
+5 张核心表职责：
+1. `bars`          —— 全品种客观日线行情（OHLCV、是否收盘 `is_closed`、抓取时间戳 `fetched_at`）
+2. `signals`       —— 跨资产买入信号与结算结果（不含重复 OHLCV，读取时按品种关联 `bars`）
+3. `news`          —— 每日新闻标题、正文与抓取来源记录
+4. `agent_eval`    —— LLM 盲测做题结果扁平表（一行对应一道题×一个预测模型）
+5. `chat_messages` —— 多模型（DeepSeek × Qwen）与用户的群聊研判历史记录
 
 设计约束：
 - 不使用外键（FOREIGN KEY），靠联合主键 + CHECK 约束 + 索引保证数据完整性。
@@ -171,6 +172,22 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             models_merged         TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (dataset, question_id, predictor)
         );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            thread_id  TEXT NOT NULL,
+            seq        INTEGER NOT NULL,
+            market     TEXT NOT NULL,
+            as_of      TEXT NOT NULL DEFAULT '',
+            role       TEXT NOT NULL CHECK (role IN ('context', 'user', 'deepseek', 'qwen')),
+            model      TEXT NOT NULL DEFAULT '',
+            stance     TEXT NOT NULL DEFAULT '',
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (thread_id, seq)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_market_created
+            ON chat_messages(market, created_at DESC, thread_id, seq);
         """
     )
     _migrate_to_four_tables(conn)
@@ -884,5 +901,100 @@ def load_all_news_items(root: Path) -> list[dict]:
                 doc["depth"] = row["depth"]
             out.append(doc)
         return out
+    finally:
+        conn.close()
+
+
+# ------------------------------------------------------------------ 多模型群聊存储（chat_messages）
+
+
+def append_chat_message(
+    root: Path,
+    thread_id: str,
+    market: str,
+    as_of: str,
+    role: str,
+    content: str,
+    model: str = "",
+    stance: str = "",
+    created_at: str | None = None,
+) -> dict:
+    ts = created_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn = connect(db_path(root))
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM chat_messages WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            seq = int(row["next_seq"]) if row else 1
+            conn.execute(
+                """
+                INSERT INTO chat_messages (
+                    thread_id, seq, market, as_of, role, model, stance, content, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (thread_id, seq, market, as_of, role, model, stance, content, ts),
+            )
+        return {
+            "thread_id": thread_id,
+            "seq": seq,
+            "market": market,
+            "as_of": as_of,
+            "role": role,
+            "model": model,
+            "stance": stance,
+            "content": content,
+            "created_at": ts,
+        }
+    finally:
+        conn.close()
+
+
+def get_chat_thread(root: Path, thread_id: str) -> list[dict]:
+    path = db_path(root)
+    if not path.is_file():
+        return []
+    conn = connect(path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT thread_id, seq, market, as_of, role, model, stance, content, created_at
+            FROM chat_messages
+            WHERE thread_id = ?
+            ORDER BY seq ASC
+            """,
+            (thread_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def list_chat_threads(root: Path, market: str, limit: int = 20) -> list[dict]:
+    path = db_path(root)
+    if not path.is_file():
+        return []
+    conn = connect(path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                thread_id,
+                market,
+                MAX(as_of) AS as_of,
+                MIN(created_at) AS created_at,
+                MAX(created_at) AS updated_at,
+                COUNT(*) AS message_count
+            FROM chat_messages
+            WHERE market = ?
+            GROUP BY thread_id, market
+            ORDER BY updated_at DESC, thread_id DESC
+            LIMIT ?
+            """,
+            (market, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()

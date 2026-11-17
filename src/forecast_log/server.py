@@ -349,6 +349,41 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(load_agent_eval(ROOT, dataset), f"no agent data for {dataset}")
             return
 
+        if path.rstrip("/") == "/api/chat/threads":
+            from urllib.parse import parse_qs
+            from forecast_log.db import get_chat_thread, list_chat_threads
+            from forecast_log.group_chat import build_market_context
+
+            qs = parse_qs(query)
+            market = (qs.get("market") or ["ndx"])[0]
+            threads = list_chat_threads(ROOT, market)
+            latest_messages = get_chat_thread(ROOT, threads[0]["thread_id"]) if threads else []
+            ctx = build_market_context(ROOT, market)
+            self._send_json(
+                {
+                    "ok": True,
+                    "market": market,
+                    "context": ctx,
+                    "threads": threads,
+                    "active_thread_id": threads[0]["thread_id"] if threads else None,
+                    "messages": latest_messages,
+                },
+                "chat unavailable",
+            )
+            return
+
+        if path.rstrip("/") == "/api/chat/messages":
+            from urllib.parse import parse_qs
+            from forecast_log.db import get_chat_thread
+
+            qs = parse_qs(query)
+            tid = (qs.get("thread_id") or [""])[0]
+            self._send_json(
+                {"ok": True, "thread_id": tid, "messages": get_chat_thread(ROOT, tid) if tid else []},
+                "thread not found",
+            )
+            return
+
         clean = path.rstrip("/") or "/"
 
         # 旧 /web/points.html?market=qqq 也要落到 /qqq
@@ -372,10 +407,62 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         super().do_GET()
 
+    def _handle_chat_run(self) -> None:
+        from forecast_log.group_chat import run_group_chat_stream
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+            body = json.loads(raw or "{}")
+        except Exception as exc:
+            self.send_response(400)
+            err_bytes = json.dumps({"ok": False, "error": f"invalid JSON: {exc}"}, ensure_ascii=False).encode("utf-8")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(err_bytes)))
+            self.end_headers()
+            self.wfile.write(err_bytes)
+            return
+
+        market = str(body.get("market") or "ndx")
+        thread_id = str(body.get("thread_id") or "").strip() or None
+        user_message = str(body.get("user_message") or "")
+        rounds = int(body.get("rounds") or 3)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        try:
+            for event in run_group_chat_stream(
+                ROOT,
+                market=market,
+                thread_id=thread_id,
+                user_message=user_message,
+                rounds=rounds,
+            ):
+                line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+                self.wfile.write(line)
+                self.wfile.flush()
+        except BrokenPipeError:
+            return
+        except Exception as exc:
+            try:
+                err_line = (json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False) + "\n").encode("utf-8")
+                self.wfile.write(err_line)
+                self.wfile.flush()
+            except Exception:
+                pass
+
     def do_POST(self) -> None:
         path, _, query = self.path.partition("?")
         if path in ("/api/refresh", "/api/fetch"):
             self._handle_refresh(force="force=1" in query)
+            return
+        if path.rstrip("/") == "/api/chat/run":
+            self._handle_chat_run()
             return
         self.send_error(405, "Method Not Allowed")
 

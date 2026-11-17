@@ -368,7 +368,7 @@ def test_four_core_tables_schema_and_orthogonal_signals_join(tmp_path):
     assert ag is not None and ag["n"] == 1
     assert ag["predictors"]["agent deepseek-chat"]["brier"] == pytest.approx(0.04)
 
-    # 确认全库严格只存在 4 张核心业务表
+    # 确认全库严格只存在 5 张核心业务表（含多模型群聊记录 chat_messages）
     conn = connect(db_path(tmp_path))
     try:
         tables = sorted(
@@ -379,7 +379,7 @@ def test_four_core_tables_schema_and_orthogonal_signals_join(tmp_path):
         bar_cols = {r["name"] for r in conn.execute("PRAGMA table_info(bars)").fetchall()}
     finally:
         conn.close()
-    assert tables == ["agent_eval", "bars", "news", "signals"]
+    assert tables == ["agent_eval", "bars", "chat_messages", "news", "signals"]
     assert "close" not in sig_cols and "open" not in sig_cols
     assert "flag" not in bar_cols and "factors_packed" not in bar_cols
 

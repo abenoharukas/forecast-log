@@ -1,0 +1,698 @@
+{
+  "market": "ssec",
+  "index_symbol": "000001.SS",
+  "vol_symbol": "RV20",
+  "n_episodes": 489,
+  "first_event": "2011-01-10",
+  "last_event": "2026-11-11",
+  "holdout_from": "2021-01-01",
+  "horizon_sessions": 5,
+  "kinds": [
+    "fomc",
+    "cpi",
+    "nfp"
+  ],
+  "llm_usage": null,
+  "track1_shock_transmission": {
+    "multi_agent_rule": {
+      "full_sample": {
+        "n": 489,
+        "brier": 0.2397,
+        "log_loss": 0.6724,
+        "ece": 0.038,
+        "hit_direction": 0.6012,
+        "mean_probability": 0.5227,
+        "observed_rate": 0.4969,
+        "reliability": [
+          {
+            "bin": "0.0-0.2",
+            "n": 6,
+            "mean_predicted": 0.1384,
+            "observed": 0.3333
+          },
+          {
+            "bin": "0.2-0.4",
+            "n": 83,
+            "mean_predicted": 0.3274,
+            "observed": 0.3494
+          },
+          {
+            "bin": "0.4-0.6",
+            "n": 276,
+            "mean_predicted": 0.5102,
+            "observed": 0.5036
+          },
+          {
+            "bin": "0.6-0.8",
+            "n": 108,
+            "mean_predicted": 0.6768,
+            "observed": 0.5556
+          },
+          {
+            "bin": "0.8-1.0",
+            "n": 16,
+            "mean_predicted": 0.8552,
+            "observed": 0.8125
+          }
+        ],
+        "mae_pct": 1.248,
+        "corr": 0.1769
+      },
+      "holdout_2021_plus": {
+        "n": 184,
+        "brier": 0.2338,
+        "log_loss": 0.658,
+        "ece": 0.0487,
+        "hit_direction": 0.6087,
+        "mean_probability": 0.5289,
+        "observed_rate": 0.5163,
+        "reliability": [
+          {
+            "bin": "0.0-0.2",
+            "n": 3,
+            "mean_predicted": 0.1488,
+            "observed": 0.3333
+          },
+          {
+            "bin": "0.2-0.4",
+            "n": 40,
+            "mean_predicted": 0.2985,
+            "observed": 0.35
+          },
+          {
+            "bin": "0.4-0.6",
+            "n": 79,
+            "mean_predicted": 0.51,
+            "observed": 0.519
+          },
+          {
+            "bin": "0.6-0.8",
+            "n": 50,
+            "mean_predicted": 0.6863,
+            "observed": 0.58
+          },
+          {
+            "bin": "0.8-1.0",
+            "n": 12,
+            "mean_predicted": 0.8602,
+            "observed": 0.8333
+          }
+        ],
+        "mae_pct": 1.186,
+        "corr": 0.3132
+      }
+    },
+    "homogeneous_ablation": {
+      "full_sample": {
+        "n": 489,
+        "brier": 0.2362,
+        "log_loss": 0.664,
+        "ece": 0.0256,
+        "hit_direction": 0.5992,
+        "mean_probability": 0.5106,
+        "observed_rate": 0.4969,
+        "reliability": [
+          {
+            "bin": "0.0-0.2",
+            "n": 6,
+            "mean_predicted": 0.1282,
+            "observed": 0.3333
+          },
+          {
+            "bin": "0.2-0.4",
+            "n": 79,
+            "mean_predicted": 0.3315,
+            "observed": 0.2911
+          },
+          {
+            "bin": "0.4-0.6",
+            "n": 299,
+            "mean_predicted": 0.5068,
+            "observed": 0.5084
+          },
+          {
+            "bin": "0.6-0.8",
+            "n": 97,
+            "mean_predicted": 0.664,
+            "observed": 0.5979
+          },
+          {
+            "bin": "0.8-1.0",
+            "n": 8,
+            "mean_predicted": 0.847,
+            "observed": 1.0
+          }
+        ],
+        "mae_pct": 1.119,
+        "corr": 0.2288
+      },
+      "holdout_2021_plus": {
+        "n": 184,
+        "brier": 0.2295,
+        "log_loss": 0.6476,
+        "ece": 0.035,
+        "hit_direction": 0.5978,
+        "mean_probability": 0.5154,
+        "observed_rate": 0.5163,
+        "reliability": [
+          {
+            "bin": "0.0-0.2",
+            "n": 3,
+            "mean_predicted": 0.1416,
+            "observed": 0.3333
+          },
+          {
+            "bin": "0.2-0.4",
+            "n": 36,
+            "mean_predicted": 0.3054,
+            "observed": 0.3056
+          },
+          {
+            "bin": "0.4-0.6",
+            "n": 90,
+            "mean_predicted": 0.5036,
+            "observed": 0.5222
+          },
+          {
+            "bin": "0.6-0.8",
+            "n": 48,
+            "mean_predicted": 0.6697,
+            "observed": 0.6042
+          },
+          {
+            "bin": "0.8-1.0",
+            "n": 7,
+            "mean_predicted": 0.8507,
+            "observed": 1.0
+          }
+        ],
+        "mae_pct": 1.01,
+        "corr": 0.3639
+      }
+    },
+    "expanding_ols": {
+      "full_sample": {
+        "n": 489,
+        "brier": 0.2417,
+        "log_loss": 0.6764,
+        "ece": 0.0368,
+        "hit_direction": 0.5746,
+        "mean_probability": 0.4721,
+        "observed_rate": 0.4969,
+        "reliability": [
+          {
+            "bin": "0.0-0.2",
+            "n": 1,
+            "mean_predicted": 0.175,
+            "observed": 0.0
+          },
+          {
+            "bin": "0.2-0.4",
+            "n": 37,
+            "mean_predicted": 0.3712,
+            "observed": 0.2973
+          },
+          {
+            "bin": "0.4-0.6",
+            "n": 448,
+            "mean_predicted": 0.48,
+            "observed": 0.5112
+          },
+          {
+            "bin": "0.6-0.8",
+            "n": 3,
+            "mean_predicted": 0.6382,
+            "observed": 1.0
+          }
+        ],
+        "mae_pct": 0.943,
+        "corr": 0.2146
+      },
+      "holdout_2021_plus": {
+        "n": 184,
+        "brier": 0.2388,
+        "log_loss": 0.6703,
+        "ece": 0.0836,
+        "hit_direction": 0.5489,
+        "mean_probability": 0.4787,
+        "observed_rate": 0.5163,
+        "reliability": [
+          {
+            "bin": "0.2-0.4",
+            "n": 14,
+            "mean_predicted": 0.3737,
+            "observed": 0.0714
+          },
+          {
+            "bin": "0.4-0.6",
+            "n": 169,
+            "mean_predicted": 0.4862,
+            "observed": 0.5503
+          },
+          {
+            "bin": "0.6-0.8",
+            "n": 1,
+            "mean_predicted": 0.6826,
+            "observed": 1.0
+          }
+        ],
+        "mae_pct": 0.717,
+        "corr": 0.398
+      }
+    },
+    "constant_0.5": {
+      "full_sample": {
+        "n": 489,
+        "brier": 0.25,
+        "log_loss": 0.6931,
+        "ece": 0.0031,
+        "hit_direction": 0.4969,
+        "mean_probability": 0.5,
+        "observed_rate": 0.4969,
+        "reliability": [
+          {
+            "bin": "0.4-0.6",
+            "n": 489,
+            "mean_predicted": 0.5,
+            "observed": 0.4969
+          }
+        ]
+      },
+      "holdout_2021_plus": {
+        "n": 184,
+        "brier": 0.25,
+        "log_loss": 0.6931,
+        "ece": 0.0163,
+        "hit_direction": 0.5163,
+        "mean_probability": 0.5,
+        "observed_rate": 0.5163,
+        "reliability": [
+          {
+            "bin": "0.4-0.6",
+            "n": 184,
+            "mean_predicted": 0.5,
+            "observed": 0.5163
+          }
+        ]
+      }
+    }
+  },
+  "track2_ex_ante_vxn_5d": {
+    "multi_agent_rule": {
+      "n": 489,
+      "brier": 0.2476,
+      "log_loss": 0.6885,
+      "ece": 0.0179,
+      "hit_direction": 0.5583,
+      "mean_probability": 0.5002,
+      "observed_rate": 0.5051,
+      "reliability": [
+        {
+          "bin": "0.2-0.4",
+          "n": 47,
+          "mean_predicted": 0.3543,
+          "observed": 0.4468
+        },
+        {
+          "bin": "0.4-0.6",
+          "n": 412,
+          "mean_predicted": 0.5077,
+          "observed": 0.5
+        },
+        {
+          "bin": "0.6-0.8",
+          "n": 30,
+          "mean_predicted": 0.6262,
+          "observed": 0.6667
+        }
+      ]
+    },
+    "homogeneous_ablation": {
+      "n": 489,
+      "brier": 0.2477,
+      "log_loss": 0.6887,
+      "ece": 0.0133,
+      "hit_direction": 0.5562,
+      "mean_probability": 0.5001,
+      "observed_rate": 0.5051,
+      "reliability": [
+        {
+          "bin": "0.2-0.4",
+          "n": 46,
+          "mean_predicted": 0.3497,
+          "observed": 0.4348
+        },
+        {
+          "bin": "0.4-0.6",
+          "n": 412,
+          "mean_predicted": 0.5073,
+          "observed": 0.5024
+        },
+        {
+          "bin": "0.6-0.8",
+          "n": 31,
+          "mean_predicted": 0.6272,
+          "observed": 0.6452
+        }
+      ]
+    },
+    "analogue_model": {
+      "n": 489,
+      "brier": 0.2463,
+      "log_loss": 0.6854,
+      "ece": 0.0363,
+      "hit_direction": 0.5481,
+      "mean_probability": 0.4688,
+      "observed_rate": 0.5051,
+      "reliability": [
+        {
+          "bin": "0.2-0.4",
+          "n": 111,
+          "mean_predicted": 0.3503,
+          "observed": 0.4595
+        },
+        {
+          "bin": "0.4-0.6",
+          "n": 334,
+          "mean_predicted": 0.4829,
+          "observed": 0.497
+        },
+        {
+          "bin": "0.6-0.8",
+          "n": 44,
+          "mean_predicted": 0.6606,
+          "observed": 0.6818
+        }
+      ]
+    },
+    "expanding_base_rate": {
+      "n": 489,
+      "brier": 0.2518,
+      "log_loss": 0.6968,
+      "ece": 0.0005,
+      "hit_direction": 0.4724,
+      "mean_probability": 0.5046,
+      "observed_rate": 0.5051,
+      "reliability": [
+        {
+          "bin": "0.4-0.6",
+          "n": 489,
+          "mean_predicted": 0.5046,
+          "observed": 0.5051
+        }
+      ]
+    },
+    "constant_0.5": {
+      "n": 489,
+      "brier": 0.25,
+      "log_loss": 0.6931,
+      "ece": 0.0051,
+      "hit_direction": 0.5051,
+      "mean_probability": 0.5,
+      "observed_rate": 0.5051,
+      "reliability": [
+        {
+          "bin": "0.4-0.6",
+          "n": 489,
+          "mean_predicted": 0.5,
+          "observed": 0.5051
+        }
+      ]
+    }
+  },
+  "track2_ex_ante_ndx_5d": {
+    "multi_agent_rule": {
+      "n": 489,
+      "brier": 0.25,
+      "log_loss": 0.6932,
+      "ece": 0.0136,
+      "hit_direction": 0.5072,
+      "mean_probability": 0.5023,
+      "observed_rate": 0.4888,
+      "reliability": [
+        {
+          "bin": "0.2-0.4",
+          "n": 1,
+          "mean_predicted": 0.3947,
+          "observed": 0.0
+        },
+        {
+          "bin": "0.4-0.6",
+          "n": 488,
+          "mean_predicted": 0.5026,
+          "observed": 0.4898
+        }
+      ]
+    },
+    "homogeneous_ablation": {
+      "n": 489,
+      "brier": 0.2518,
+      "log_loss": 0.6969,
+      "ece": 0.0142,
+      "hit_direction": 0.5112,
+      "mean_probability": 0.5005,
+      "observed_rate": 0.4888,
+      "reliability": [
+        {
+          "bin": "0.2-0.4",
+          "n": 1,
+          "mean_predicted": 0.3776,
+          "observed": 1.0
+        },
+        {
+          "bin": "0.4-0.6",
+          "n": 484,
+          "mean_predicted": 0.4995,
+          "observed": 0.4876
+        },
+        {
+          "bin": "0.6-0.8",
+          "n": 4,
+          "mean_predicted": 0.645,
+          "observed": 0.5
+        }
+      ]
+    },
+    "analogue_model": {
+      "n": 489,
+      "brier": 0.253,
+      "log_loss": 0.6994,
+      "ece": 0.0413,
+      "hit_direction": 0.5215,
+      "mean_probability": 0.5064,
+      "observed_rate": 0.4888,
+      "reliability": [
+        {
+          "bin": "0.2-0.4",
+          "n": 25,
+          "mean_predicted": 0.3692,
+          "observed": 0.6
+        },
+        {
+          "bin": "0.4-0.6",
+          "n": 416,
+          "mean_predicted": 0.5008,
+          "observed": 0.476
+        },
+        {
+          "bin": "0.6-0.8",
+          "n": 48,
+          "mean_predicted": 0.6271,
+          "observed": 0.5417
+        }
+      ]
+    },
+    "expanding_base_rate": {
+      "n": 489,
+      "brier": 0.2517,
+      "log_loss": 0.6966,
+      "ece": 0.0094,
+      "hit_direction": 0.4458,
+      "mean_probability": 0.4982,
+      "observed_rate": 0.4888,
+      "reliability": [
+        {
+          "bin": "0.4-0.6",
+          "n": 489,
+          "mean_predicted": 0.4982,
+          "observed": 0.4888
+        }
+      ]
+    },
+    "constant_0.5": {
+      "n": 489,
+      "brier": 0.25,
+      "log_loss": 0.6931,
+      "ece": 0.0112,
+      "hit_direction": 0.4888,
+      "mean_probability": 0.5,
+      "observed_rate": 0.4888,
+      "reliability": [
+        {
+          "bin": "0.4-0.6",
+          "n": 489,
+          "mean_predicted": 0.5,
+          "observed": 0.4888
+        }
+      ]
+    }
+  },
+  "samples": [
+    {
+      "event_date": "2011-02-18",
+      "us_event_date": "2011-02-17",
+      "kind": "cpi",
+      "regime": "above_ma20_momentum:calm_accumulation",
+      "rate_bps": -4.7,
+      "fx_pct": -0.28,
+      "overnight_ndx_pct": -0.02,
+      "pred_r0_pct": 0.66,
+      "actual_r0_pct": -0.93,
+      "p_vxn_up_5d": 0.488,
+      "actual_vxn_up_5d": 0
+    },
+    {
+      "event_date": "2011-03-07",
+      "us_event_date": "2011-03-04",
+      "kind": "nfp",
+      "regime": "above_ma20_momentum:calm_accumulation",
+      "rate_bps": -8.0,
+      "fx_pct": -0.1,
+      "overnight_ndx_pct": -0.5,
+      "pred_r0_pct": 0.37,
+      "actual_r0_pct": 1.82,
+      "p_vxn_up_5d": 0.538,
+      "actual_vxn_up_5d": 0
+    },
+    {
+      "event_date": "2011-03-16",
+      "us_event_date": "2011-03-15",
+      "kind": "fomc",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": -2.4,
+      "fx_pct": -0.03,
+      "overnight_ndx_pct": -1.36,
+      "pred_r0_pct": -0.61,
+      "actual_r0_pct": 1.19,
+      "p_vxn_up_5d": 0.538,
+      "actual_vxn_up_5d": 0
+    },
+    {
+      "event_date": "2011-03-18",
+      "us_event_date": "2011-03-17",
+      "kind": "cpi",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": 3.6,
+      "fx_pct": -0.84,
+      "overnight_ndx_pct": 1.01,
+      "pred_r0_pct": 1.32,
+      "actual_r0_pct": 0.33,
+      "p_vxn_up_5d": 0.538,
+      "actual_vxn_up_5d": 0
+    },
+    {
+      "event_date": "2011-04-06",
+      "us_event_date": "2011-04-01",
+      "kind": "nfp",
+      "regime": "above_ma20_momentum:calm_accumulation",
+      "rate_bps": -0.3,
+      "fx_pct": -0.04,
+      "overnight_ndx_pct": 0.17,
+      "pred_r0_pct": 0.2,
+      "actual_r0_pct": 1.14,
+      "p_vxn_up_5d": 0.57,
+      "actual_vxn_up_5d": 0
+    },
+    {
+      "event_date": "2011-04-18",
+      "us_event_date": "2011-04-15",
+      "kind": "cpi",
+      "regime": "above_ma20_momentum:calm_accumulation",
+      "rate_bps": -7.5,
+      "fx_pct": 0.2,
+      "overnight_ndx_pct": -0.16,
+      "pred_r0_pct": 0.33,
+      "actual_r0_pct": 0.22,
+      "p_vxn_up_5d": 0.633,
+      "actual_vxn_up_5d": 1
+    },
+    {
+      "event_date": "2011-04-28",
+      "us_event_date": "2011-04-27",
+      "kind": "fomc",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": 4.8,
+      "fx_pct": -0.43,
+      "overnight_ndx_pct": 0.73,
+      "pred_r0_pct": 0.74,
+      "actual_r0_pct": -1.32,
+      "p_vxn_up_5d": 0.583,
+      "actual_vxn_up_5d": 1
+    },
+    {
+      "event_date": "2011-05-09",
+      "us_event_date": "2011-05-06",
+      "kind": "nfp",
+      "regime": "below_ma20_defensive:high_vol_breakout",
+      "rate_bps": -1.1,
+      "fx_pct": 0.87,
+      "overnight_ndx_pct": 0.34,
+      "pred_r0_pct": -0.41,
+      "actual_r0_pct": 0.3,
+      "p_vxn_up_5d": 0.561,
+      "actual_vxn_up_5d": 1
+    },
+    {
+      "event_date": "2011-05-16",
+      "us_event_date": "2011-05-13",
+      "kind": "cpi",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": -4.3,
+      "fx_pct": 0.69,
+      "overnight_ndx_pct": -1.19,
+      "pred_r0_pct": -1.19,
+      "actual_r0_pct": -0.77,
+      "p_vxn_up_5d": 0.558,
+      "actual_vxn_up_5d": 1
+    },
+    {
+      "event_date": "2011-06-07",
+      "us_event_date": "2011-06-03",
+      "kind": "nfp",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": -3.3,
+      "fx_pct": -0.74,
+      "overnight_ndx_pct": -1.48,
+      "pred_r0_pct": -0.24,
+      "actual_r0_pct": 0.59,
+      "p_vxn_up_5d": 0.547,
+      "actual_vxn_up_5d": 1
+    },
+    {
+      "event_date": "2011-06-16",
+      "us_event_date": "2011-06-15",
+      "kind": "cpi",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": -12.6,
+      "fx_pct": 1.69,
+      "overnight_ndx_pct": -1.84,
+      "pred_r0_pct": -1.56,
+      "actual_r0_pct": -1.53,
+      "p_vxn_up_5d": 0.541,
+      "actual_vxn_up_5d": 0
+    },
+    {
+      "event_date": "2011-06-23",
+      "us_event_date": "2011-06-22",
+      "kind": "fomc",
+      "regime": "below_ma20_defensive:calm_accumulation",
+      "rate_bps": 0.8,
+      "fx_pct": 0.32,
+      "overnight_ndx_pct": -0.71,
+      "pred_r0_pct": -0.73,
+      "actual_r0_pct": 1.46,
+      "p_vxn_up_5d": 0.558,
+      "actual_vxn_up_5d": 1
+    }
+  ]
+}

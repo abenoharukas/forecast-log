@@ -79,30 +79,37 @@ def main(argv: list[str] | None = None) -> None:
 
     sim_p = sub.add_parser("sim", help="在显式市场状态方程中运行异质性多主体政策冲击仿真")
     sim_p.add_argument(
+        "--market",
+        choices=("ndx", "ssec"),
+        default="ndx",
+        help="目标市场：ndx (^NDX / ^VXN) 或 ssec (A股上证综指 000001.SS / RV20)",
+    )
+    sim_p.add_argument(
         "--scenario",
-        default="tariff_25",
-        help="预设情景（tariff_25 / fomc_hawkish_25 / fomc_dovish_cut / cpi_hot_surprise / nfp_goldilocks / credit_crunch）",
+        default=None,
+        help="预设情景（如美股 tariff_25 / fomc_hawkish_25；A股 pboc_924_bazooka / huijin_stabilization / us_china_tariff_35）",
     )
     sim_p.add_argument("--day", default=None, help="基准交易日 YYYY-MM-DD，默认最新交易日")
     sim_p.add_argument("--steps", type=int, default=5, help="推演交易日步数，默认 5")
     sim_p.add_argument("--mode", choices=("rule", "homogeneous", "llm"), default="rule", help="角色决策模式")
     sim_p.add_argument("--models", default=None, help="LLM 模式下模型列表，逗号分隔（如 deepseek-chat,qwen3.8-flash）")
-    sim_p.add_argument("--rate-bps", type=float, default=None, help="覆盖 10Y 利率冲击（bps）")
+    sim_p.add_argument("--rate-bps", type=float, default=None, help="覆盖利率冲击（bps）")
     sim_p.add_argument("--fx-pct", type=float, default=None, help="覆盖美元指数外生冲击（百分点，%%）")
     sim_p.add_argument("--inflation-z", type=float, default=None, help="覆盖通胀意外（标准差）")
-    sim_p.add_argument("--growth-z", type=float, default=None, help="覆盖增长意外（标准差）")
+    sim_p.add_argument("--growth-z", type=float, default=None, help="覆盖增长/财政刺激意外（标准差）")
     sim_p.add_argument("--tariff-pct", type=float, default=None, help="覆盖关税税率变动（百分点）")
     sim_p.add_argument("--uncertainty-z", type=float, default=None, help="覆盖政策不确定性冲击（标准差）")
     sim_p.add_argument("--title", default=None, help="自定义情景标题")
     sim_p.add_argument("--out", default="artifacts/sim/latest_scenario.json", help="仿真结果输出路径")
 
-    sim_bt = sub.add_parser("sim-backtest", help="在历史 FOMC / CPI / NFP 宏观事件上回测多主体仿真引擎")
+    sim_bt = sub.add_parser("sim-backtest", help="在历史宏观事件上回测多主体仿真引擎（支持美股 ndx 与 A股 ssec）")
+    sim_bt.add_argument("--market", choices=("ndx", "ssec"), default="ndx", help="回测市场：ndx 或 ssec")
     sim_bt.add_argument("--kinds", default="fomc,cpi,nfp", help="事件类型，逗号分隔")
     sim_bt.add_argument("--horizon", type=int, default=5, help="事件后推演窗口（交易日）")
     sim_bt.add_argument("--limit", type=int, default=None, help="均匀抽样多少次历史事件（便于快速跑 LLM 对照）")
     sim_bt.add_argument("--with-llm", action="store_true", help="同时跑真实 LLM 多主体对照")
     sim_bt.add_argument("--models", default=None, help="LLM 模型列表，逗号分隔")
-    sim_bt.add_argument("--out", default="artifacts/sim/backtest_report.json", help="回测报告输出路径")
+    sim_bt.add_argument("--out", default=None, help="回测报告输出路径")
 
     args = parser.parse_args(argv)
     if args.command == "serve":
@@ -194,6 +201,7 @@ def main(argv: list[str] | None = None) -> None:
 
         sim.sim_command(
             root,
+            market=args.market,
             scenario=args.scenario,
             day=args.day,
             steps=args.steps,
@@ -213,6 +221,7 @@ def main(argv: list[str] | None = None) -> None:
 
         sim.sim_backtest_command(
             root,
+            market=args.market,
             kinds=args.kinds,
             horizon=args.horizon,
             limit=args.limit,

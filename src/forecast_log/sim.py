@@ -1,26 +1,17 @@
 """Multi-agent policy and market simulation with explicit market-clearing state equations.
 
-Unlike `group_chat.py` (where models debate in prose), actors here never output prices.
-Each heterogeneous institutional actor observes a strictly time-gated `MarketState`
-(`AsOf.check` enforced on every bar and headline) plus an exogenous `PolicyShock`, and
-submits bounded portfolio flow decisions (`equity_delta`, `bond_delta`, `credit_delta`,
-`vol_hedge_delta`). A deterministic market-clearing engine aggregates flows under
-endogenous dealer liquidity (Kyle's lambda) to compute the next state vector:
-
-    S_t = (NDX_t, VXN_t, TNX_t, ln(HYG_t / TLT_t), DXY_t)
-
-Why four distinct institutional mandates instead of N identical prompts:
-1. `macro_fund` (Global Macro, w=0.30): trades rate duration vs. growth/inflation mix
-   and USD liquidity, flipping its equity-yield sensitivity when trailing 63-session
-   stock-yield correlation turns negative (inflation/discount-rate regime vs. ZLB growth).
-2. `vol_target_cta` (Volatility-Targeting CTA / Risk Parity, w=0.25): mechanically scales
-   equity exposure inversely to implied volatility (`target_vol / VXN`), generating
-   multi-day deleveraging cascades after vol spikes and re-leveraging as fear subsides.
-3. `corp_credit_hedger` (Credit & Corporate Hedger, w=0.25): prices tariff/margin shocks
-   and credit spread widening (`HYG/TLT`), buying downside protection (`vol_hedge_delta`).
-4. `options_dealer_mm` (Options & Equity Market Maker, w=0.20): supplies mean-reverting
-   liquidity in calm contango (`^VIX9D / ^VIX3M < 0.98`) but pulls liquidity and hedges
-   short gamma in backwardation, amplifying price impact non-linearly.
+Supports two distinct market microstructures under strict timezone-aware `AsOf` gating:
+1. **US Tech / Cross-Asset (`market="ndx"`, `^NDX` + `^VXN`)**:
+   - State vector: `S_t = (NDX_t, VXN_t, TNX_t, ln(HYG_t / TLT_t), DXY_t)` gated at `16:15 ET`.
+   - Four institutional mandates: `macro_fund`, `vol_target_cta`, `corp_credit_hedger`, `options_dealer_mm`.
+2. **China A-Shares (`market="ssec"`, `000001.SS` Shanghai Composite + `RV20`)**:
+   - State vector: `S_t = (SSEC_t, RV20_t, TNX_{t-1,US}, ln(SSEC_t / MA20_t), DXY_{t-1,US})`
+     gated at `15:05 Asia/Shanghai` (`02:05/03:05 ET`), where US cross-asset closes (`^NDX`,
+     `^TNX`, `DX-Y.NYB`) are strictly restricted to sessions `< session_date` so same-day
+     New York trading never leaks into Shanghai's 15:00 close.
+   - Four A-share institutional mandates: `national_team_etf` (Huijin / stabilization ETF desk),
+     `northbound_global` (Northbound / global macro), `quant_dma_margin` (retail margin & quant
+     vol/trend funds), and `mutual_insurer_value` (domestic mutual funds & insurers).
 
 Supports three interchangeable actor backends on the exact same clearing equations:
 - `rule`: Calibrated micro-founded behavioural reaction functions (fast, reproducible).
@@ -35,11 +26,13 @@ import json
 import math
 import re
 import statistics
+import threading as _threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Literal, Protocol, Sequence
+from typing import Iterator, Literal, Protocol, Sequence
+from zoneinfo import ZoneInfo
 
 import numpy as np
 
@@ -52,10 +45,28 @@ from forecast_log.bars import Series, load_series
 from forecast_log.db import get_news_fetch, has_series_in_db
 from forecast_log.estimate import AnalogModel
 
+SHANGHAI = ZoneInfo("Asia/Shanghai")
+
 REQUIRED_SYMBOLS = ("^NDX", "^VXN", "^TNX", "HYG", "TLT", "DX-Y.NYB")
-OPTIONAL_SYMBOLS = ("^VIX9D", "^VIX3M")
+OPTIONAL_SYMBOLS = ("^VIX9D", "^VIX3M", "000001.SS")
 
 ActorMode = Literal["rule", "homogeneous", "llm"]
+SimMarket = Literal["ndx", "ssec"]
+
+
+def normalize_sim_market(raw: str | None) -> SimMarket:
+    key = (raw or "ndx").strip().lower()
+    if key in ("ssec", "a-shares", "ashares", "000001.ss", "cn", "china"):
+        return "ssec"
+    return "ndx"
+
+
+def as_of_for_market(day: date, market: SimMarket = "ndx") -> AsOf:
+    """Return timezone-accurate session-close `AsOf` (`16:15 ET` for US, `15:05 CST` for A-shares)."""
+    if normalize_sim_market(market) == "ssec":
+        sh_close = datetime(day.year, day.month, day.day, 15, 5, tzinfo=SHANGHAI)
+        return AsOf(session=day, at=sh_close.astimezone(NY))
+    return AsOf.at_session_close(day)
 
 
 # --------------------------------------------------------------------- data types
@@ -67,22 +78,35 @@ class MarketState:
 
     as_of: str
     step: int
-    ndx: float
-    vxn: float
-    tnx: float                  # 10Y Treasury yield in percentage points (e.g. 4.45)
-    credit_log_ratio: float     # ln(HYG / TLT)
-    dxy: float                  # US Dollar Index
+    ndx: float                  # Equity index level (^NDX for 'ndx', 000001.SS for 'ssec')
+    vxn: float                  # Vol level (^VXN implied vol for 'ndx', RV20 realized vol % for 'ssec')
+    tnx: float                  # 10Y Treasury yield in percentage points (overnight < session for 'ssec')
+    credit_log_ratio: float     # ln(HYG / TLT) for 'ndx'; ln(SSEC / MA20) trend ratio for 'ssec'
+    dxy: float                  # US Dollar Index (overnight < session for 'ssec')
     vxn_median_252d: float
     vxn_std_252d: float
-    realized_vol_21d: float     # Annualized 21-session realized NDX vol (%)
-    vol_term_ratio: float       # ^VIX9D / ^VIX3M (1.0 if unavailable)
-    stock_yield_corr_63d: float # Trailing 63-session corr(r_NDX, d_TNX): <0 = inflation regime
+    realized_vol_21d: float     # Annualized 20/21-session realized equity vol (%)
+    vol_term_ratio: float       # ^VIX9D / ^VIX3M for 'ndx'; RV5 / RV20 short-to-medium vol ratio for 'ssec'
+    stock_yield_corr_63d: float # corr(r_NDX, d_TNX) for 'ndx'; corr(r_SSEC, r_NDX_overnight) for 'ssec'
     ndx_ret_5d: float
     ndx_ret_20d: float
     tnx_chg_20d_bps: float
     credit_chg_20d: float
     dxy_ret_20d: float
     prev_implied_leverage: float = 1.0
+    market: str = "ndx"
+    index_symbol: str = "^NDX"
+    vol_symbol: str = "^VXN"
+    aux_metric_label: str = "ln(HYG/TLT)"
+    overnight_us_ret: float = 0.0
+
+    @property
+    def index_level(self) -> float:
+        return self.ndx
+
+    @property
+    def vol_level(self) -> float:
+        return self.vxn
 
     @property
     def vxn_z(self) -> float:
@@ -94,6 +118,14 @@ class MarketState:
 
     @property
     def regime_label(self) -> str:
+        if self.market == "ssec":
+            base = "above_ma20_momentum" if self.credit_log_ratio >= 0.0 else "below_ma20_defensive"
+            stress = (
+                "high_vol_breakout"
+                if (self.vol_term_ratio > 1.15 or self.vxn_z > 1.0)
+                else "calm_accumulation"
+            )
+            return f"{base}:{stress}"
         if self.stock_yield_corr_63d < -0.10 or self.tnx >= 3.25:
             base = "inflation_discount_rate"
         else:
@@ -103,10 +135,16 @@ class MarketState:
 
     def to_summary_dict(self) -> dict:
         return {
+            "market": self.market,
+            "index_symbol": self.index_symbol,
+            "vol_symbol": self.vol_symbol,
+            "aux_metric_label": self.aux_metric_label,
             "as_of": self.as_of,
             "step": self.step,
             "ndx": round(self.ndx, 2),
             "vxn": round(self.vxn, 2),
+            "index_level": round(self.ndx, 2),
+            "vol_level": round(self.vxn, 2),
             "tnx_pct": round(self.tnx, 3),
             "credit_log_hyg_tlt": round(self.credit_log_ratio, 4),
             "dxy": round(self.dxy, 3),
@@ -120,6 +158,7 @@ class MarketState:
             "tnx_chg_20d_bps": round(self.tnx_chg_20d_bps, 1),
             "credit_chg_20d_pct": round(self.credit_chg_20d * 100.0, 2),
             "dxy_ret_20d_pct": round(self.dxy_ret_20d * 100.0, 2),
+            "overnight_us_ret_pct": round(self.overnight_us_ret * 100.0, 2),
             "regime": self.regime_label,
         }
 
@@ -128,16 +167,17 @@ class MarketState:
 class PolicyShock:
     """Exogenous policy or macro event impulse applied to the economy."""
 
-    kind: str = "custom"          # fomc | cpi | nfp | tariff | fiscal | credit | custom
+    kind: str = "custom"          # fomc | cpi | nfp | tariff | fiscal | credit | pboc | stabilization | custom
     title: str = ""
-    rate_bps: float = 0.0         # Instantaneous 10Y / policy rate impulse in bps (+ = hawkish)
-    fx_pct: float = 0.0           # Exogenous USD appreciation impulse in % (+ = stronger USD)
-    inflation_z: float = 0.0      # Supply / inflation surprise in std devs (+ = hotter CPI/cost)
-    growth_z: float = 0.0         # Real demand / payrolls surprise in std devs (+ = stronger growth)
+    rate_bps: float = 0.0         # Instantaneous 10Y / policy rate impulse in bps (+ = hawkish / - = PBOC or Fed cut)
+    fx_pct: float = 0.0           # Exogenous USD appreciation / RMB pressure impulse in % (+ = stronger USD)
+    inflation_z: float = 0.0      # Inflation / PPI surprise in std devs
+    growth_z: float = 0.0         # Real demand / fiscal stimulus surprise in std devs (+ = stimulus / stronger growth)
     tariff_pct: float = 0.0       # Effective new tariff / trade barrier shock in percentage points
-    uncertainty_z: float = 0.0    # Policy / geopolitical ambiguity impulse in std devs
+    uncertainty_z: float = 0.0    # Policy / geopolitical ambiguity impulse in std devs (- = stabilization backstop)
     persistence: float = 0.35     # Decay factor rho in [0, 0.9] across post-shock steps s=2..H
     headlines: tuple[str, ...] = ()
+    overnight_equity_pct: float = 0.0  # Settled overnight external equity gap (%) prior to Step 1 open
 
     def at_step(self, step: int) -> PolicyShock:
         """Step 1 receives the primary shock; steps >= 2 receive decaying aftershocks."""
@@ -155,10 +195,11 @@ class PolicyShock:
             uncertainty_z=self.uncertainty_z * scale,
             persistence=self.persistence,
             headlines=self.headlines if step == 1 else (),
+            overnight_equity_pct=0.0,
         )
 
     def to_json(self) -> dict:
-        return {
+        out = {
             "kind": self.kind,
             "title": self.title,
             "rate_bps": round(self.rate_bps, 2),
@@ -170,6 +211,9 @@ class PolicyShock:
             "persistence": round(self.persistence, 3),
             "headlines": list(self.headlines),
         }
+        if abs(self.overnight_equity_pct) > 1e-6:
+            out["overnight_equity_pct"] = round(self.overnight_equity_pct, 2)
+        return out
 
 
 PRESET_SHOCKS: dict[str, PolicyShock] = {
@@ -241,6 +285,79 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
 }
 
+SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
+    "pboc_924_bazooka": PolicyShock(
+        kind="pboc",
+        title="央行一揽子金融新政：降准 50bp + 政策利率下调 20bp + 创设证券基金互换便利与增持再贷款",
+        rate_bps=-20.0,
+        fx_pct=-0.45,
+        inflation_z=0.35,
+        growth_z=1.75,
+        tariff_pct=0.0,
+        uncertainty_z=-0.80,
+        persistence=0.62,
+    ),
+    "npc_fiscal_stimulus": PolicyShock(
+        kind="fiscal",
+        title="全国人大常委会批准超预期地方化债与特别国债扩内需一揽子增量财政方案",
+        rate_bps=-8.0,
+        fx_pct=-0.25,
+        inflation_z=0.45,
+        growth_z=1.45,
+        tariff_pct=0.0,
+        uncertainty_z=-0.50,
+        persistence=0.50,
+    ),
+    "huijin_stabilization": PolicyShock(
+        kind="stabilization",
+        title="中央汇金宣布扩大宽基 ETF 增持范围并持续入市，央行承诺提供充足再贷款流动性支持",
+        rate_bps=-10.0,
+        fx_pct=-0.15,
+        inflation_z=0.05,
+        growth_z=0.90,
+        tariff_pct=0.0,
+        uncertainty_z=-1.15,
+        persistence=0.48,
+    ),
+    "us_china_tariff_35": PolicyShock(
+        kind="tariff",
+        title="美方宣布对华关键出口产业加征 +35% 关税，外部贸易摩擦与离岸汇率压力骤升",
+        rate_bps=5.0,
+        fx_pct=0.75,
+        inflation_z=-0.35,
+        growth_z=-1.15,
+        tariff_pct=35.0,
+        uncertainty_z=1.75,
+        persistence=0.52,
+    ),
+    "fed_dxy_squeeze": PolicyShock(
+        kind="fomc",
+        title="美联储鹰派推迟降息 + 美元指数与 10Y 美债急升，北向配置盘与新兴市场汇率承压",
+        rate_bps=15.0,
+        fx_pct=0.80,
+        inflation_z=0.30,
+        growth_z=-0.25,
+        tariff_pct=0.0,
+        uncertainty_z=0.90,
+        persistence=0.40,
+    ),
+    "stamp_duty_ipo_pace": PolicyShock(
+        kind="stabilization",
+        title="证券交易印花税实施减半征收 + 阶段性收紧 IPO 与大股东减持节奏",
+        rate_bps=-6.0,
+        fx_pct=-0.10,
+        inflation_z=0.10,
+        growth_z=1.00,
+        tariff_pct=0.0,
+        uncertainty_z=-0.65,
+        persistence=0.40,
+    ),
+}
+
+
+def presets_for_market(market: SimMarket = "ndx") -> dict[str, PolicyShock]:
+    return SSEC_PRESET_SHOCKS if normalize_sim_market(market) == "ssec" else PRESET_SHOCKS
+
 
 @dataclass(frozen=True)
 class ActorSpec:
@@ -302,14 +419,69 @@ ACTOR_SPECS: tuple[ActorSpec, ...] = (
     ),
 )
 
+SSEC_ACTOR_SPECS: tuple[ActorSpec, ...] = (
+    ActorSpec(
+        actor_id="national_team_etf",
+        label="汇金 / 平准宽基 ETF 资金 (National Team)",
+        weight=0.28,
+        mandate=(
+            "State-backed broad-market ETF stabilization fund (CSI 300 / SSE 50 / SSE Composite). "
+            "Executes counter-cyclical stabilization by buying broad ETFs and compressing tail panic "
+            "(vol_hedge_delta < 0) during domestic policy easing, liquidity backstops, or acute "
+            "tariff/crash drawdowns, while remaining neutral or trimming into overheated surges."
+        ),
+        constraints="Mandated to prevent disorderly downside cascades; never chases frothy >7% 5d rallies.",
+    ),
+    ActorSpec(
+        actor_id="northbound_global",
+        label="北向与外资宏观配置盘 (Northbound / Global)",
+        weight=0.24,
+        mandate=(
+            "Cross-border institutional allocator trading A-share equity beta against USD/RMB FX "
+            "pressure (DXY), US 10Y Treasury yields (^TNX), overnight Nasdaq risk sentiment, and "
+            "US-China tariff headlines. Sells into USD spikes or tariff hikes; rotates into China "
+            "equities when credible PBOC + fiscal stimulus boosts real demand expectations."
+        ),
+        constraints="Tight FX and external VaR budget; fast to cut exposure on tariff or DXY shocks.",
+    ),
+    ActorSpec(
+        actor_id="quant_dma_margin",
+        label="两融与量化指增风控盘 (Margin & Quant)",
+        weight=0.26,
+        mandate=(
+            "Domestic retail margin financing (两融) and systematic index-enhanced quant funds "
+            "anchored to 20-day MA trend (ln(SSEC/MA20)) and 16% RV20 volatility budget. Amplifies "
+            "multi-day upside momentum breakouts when policy stimulus ignites turnover, and "
+            "mechanically deleverages when SSEC breaks below MA20 with spiking RV5/RV20."
+        ),
+        constraints="Pro-cyclical momentum & margin leverage; sensitive to 20-day MA and short-term vol.",
+    ),
+    ActorSpec(
+        actor_id="mutual_insurer_value",
+        label="公募与险资绝对收益盘 (Mutual & Insurer)",
+        weight=0.22,
+        mandate=(
+            "Domestic mutual funds and insurance absolute-return portfolios allocating between "
+            "high-dividend/core A-shares and domestic government bonds. Increases equity weight "
+            "when domestic policy rates fall (rate_bps < 0) or valuations pull back without external "
+            "trade-war shock, and rebalances/takes profit into rapid short-term rallies."
+        ),
+        constraints="Valuation and equity-risk-premium disciplined; rebalances against extreme 5d moves.",
+    ),
+)
+
+
+def actor_specs_for_market(market: SimMarket = "ndx") -> tuple[ActorSpec, ...]:
+    return SSEC_ACTOR_SPECS if normalize_sim_market(market) == "ssec" else ACTOR_SPECS
+
 
 @dataclass(frozen=True)
 class ActorAction:
     actor_id: str
     equity_delta: float       # [-1, +1]: net equity index order flow (+buy / -sell)
-    bond_delta: float         # [-1, +1]: net 10Y Treasury duration demand (+buy bonds -> lower yield)
-    credit_delta: float       # [-1, +1]: net HYG vs TLT credit risk appetite (+tighter spreads)
-    vol_hedge_delta: float    # [-1, +1]: net VXN option protection demand (+buy vol / -sell vol)
+    bond_delta: float         # [-1, +1]: net duration demand (+buy bonds -> lower yield)
+    credit_delta: float       # [-1, +1]: net credit / domestic trend risk appetite
+    vol_hedge_delta: float    # [-1, +1]: net option protection / volatility demand
     confidence: float = 0.6
     rationale: str = ""
     model: str = "rule"
@@ -444,6 +616,9 @@ class SimulationResult:
 
     def to_json(self) -> dict:
         return {
+            "market": self.initial_state.market,
+            "index_symbol": self.initial_state.index_symbol,
+            "vol_symbol": self.initial_state.vol_symbol,
             "as_of": self.as_of.to_json(),
             "mode": self.mode,
             "initial_state": self.initial_state.to_summary_dict(),
@@ -483,6 +658,27 @@ def _aligned_at_or_before(series: Series, target_days: list[date], as_of: AsOf) 
             last = closes[ptr]
             ptr += 1
         out[idx] = last
+    return out
+
+
+def _rolling_rv_series(closes: np.ndarray, window: int = 20, floor_pct: float = 5.5) -> np.ndarray:
+    """Compute point-in-time annualized realized volatility (%) at each bar index."""
+    n = len(closes)
+    out = np.full(n, np.nan, dtype=float)
+    if n < 3:
+        return out
+    rets = np.diff(np.log(closes))
+    for i in range(1, n):
+        start = max(0, i - window)
+        sub = rets[start:i]
+        if len(sub) >= 2:
+            val = float(np.std(sub, ddof=1) * math.sqrt(252.0) * 100.0)
+        elif len(sub) == 1:
+            val = float(abs(sub[0]) * math.sqrt(252.0) * 100.0)
+        else:
+            val = 15.0
+        out[i] = max(floor_pct, val)
+    out[0] = out[1]
     return out
 
 
@@ -535,8 +731,15 @@ class HistoricalPanel:
                     pass
         return cls(root=root, series_map=loaded)
 
-    def build_state(self, as_of: AsOf) -> tuple[MarketState, float, float]:
+    def has_ssec(self) -> bool:
+        return "000001.SS" in self.series_map and len(self.series_map["000001.SS"].bars) >= 80
+
+    def build_state(self, as_of: AsOf, market: SimMarket = "ndx") -> tuple[MarketState, float, float]:
         """Construct `MarketState` strictly from bars <= `as_of.session` + point-in-time residual scales."""
+        mkt = normalize_sim_market(market)
+        if mkt == "ssec":
+            return self._build_ssec_state(as_of)
+
         ndx_days, ndx = _visible_closes(self.series_map["^NDX"], as_of)
         take = min(len(ndx_days), 300)
         days = ndx_days[-take:]
@@ -588,7 +791,6 @@ class HistoricalPanel:
             if np.isfinite(v9) and np.isfinite(v3m) and v3m > 0:
                 term_ratio = float(v9 / v3m)
         else:
-            # Fallback proxy from VXN vs 252d median when term-structure indices are absent
             term_ratio = _clip(0.94 + 0.06 * ((vxn[-1] - vxn_med) / max(vxn_std, 1.0)), 0.75, 1.35)
 
         prev_vxn = float(vxn[-2]) if len(vxn) >= 2 else float(vxn[-1])
@@ -613,14 +815,106 @@ class HistoricalPanel:
             credit_chg_20d=float(credit[-1] - credit[-21]) if len(credit) >= 21 else 0.0,
             dxy_ret_20d=float(math.log(dxy[-1] / dxy[-21])) if len(dxy) >= 21 else 0.0,
             prev_implied_leverage=prev_lev,
+            market="ndx",
+            index_symbol="^NDX",
+            vol_symbol="^VXN",
+            aux_metric_label="ln(HYG/TLT)",
         )
         res_ret_std = float(np.std(ndx_rets[-126:], ddof=1)) if len(ndx_rets) >= 30 else 0.012
         res_vxn_std = float(np.std(vxn_diffs[-126:], ddof=1)) if len(vxn_diffs) >= 30 else 1.35
         return state, res_ret_std, res_vxn_std
 
+    def _build_ssec_state(self, as_of: AsOf) -> tuple[MarketState, float, float]:
+        """Construct A-share `MarketState` (`000001.SS` + `RV20`) with strict `< session` US cutoff."""
+        if "000001.SS" not in self.series_map:
+            raise ValueError("000001.SS series is missing from database; run `forecast-log fetch`.")
+        ssec_days, ssec = _visible_closes(self.series_map["000001.SS"], as_of)
+        take = min(len(ssec_days), 300)
+        days = ssec_days[-take:]
+        ssec = ssec[-take:]
+        as_of.check(days[-1], "sim:ssec_last_day")
 
-def build_market_state(root: Path, as_of: AsOf) -> tuple[MarketState, float, float]:
-    return HistoricalPanel.load(root).build_state(as_of)
+        # Anti-leakage timezone discipline: Shanghai closes at 15:00 CST on `d`, before New York
+        # opens on `d`. Only US sessions `<= d - 1 day` have closed by Shanghai's 15:00 close!
+        us_target_days = [d - timedelta(days=1) for d in days]
+        us_gate = AsOf.at_session_close(days[-1] - timedelta(days=1))
+        tnx = _aligned_at_or_before(self.series_map["^TNX"], us_target_days, us_gate)
+        dxy = _aligned_at_or_before(self.series_map["DX-Y.NYB"], us_target_days, us_gate)
+        us_ndx = _aligned_at_or_before(self.series_map["^NDX"], us_target_days, us_gate)
+
+        valid = np.isfinite(ssec) & np.isfinite(tnx) & np.isfinite(dxy) & np.isfinite(us_ndx)
+        if int(valid.sum()) < 65:
+            raise ValueError(f"Insufficient aligned A-share + global history at {as_of.session}")
+
+        days = [d for d, ok in zip(days, valid) if ok]
+        ssec, tnx, dxy, us_ndx = (arr[valid] for arr in (ssec, tnx, dxy, us_ndx))
+
+        rv20 = _rolling_rv_series(ssec, window=20, floor_pct=5.5)
+        rv5 = _rolling_rv_series(ssec, window=5, floor_pct=5.5)
+        ssec_rets = np.diff(np.log(ssec))
+        us_ndx_rets = np.diff(np.log(us_ndx))
+        rv20_diffs = np.diff(rv20)
+
+        # Domestic trend / liquidity state: ln(SSEC / MA20)
+        ma20_arr = np.array(
+            [float(np.mean(ssec[max(0, i - 19) : i + 1])) for i in range(len(ssec))],
+            dtype=float,
+        )
+        ma20_log = np.log(ssec / np.maximum(ma20_arr, 1.0))
+
+        win_v = rv20[-252:] if len(rv20) >= 252 else rv20
+        rv_med = float(np.median(win_v))
+        rv_std = float(np.std(win_v, ddof=1)) if len(win_v) > 2 else 4.0
+
+        corr_len = min(63, len(ssec_rets))
+        r_cn = ssec_rets[-corr_len:]
+        r_us = us_ndx_rets[-corr_len:]
+        if np.std(r_cn) > 1e-9 and np.std(r_us) > 1e-9:
+            overnight_corr = float(np.corrcoef(r_cn, r_us)[0, 1])
+        else:
+            overnight_corr = 0.20
+
+        term_ratio = _clip(float(rv5[-1] / max(rv20[-1], 5.5)), 0.55, 2.00)
+        prev_rv = float(rv20[-2]) if len(rv20) >= 2 else float(rv20[-1])
+        prev_lev = _clip(16.0 / max(prev_rv, 6.0), 0.35, 1.65)
+        overnight_us_r = float(us_ndx_rets[-1]) if len(us_ndx_rets) >= 1 else 0.0
+
+        state = MarketState(
+            as_of=days[-1].isoformat(),
+            step=0,
+            ndx=float(ssec[-1]),
+            vxn=float(rv20[-1]),
+            tnx=float(tnx[-1]),
+            credit_log_ratio=float(ma20_log[-1]),
+            dxy=float(dxy[-1]),
+            vxn_median_252d=rv_med,
+            vxn_std_252d=max(rv_std, 1.0),
+            realized_vol_21d=float(rv20[-1]),
+            vol_term_ratio=term_ratio,
+            stock_yield_corr_63d=overnight_corr,
+            ndx_ret_5d=float(math.log(ssec[-1] / ssec[-6])) if len(ssec) >= 6 else 0.0,
+            ndx_ret_20d=float(math.log(ssec[-1] / ssec[-21])) if len(ssec) >= 21 else 0.0,
+            tnx_chg_20d_bps=float((tnx[-1] - tnx[-21]) * 100.0) if len(tnx) >= 21 else 0.0,
+            credit_chg_20d=float(ma20_log[-1] - ma20_log[-21]) if len(ma20_log) >= 21 else 0.0,
+            dxy_ret_20d=float(math.log(dxy[-1] / dxy[-21])) if len(dxy) >= 21 else 0.0,
+            prev_implied_leverage=prev_lev,
+            market="ssec",
+            index_symbol="000001.SS",
+            vol_symbol="RV20",
+            aux_metric_label="ln(SSEC/MA20)",
+            overnight_us_ret=overnight_us_r,
+        )
+        res_ret_std = float(np.std(ssec_rets[-126:], ddof=1)) if len(ssec_rets) >= 30 else 0.011
+        res_rv_std = float(np.std(rv20_diffs[-126:], ddof=1)) if len(rv20_diffs) >= 30 else 0.85
+        return state, res_ret_std, max(res_rv_std, 0.35)
+
+
+def build_market_state(
+    root: Path,
+    as_of: AsOf,
+    market: SimMarket = "ndx",
+) -> tuple[MarketState, float, float]:
+    return HistoricalPanel.load(root).build_state(as_of, market=market)
 
 
 # --------------------------------------------------------- heterogeneous actors
@@ -628,7 +922,7 @@ def build_market_state(root: Path, as_of: AsOf) -> tuple[MarketState, float, flo
 
 @dataclass
 class RuleActor:
-    """Micro-founded institutional reaction function parameterized by mandate."""
+    """Micro-founded US cross-asset institutional reaction function parameterized by mandate."""
 
     spec: ActorSpec
 
@@ -644,9 +938,6 @@ class RuleActor:
         tariff_z = shock.tariff_pct / 15.0
 
         if aid == "macro_fund":
-            # Regime-switching duration beta: in inflation/high-rate regimes (corr < 0 or
-            # hot inflation surprise), rate hikes hurt equities; in ZLB/growth regimes,
-            # moderate yield rises accompany growth optimism unless USD spikes sharply.
             inflation_regime = (
                 state.stock_yield_corr_63d < -0.05
                 or state.tnx >= 3.25
@@ -672,14 +963,10 @@ class RuleActor:
             return ActorAction(aid, eq, bond, cred, vol_h, 0.70, why, model="rule").clipped()
 
         if aid == "vol_target_cta":
-            # Target 18% annualized volatility; responds to realized/implied vol shifts
-            # and trend momentum, creating mechanical multi-step deleveraging/re-leveraging.
             effective_vol = max(9.0, 0.65 * state.vxn + 0.35 * state.realized_vol_21d + 1.1 * shock.uncertainty_z)
             target_lev = _clip(18.0 / effective_vol, 0.35, 1.65)
             lev_delta = target_lev - state.prev_implied_leverage
             trend = _clip(state.ndx_ret_20d / 0.06, -1.0, 1.0)
-            # When short-term panic is extreme but already peaked (term_ratio > 1.06 & no fresh shock),
-            # anticipated vol mean-reversion moderates forced selling.
             reversion_relief = (
                 0.14 * (state.vol_term_ratio - 1.0)
                 if (state.vol_term_ratio > 1.04 and abs(shock.rate_bps) < 4.0 and shock.uncertainty_z <= 0.2)
@@ -707,7 +994,7 @@ class RuleActor:
                 0.42 * tariff_z
                 + 0.30 * max(0.0, credit_stress)
                 + 0.28 * shock.uncertainty_z
-                - 0.18 * max(0.0, state.vxn_z - 0.8)  # monetizes/takes profit on expensive puts when VXN very high
+                - 0.18 * max(0.0, state.vxn_z - 0.8)
             )
             why = f"CorpCredit(tariff={shock.tariff_pct:.1f}%, cred20d={state.credit_chg_20d*100:+.2f}%)"
             return ActorAction(aid, eq, bond, cred, vol_h, 0.68, why, model="rule").clipped()
@@ -716,15 +1003,12 @@ class RuleActor:
         in_backwardation = state.vol_term_ratio > 1.03 or state.vxn_z > 1.25
         prior_flow = prior_steps[-1].clearing.net_equity_flow if prior_steps else 0.0
         if in_backwardation:
-            # Short-gamma regime: hedges in the direction of shock/flow on impact, but as
-            # front-end event vol crushes post-event (uncertainty <= 0.3), vega/charm unwinds VXN.
             gamma_procyclical = -0.22 * shock.uncertainty_z - 0.20 * fx_z + 0.25 * prior_flow
             vega_supply = -0.38 * (state.vol_term_ratio - 1.0) - 0.22 * max(0.0, state.vxn_z) + 0.35 * shock.uncertainty_z
             eq = gamma_procyclical + (0.14 if shock.uncertainty_z <= 0.2 else 0.0)
             vol_h = vega_supply
             why = f"DealerMM(short-gamma, term={state.vol_term_ratio:.2f}, vxn_z={state.vxn_z:+.2f})"
         else:
-            # Long-gamma / calm contango: absorbs order-flow imbalances and supplies vol slowly
             eq = -0.25 * prior_flow - 0.12 * (state.ndx_ret_5d / 0.03) + 0.08 * (1.0 - state.vol_term_ratio)
             vol_h = -0.15 * state.vxn_z + 0.24 * shock.uncertainty_z + 0.10 * max(0.0, 0.92 - state.vol_term_ratio)
             why = f"DealerMM(long-gamma liquidity, term={state.vol_term_ratio:.2f})"
@@ -734,8 +1018,8 @@ class RuleActor:
 
 
 @dataclass
-class HomogeneousRuleActor:
-    """Ablation baseline: ignores institutional mandates, regime flip, and vol term structure."""
+class SSECRuleActor:
+    """Micro-founded China A-share (`000001.SS`) institutional reaction functions."""
 
     spec: ActorSpec
 
@@ -745,15 +1029,113 @@ class HomogeneousRuleActor:
         shock: PolicyShock,
         prior_steps: Sequence[SimulationStep],
     ) -> ActorAction:
-        # Static textbook reaction: assumes higher yields are mildly bad (-0.08), ignores
-        # 63d stock-yield correlation sign flip, vol-targeting leverage, and dealer gamma.
+        aid = self.spec.actor_id
+        rate_z = shock.rate_bps / 10.0       # <0 = PBOC cut / global easing; >0 = Fed/rate tightening
+        fx_z = shock.fx_pct / 0.50           # >0 = stronger USD / RMB depreciation pressure
+        tariff_z = shock.tariff_pct / 20.0
+        ov_us = (shock.overnight_equity_pct / 100.0) if abs(shock.overnight_equity_pct) > 1e-6 else 0.0
+        ma_gap = state.credit_log_ratio      # ln(SSEC / MA20)
+
+        if aid == "national_team_etf":
+            # Counter-cyclical broad-ETF stabilization desk ("国家队/汇金"):
+            # Buys decisively on domestic easing/stabilization packages OR when A-shares suffer
+            # deep 5d drawdowns (<-3.5%) or post-Step-1 tariff shock dislocations.
+            domestic_easing = max(0.0, -rate_z) * 0.28 + max(0.0, shock.growth_z) * 0.30 + max(0.0, -shock.uncertainty_z) * 0.34
+            drawdown_rescue = max(0.0, (-state.ndx_ret_5d - 0.030) / 0.04) * 0.42
+            post_tariff_cushion = 0.28 * tariff_z if len(prior_steps) >= 1 else -0.06 * tariff_z
+            overheat_trim = -0.25 * max(0.0, (state.ndx_ret_5d - 0.065) / 0.05)
+            eq = domestic_easing + drawdown_rescue + post_tariff_cushion + overheat_trim + 0.08 * (ov_us / 0.015)
+            bond = 0.22 * max(0.0, -rate_z) + 0.12 * max(0.0, tariff_z)
+            cred = 0.45 * eq
+            vol_h = -0.38 * max(0.0, eq) + 0.15 * max(0.0, shock.uncertainty_z)
+            why = (
+                f"汇金ETF平准(政策托底={domestic_easing:+.2f}, 超跌护盘={drawdown_rescue:+.2f}, "
+                f"5d涨跌={state.ndx_ret_5d*100:+.1f}%)"
+            )
+            return ActorAction(aid, eq, bond, cred, vol_h, 0.78, why, model="rule").clipped()
+
+        if aid == "northbound_global":
+            # Cross-border Northbound / global macro: sensitive to USD/RMB (fx_z), US tariffs,
+            # overnight Nasdaq risk sentiment, and credible domestic growth/fiscal stimulus.
+            eq = (
+                -0.34 * fx_z
+                - 0.20 * rate_z
+                - 0.46 * tariff_z
+                + 0.36 * shock.growth_z
+                + 0.10 * shock.inflation_z
+                + 0.28 * (ov_us / 0.015)
+                - 0.10 * (state.dxy_ret_20d / 0.02)
+            )
+            bond = -0.25 * rate_z - 0.15 * shock.inflation_z
+            cred = 0.35 * eq
+            vol_h = 0.34 * tariff_z + 0.24 * max(0.0, fx_z) + 0.22 * shock.uncertainty_z
+            why = (
+                f"北向外资(DXY冲击={shock.fx_pct:+.2f}%, 关税={shock.tariff_pct:.0f}%, "
+                f"内需刺激={shock.growth_z:+.2f}σ)"
+            )
+            return ActorAction(aid, eq, bond, cred, vol_h, 0.72, why, model="rule").clipped()
+
+        if aid == "quant_dma_margin":
+            # Retail margin (两融) + systematic quant trend/vol funds:
+            # Chases upside breakouts above MA20 on domestic stimulus, deleverages sharply
+            # on tariff/uncertainty spikes or breaks below MA20.
+            effective_rv = max(6.0, state.vxn + 1.4 * max(0.0, shock.uncertainty_z) - 0.8 * max(0.0, shock.growth_z))
+            target_lev = _clip(16.0 / effective_rv, 0.40, 1.60)
+            lev_delta = target_lev - state.prev_implied_leverage
+            trend_signal = _clip(ma_gap / 0.035, -1.0, 1.0)
+            prior_mom = prior_steps[-1].clearing.net_equity_flow if prior_steps else 0.0
+            stimulus_chase = 0.34 * max(0.0, shock.growth_z) + 0.20 * max(0.0, -rate_z)
+            panic_cut = -0.38 * tariff_z - 0.24 * max(0.0, shock.uncertainty_z)
+            eq = (
+                0.85 * lev_delta
+                + 0.22 * trend_signal
+                + 0.22 * prior_mom
+                + stimulus_chase
+                + panic_cut
+                + 0.20 * (ov_us / 0.015)
+            )
+            bond = -0.10 * eq
+            cred = 0.55 * eq
+            vol_h = 0.30 * abs(eq) + 0.22 * shock.uncertainty_z
+            why = (
+                f"两融与量化(MA20偏离={ma_gap*100:+.2f}%, RV20={state.vxn:.1f}%, "
+                f"杠杆变动={lev_delta:+.2f})"
+            )
+            return ActorAction(aid, eq, bond, cred, vol_h, 0.70, why, model="rule").clipped()
+
+        # mutual_insurer_value
+        erp_boost = 0.30 * (-rate_z) + 0.28 * shock.growth_z + 0.08 * shock.inflation_z
+        dip_value = 0.18 * _clip(-ma_gap / 0.04, -0.8, 0.8) if tariff_z < 0.4 else -0.18 * tariff_z
+        profit_take = -0.20 * max(0.0, (state.ndx_ret_5d - 0.05) / 0.04)
+        eq = erp_boost + dip_value + profit_take - 0.14 * fx_z + 0.12 * (ov_us / 0.015)
+        bond = 0.28 * (-rate_z) - 0.15 * shock.growth_z
+        cred = 0.30 * eq
+        vol_h = 0.20 * tariff_z + 0.14 * shock.uncertainty_z - 0.12 * max(0.0, state.vxn_z - 0.8)
+        why = f"公募险资配置(利率={shock.rate_bps:+.1f}bp, 估值偏离={ma_gap*100:+.2f}%, eq={eq:+.2f})"
+        return ActorAction(aid, eq, bond, cred, vol_h, 0.68, why, model="rule").clipped()
+
+
+@dataclass
+class HomogeneousRuleActor:
+    """Ablation baseline: single undifferentiated trader ignoring mandate heterogeneity."""
+
+    spec: ActorSpec
+
+    def act(
+        self,
+        state: MarketState,
+        shock: PolicyShock,
+        prior_steps: Sequence[SimulationStep],
+    ) -> ActorAction:
         rate_z = shock.rate_bps / 10.0
+        ov_us = (shock.overnight_equity_pct / 100.0) if abs(shock.overnight_equity_pct) > 1e-6 else 0.0
         eq = (
             -0.08 * rate_z
             - 0.12 * (shock.fx_pct / 0.50)
             + 0.20 * shock.growth_z
-            - 0.20 * shock.inflation_z
+            - (0.20 if state.market != "ssec" else -0.04) * shock.inflation_z
             - 0.20 * (shock.tariff_pct / 15.0)
+            + 0.14 * (ov_us / 0.015)
             + 0.05 * (state.ndx_ret_20d / 0.05)
         )
         bond = -0.20 * rate_z - 0.15 * shock.inflation_z
@@ -777,10 +1159,10 @@ time-frozen market state S_{t-1}, and the current policy/macro shock impulse, ou
 object specifying your net portfolio flow adjustments in [-1.0, +1.0]:
 
 {
-  "equity_delta": float,      // [-1.0, +1.0] net Nasdaq-100 equity exposure change (+buy / -sell)
-  "bond_delta": float,        // [-1.0, +1.0] net 10Y Treasury duration demand (+buy bonds / -sell)
-  "credit_delta": float,      // [-1.0, +1.0] net HYG vs TLT credit risk appetite (+risk-on / -wider spreads)
-  "vol_hedge_delta": float,   // [-1.0, +1.0] net VXN volatility protection demand (+buy puts/vol / -sell vol)
+  "equity_delta": float,      // [-1.0, +1.0] net index equity exposure change (+buy / -sell)
+  "bond_delta": float,        // [-1.0, +1.0] net sovereign bond duration demand (+buy bonds / -sell)
+  "credit_delta": float,      // [-1.0, +1.0] net credit / risk-appetite beta flow (+risk-on / -defensive)
+  "vol_hedge_delta": float,   // [-1.0, +1.0] net volatility protection / option demand (+buy vol / -sell vol)
   "confidence": float,        // [0.0, 1.0] conviction in this flow vector
   "rationale": "concise 1-sentence institutional mechanism (<180 chars)"
 }
@@ -788,7 +1170,7 @@ object specifying your net portfolio flow adjustments in [-1.0, +1.0]:
 Calibration scale for flows:
 - +/-0.05 to +/-0.20: routine rebalancing or mild surprise
 - +/-0.25 to +/-0.55: significant macro/policy surprise (1-2 sigma)
-- +/-0.60 to +/-1.00: extreme tail shock or forced mandate deleveraging
+- +/-0.60 to +/-1.00: extreme tail shock, policy bazooka, or forced mandate deleveraging
 Stay strictly faithful to your specific mandate and constraints, even if another desk would act differently.
 Return raw JSON only."""
 
@@ -830,8 +1212,8 @@ class LLMActor:
             {
                 "step": s.step,
                 "net_equity_flow": round(s.clearing.net_equity_flow, 3),
-                "step_ndx_ret_pct": round(s.clearing.step_equity_log_return * 100.0, 2),
-                "step_vxn_chg": round(s.clearing.step_vxn_change, 2),
+                "step_index_ret_pct": round(s.clearing.step_equity_log_return * 100.0, 2),
+                "step_vol_chg": round(s.clearing.step_vxn_change, 2),
                 "my_prev_equity_delta": next(
                     (round(a.equity_delta, 3) for a in s.actions if a.actor_id == self.spec.actor_id),
                     0.0,
@@ -840,6 +1222,9 @@ class LLMActor:
             for s in prior_steps[-3:]
         ]
         user_payload = {
+            "market": state.market,
+            "target_equity_index": state.index_symbol,
+            "target_volatility_metric": state.vol_symbol,
             "role_id": self.spec.actor_id,
             "role_label": self.spec.label,
             "capital_weight": self.spec.weight,
@@ -862,15 +1247,19 @@ class LLMActor:
 def build_actors(
     mode: ActorMode = "rule",
     *,
+    market: SimMarket = "ndx",
     root: Path | None = None,
     llms: Sequence[LLM] | dict[str, LLM] | None = None,
     models: Sequence[str] | None = None,
     temperature: float = 0.2,
 ) -> list[SimActor]:
+    mkt = normalize_sim_market(market)
+    specs = actor_specs_for_market(mkt)
     if mode == "rule":
-        return [RuleActor(spec) for spec in ACTOR_SPECS]
+        cls = SSECRuleActor if mkt == "ssec" else RuleActor
+        return [cls(spec) for spec in specs]
     if mode == "homogeneous":
-        return [HomogeneousRuleActor(spec) for spec in ACTOR_SPECS]
+        return [HomogeneousRuleActor(spec) for spec in specs]
     if mode != "llm":
         raise ValueError(f"Unknown simulation actor mode: {mode!r}")
 
@@ -878,7 +1267,7 @@ def build_actors(
     if isinstance(llms, dict):
         resolved_clients.update(llms)
     elif isinstance(llms, Sequence) and llms:
-        for idx, spec in enumerate(ACTOR_SPECS):
+        for idx, spec in enumerate(specs):
             resolved_clients[spec.actor_id] = llms[idx % len(llms)]
     else:
         if root is None:
@@ -889,17 +1278,126 @@ def build_actors(
             default_m = env.get("FORECAST_LOG_MODEL") or "deepseek-chat"
             model_list = [default_m]
         built = [providers.build(m, root, env=env) for m in model_list]
-        for idx, spec in enumerate(ACTOR_SPECS):
+        for idx, spec in enumerate(specs):
             resolved_clients[spec.actor_id] = built[idx % len(built)]
 
     out: list[SimActor] = []
-    for spec in ACTOR_SPECS:
+    for spec in specs:
         client = resolved_clients.get(spec.actor_id) or next(iter(resolved_clients.values()))
         out.append(LLMActor(spec=spec, llm=client, temperature=temperature))
     return out
 
 
 # ------------------------------------------- explicit market-clearing state engine
+
+
+def _clear_ssec_market_step(
+    state: MarketState,
+    shock: PolicyShock,
+    actions: Sequence[ActorAction],
+    weights: dict[str, float] | None = None,
+) -> tuple[MarketState, ClearingDiagnostics]:
+    """Compute next A-share (`000001.SS` + `RV20`) equilibrium state S_{t+1}."""
+    w_map = weights or {spec.actor_id: spec.weight for spec in SSEC_ACTOR_SPECS}
+    total_w = sum(w_map.get(a.actor_id, 0.25) for a in actions) or 1.0
+
+    f_eq = sum(w_map.get(a.actor_id, 0.25) * a.equity_delta for a in actions) / total_w
+    f_bond = sum(w_map.get(a.actor_id, 0.25) * a.bond_delta for a in actions) / total_w
+    f_cred = sum(w_map.get(a.actor_id, 0.25) * a.credit_delta for a in actions) / total_w
+    f_vol = sum(w_map.get(a.actor_id, 0.25) * a.vol_hedge_delta for a in actions) / total_w
+
+    disagreement = math.sqrt(
+        sum(w_map.get(a.actor_id, 0.25) * ((a.equity_delta - f_eq) ** 2) for a in actions) / total_w
+    )
+    nat_eq = next((a.equity_delta for a in actions if a.actor_id == "national_team_etf"), 0.0)
+
+    # 1. Endogenous A-share Kyle's lambda:
+    #    Expands in high-RV20 / high-disagreement regimes; dampened when stabilization ETF buys absorb panic.
+    vol_excess = max(0.0, (state.vxn - state.vxn_median_252d) / max(state.vxn_median_252d, 10.0))
+    stabilization_depth = max(0.0, nat_eq) if f_eq < 0 else 0.0
+    kyle_lambda = 0.025 * max(0.55, 1.0 + 0.45 * vol_excess + 0.30 * disagreement - 0.35 * stabilization_depth)
+
+    # 2. External / rate anchor transition (percentage points):
+    dy_pct = (shock.rate_bps / 100.0) - 0.035 * f_bond + 0.012 * shock.inflation_z
+    next_tnx = max(0.05, state.tnx + dy_pct)
+
+    # 3. USD / FX pressure transition (DX-Y.NYB):
+    d_log_dxy = (shock.fx_pct / 100.0) + 0.008 * max(0.0, dy_pct) + 0.00015 * shock.tariff_pct
+    next_dxy = state.dxy * math.exp(_clip(d_log_dxy, -0.05, 0.05))
+
+    # 4. Shanghai Composite (`000001.SS`) log-return (bounded by ~10% daily board limit):
+    ov_spillover = 0.16 * (shock.overnight_equity_pct / 100.0)
+    eq_log_ret = _clip(
+        kyle_lambda * f_eq
+        + 0.0045 * f_cred
+        - 0.18 * d_log_dxy
+        - 0.00022 * shock.tariff_pct
+        + ov_spillover,
+        -0.095,
+        0.095,
+    )
+    next_ssec = state.ndx * math.exp(eq_log_ret)
+
+    # 5. Update ln(SSEC / MA20): a 1-day return shifts SSEC relative to 20d moving average by ~(19/20)*r_t
+    next_ma20_log = _clip(0.94 * state.credit_log_ratio + 0.95 * eq_log_ret, -0.25, 0.25)
+    d_ma20 = next_ma20_log - state.credit_log_ratio
+
+    # 6. 20-Session Annualized Realized Volatility (`RV20`, in %):
+    #    By Jensen's inequality E[r_{t+1}^2] = (E[r_{t+1}])^2 + sigma_typical^2, so unshocked
+    #    sessions include baseline daily variance `(RV_median / 100)^2` while large shocks
+    #    (both crash days and policy-bazooka rally days) add `252 * eq_log_ret^2` on top.
+    baseline_var = (state.vxn_median_252d / 100.0) ** 2
+    var_prev = (state.vxn / 100.0) ** 2
+    var_step = baseline_var + (252.0 * (eq_log_ret ** 2))
+    inst_ann_vol = math.sqrt(var_step) * 100.0
+    recursive_rv = math.sqrt((19.0 / 20.0) * var_prev + (1.0 / 20.0) * var_step) * 100.0
+    ou_pull = 0.030 * (state.vxn_median_252d - state.vxn)
+    range_shock = 0.25 * max(0.0, f_vol) + 0.22 * max(0.0, shock.uncertainty_z) + 0.20 * max(0.0, disagreement - 0.18)
+    term_cool = -0.35 * (state.vol_term_ratio - 1.00) if (abs(eq_log_ret) < 0.008 and shock.uncertainty_z <= 0.15) else 0.0
+    next_rv20 = _clip(recursive_rv + ou_pull + range_shock + term_cool, 5.5, 68.0)
+    drv20 = next_rv20 - state.vxn
+
+    next_rv5_approx = math.sqrt((4.0 / 5.0) * ((state.vol_term_ratio * state.vxn) ** 2) + (1.0 / 5.0) * (inst_ann_vol ** 2))
+    next_term = _clip(next_rv5_approx / max(next_rv20, 5.5), 0.55, 2.00)
+    next_lev = _clip(16.0 / max(next_rv20, 6.0), 0.40, 1.60)
+
+    next_state = MarketState(
+        as_of=state.as_of,
+        step=state.step + 1,
+        ndx=next_ssec,
+        vxn=next_rv20,
+        tnx=next_tnx,
+        credit_log_ratio=next_ma20_log,
+        dxy=next_dxy,
+        vxn_median_252d=state.vxn_median_252d,
+        vxn_std_252d=state.vxn_std_252d,
+        realized_vol_21d=next_rv20,
+        vol_term_ratio=next_term,
+        stock_yield_corr_63d=state.stock_yield_corr_63d,
+        ndx_ret_5d=0.80 * state.ndx_ret_5d + eq_log_ret,
+        ndx_ret_20d=(19.0 / 20.0) * state.ndx_ret_20d + eq_log_ret,
+        tnx_chg_20d_bps=(19.0 / 20.0) * state.tnx_chg_20d_bps + dy_pct * 100.0,
+        credit_chg_20d=(19.0 / 20.0) * state.credit_chg_20d + d_ma20,
+        dxy_ret_20d=(19.0 / 20.0) * state.dxy_ret_20d + d_log_dxy,
+        prev_implied_leverage=next_lev,
+        market="ssec",
+        index_symbol="000001.SS",
+        vol_symbol="RV20",
+        aux_metric_label="ln(SSEC/MA20)",
+        overnight_us_ret=0.0,
+    )
+    diag = ClearingDiagnostics(
+        net_equity_flow=f_eq,
+        net_bond_flow=f_bond,
+        net_credit_flow=f_cred,
+        net_vol_hedge_flow=f_vol,
+        actor_disagreement=disagreement,
+        kyle_lambda=kyle_lambda,
+        step_equity_log_return=eq_log_ret,
+        step_vxn_change=drv20,
+        step_tnx_change_bps=dy_pct * 100.0,
+    )
+    return next_state, diag
 
 
 def clear_market_step(
@@ -909,6 +1407,9 @@ def clear_market_step(
     weights: dict[str, float] | None = None,
 ) -> tuple[MarketState, ClearingDiagnostics]:
     """Compute next cross-asset equilibrium S_{t+1} from actor flows and shock impulses."""
+    if state.market == "ssec":
+        return _clear_ssec_market_step(state, shock, actions, weights=weights)
+
     w_map = weights or {spec.actor_id: spec.weight for spec in ACTOR_SPECS}
     total_w = sum(w_map.get(a.actor_id, 0.25) for a in actions) or 1.0
 
@@ -922,17 +1423,13 @@ def clear_market_step(
     )
     dealer_eq = next((a.equity_delta for a in actions if a.actor_id == "options_dealer_mm"), 0.0)
 
-    # 1. Endogenous Kyle's lambda (price impact per unit institutional flow):
-    #    Expands when VXN exceeds its 252d median and when the options dealer pulls liquidity.
     vol_excess = max(0.0, (state.vxn - state.vxn_median_252d) / max(state.vxn_median_252d, 12.0))
     dealer_withdrawal = max(0.0, -dealer_eq)
     kyle_lambda = 0.022 * (1.0 + 0.55 * vol_excess + 0.45 * dealer_withdrawal)
 
-    # 2. 10Y Treasury Yield transition (^TNX, in percentage points):
     dy_pct = (shock.rate_bps / 100.0) - 0.055 * f_bond + 0.018 * shock.inflation_z
     next_tnx = max(0.05, state.tnx + dy_pct)
 
-    # 3. US Dollar Index transition (DX-Y.NYB):
     d_log_dxy = (
         (shock.fx_pct / 100.0)
         + 0.012 * dy_pct
@@ -941,7 +1438,6 @@ def clear_market_step(
     )
     next_dxy = state.dxy * math.exp(_clip(d_log_dxy, -0.06, 0.06))
 
-    # 4. Credit Appetite Log-Ratio transition (ln(HYG / TLT)):
     d_credit = (
         0.0065 * f_cred
         - 0.014 * max(0.0, dy_pct)
@@ -949,9 +1445,6 @@ def clear_market_step(
     )
     next_credit = state.credit_log_ratio + _clip(d_credit, -0.08, 0.08)
 
-    # 5. Equity Log-Return & Index transition (^NDX):
-    #    Combines cleared institutional order flow (lambda * F_eq), credit transmission,
-    #    FX headwind, and regime-dependent direct duration valuation impact.
     direct_duration_beta = (
         -0.028
         if (state.stock_yield_corr_63d < -0.05 or state.tnx >= 3.25 or shock.inflation_z > 0.4)
@@ -967,12 +1460,8 @@ def clear_market_step(
     )
     next_ndx = state.ndx * math.exp(eq_log_ret)
 
-    # 6. Implied Volatility transition (^VXN):
-    #    Ornstein-Uhlenbeck pull toward anchor + asymmetric equity leverage effect
-    #    + net protection demand + cross-actor disagreement + term-structure relaxation.
     anchor_v = 0.75 * state.vxn_median_252d + 0.25 * state.realized_vol_21d
     ou_pull = 0.075 * (anchor_v - state.vxn)
-    # Normal CBOE VIX9D/VIX3M contango sits near 0.93; backwardation (>0.93) unwinds once event passes
     term_relax = -1.65 * (state.vol_term_ratio - 0.93) if shock.uncertainty_z <= 0.25 else 0.0
     lev_effect = -56.0 * eq_log_ret
     excess_disagreement = max(0.0, disagreement - 0.18)
@@ -988,7 +1477,6 @@ def clear_market_step(
     )
     next_vxn = max(9.0, state.vxn + dvxn)
 
-    # Update rolling features consistently along the simulated path
     next_term = _clip(
         1.0 + 0.68 * (state.vol_term_ratio - 1.0) + 0.028 * dvxn,
         0.75,
@@ -1020,6 +1508,10 @@ def clear_market_step(
         credit_chg_20d=(19.0 / 20.0) * state.credit_chg_20d + d_credit,
         dxy_ret_20d=(19.0 / 20.0) * state.dxy_ret_20d + d_log_dxy,
         prev_implied_leverage=next_lev,
+        market=state.market,
+        index_symbol=state.index_symbol,
+        vol_symbol=state.vol_symbol,
+        aux_metric_label=state.aux_metric_label,
     )
     diag = ClearingDiagnostics(
         net_equity_flow=f_eq,
@@ -1054,11 +1546,11 @@ def _compute_distribution(
     mean_disagreement = (
         statistics.fmean(s.clearing.actor_disagreement for s in steps) if steps else 0.0
     )
-    # Total predictive variance combines market noise + structural specification uncertainty;
-    # point displacement is shrinkage-damped when mapping to calibrated probabilities.
     inflation_factor = 1.35 + 0.40 * mean_disagreement
     sigma_ret = max(0.006, res_ret_step * math.sqrt(h) * inflation_factor)
-    sigma_vxn = max(0.85, res_vxn_step * math.sqrt(h) * inflation_factor)
+    min_sigma_v = 0.45 if initial.market == "ssec" else 0.85
+    vol_floor = 5.5 if initial.market == "ssec" else 9.0
+    sigma_vxn = max(min_sigma_v, res_vxn_step * math.sqrt(h) * inflation_factor)
     damping = 0.48 if h == 1 else 0.32
 
     p_ndx_up = _clip(_normal_cdf((damping * mu_ret) / sigma_ret), 0.02, 0.98)
@@ -1073,9 +1565,9 @@ def _compute_distribution(
         ndx_return_p10=math.exp(mu_ret + z10 * sigma_ret) - 1.0,
         ndx_return_p50=math.exp(mu_ret) - 1.0,
         ndx_return_p90=math.exp(mu_ret + z90 * sigma_ret) - 1.0,
-        vxn_terminal_p10=max(9.0, initial.vxn + mu_dvxn + z10 * sigma_vxn),
-        vxn_terminal_p50=max(9.0, initial.vxn + mu_dvxn),
-        vxn_terminal_p90=max(9.0, initial.vxn + mu_dvxn + z90 * sigma_vxn),
+        vxn_terminal_p10=max(vol_floor, initial.vxn + mu_dvxn + z10 * sigma_vxn),
+        vxn_terminal_p50=max(vol_floor, initial.vxn + mu_dvxn),
+        vxn_terminal_p90=max(vol_floor, initial.vxn + mu_dvxn + z90 * sigma_vxn),
         residual_vol_step=res_ret_step,
         residual_vxn_step=res_vxn_step,
     )
@@ -1096,10 +1588,11 @@ def simulate(
     """Run an H-step closed-loop policy simulation starting from `state`."""
     if steps < 1 or steps > 30:
         raise ValueError("steps must be in [1, 30]")
-    gate = as_of or AsOf.at_session_close(date.fromisoformat(state.as_of))
+    mkt = normalize_sim_market(state.market)
+    gate = as_of or as_of_for_market(date.fromisoformat(state.as_of), mkt)
     gate.check(date.fromisoformat(state.as_of), "sim:initial_state")
 
-    roster = list(actors) if actors is not None else build_actors(mode)
+    roster = list(actors) if actors is not None else build_actors(mode, market=mkt)
     weights = {a.spec.actor_id: a.spec.weight for a in roster}
 
     history: list[SimulationStep] = []
@@ -1152,7 +1645,7 @@ def _event_dates_aligned(
     start: date | None = None,
     end: date | None = None,
 ) -> tuple[list[date], dict[date, int], list[tuple[date, str]]]:
-    """Return common cross-asset trading calendar and valid historical macro event dates."""
+    """Return common US cross-asset trading calendar and valid historical macro event dates."""
     cal = events.load(root)
     if not cal:
         raise RuntimeError("data/events.json is missing; run `forecast-log events` or provide calendar.")
@@ -1162,16 +1655,13 @@ def _event_dates_aligned(
     idx_map = {d: i for i, d in enumerate(common_dates)}
 
     seen: dict[date, str] = {}
-    # Optional series can start much later than the required ones (^VIX9D starts 2011-01-03)
-    # and `build_state` needs 30 bars of each; skip those warmup episodes instead of aborting.
     warmup: list[date] = []
-    for sym in OPTIONAL_SYMBOLS:
+    for sym in ("^VIX9D", "^VIX3M"):
         series = panel.series_map.get(sym)
         if series is None or len(series.bars) < 30:
             continue
         warmup.append(series.bars[29].date)
     warm_start = max(warmup) if warmup else None
-    # Priority order when two macro releases share a date: fomc > cpi > nfp
     for kind in ("nfp", "cpi", "fomc"):
         if kind not in kinds:
             continue
@@ -1209,7 +1699,18 @@ def _score_prob_table(pairs: list[tuple[float, int]]) -> dict:
     }
 
 
-def backtest_macro_shocks(
+def _ret_diagnostics(rows: list[tuple[float, float, bool]], holdout_only: bool = False) -> dict:
+    pts = [(p, a) for p, a, h in rows if (h or not holdout_only)]
+    if len(pts) < 3:
+        return {"mae_pct": None, "corr": None}
+    preds = np.array([p for p, _ in pts], dtype=float)
+    acts = np.array([a for _, a in pts], dtype=float)
+    mae = float(np.mean(np.abs(preds - acts))) * 100.0
+    corr = float(np.corrcoef(preds, acts)[0, 1]) if np.std(preds) > 1e-9 and np.std(acts) > 1e-9 else 0.0
+    return {"mae_pct": round(mae, 3), "corr": round(corr, 4)}
+
+
+def backtest_ssec_shocks(
     root: Path,
     *,
     kinds: Sequence[str] = ("fomc", "cpi", "nfp"),
@@ -1222,21 +1723,327 @@ def backtest_macro_shocks(
     llm_models: Sequence[str] | None = None,
     llms: Sequence[LLM] | dict[str, LLM] | None = None,
 ) -> dict:
-    """Backtest the simulation engine across historical FOMC / CPI / NFP macro events.
+    """Backtest A-share (`000001.SS` + `RV20`) cross-border shock transmission & 5d vol evolution.
 
-    Evaluates two leak-checked empirical tracks:
-    1. `shock_transmission` (t-1 -> t0): State frozen strictly at pre-event close `t-1`
-       (`AsOf.at_session_close(t-1)`). Given the observed event-day rate/FX impulse
-       (`d_TNX`, `d_DXY`) without touching `t0` equity/credit/vol prices, computes the
-       contemporaneous equilibrium equity return and VXN shift. Tests whether regime-aware
-       heterogeneous actors outperform homogeneous actors and expanding-window OLS when
-       macro regimes flip (ZLB growth pre-2021 vs. inflation discount-rate 2021+).
-    2. `ex_ante_5d_propagation` (t0 -> t0+5): State frozen strictly at event-day close `t0`
-       (`AsOf.at_session_close(t0)`), zero post-`t0` inputs. Simulates 5-session endogenous
-       relaxation / deleveraging and scores `P(VXN_{t0+5} > VXN_{t0})` and
-       `P(NDX_{t0+5} > NDX_{t0})` against `homogeneous_ablation`, `analogue_model`,
-       `expanding_base_rate`, and `constant_0.5`.
+    Each US macro release dated `us_day` closes at 04:00 Beijing time `us_day + 1`, so it settles
+    on the first A-share session `ssec_t0 > us_day` (strictly preserving `us_day < ssec_t0`).
     """
+    panel = HistoricalPanel.load(root)
+    if not panel.has_ssec():
+        raise RuntimeError("000001.SS series is missing from database.")
+    cal = events.load(root)
+    if not cal:
+        raise RuntimeError("data/events.json is missing.")
+
+    us_common = sorted(
+        set.intersection(*({b.date for b in panel.series_map[sym].bars} for sym in ("^NDX", "^TNX", "DX-Y.NYB")))
+    )
+    us_idx_map = {d: i for i, d in enumerate(us_common)}
+    ssec_bars = panel.series_map["000001.SS"].bars
+    ssec_dates = [b.date for b in ssec_bars]
+    ssec_closes = np.array([b.close for b in ssec_bars], dtype=float)
+    ssec_rv20 = _rolling_rv_series(ssec_closes, window=20, floor_pct=5.5)
+
+    ndx_map = {b.date: b.close for b in panel.series_map["^NDX"].bars}
+    tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
+    dxy_map = {b.date: b.close for b in panel.series_map["DX-Y.NYB"].bars}
+
+    # Map each US release to the first A-share trading session strictly AFTER `us_ev_day`
+    seen_ssec: dict[int, tuple[date, str]] = {}
+    for kind in ("nfp", "cpi", "fomc"):
+        if kind not in kinds:
+            continue
+        for us_ev in cal.get(kind, []):
+            if us_ev not in us_idx_map or us_idx_map[us_ev] < 5:
+                continue
+            ai = int(np.searchsorted(ssec_dates, us_ev, side="right"))
+            if ai < 292 or ai >= len(ssec_dates) - horizon:
+                continue
+            ssec_day = ssec_dates[ai]
+            if start and ssec_day < start:
+                continue
+            if end and ssec_day > end:
+                continue
+            seen_ssec[ai] = (us_ev, kind)
+
+    episodes = [(ai, seen_ssec[ai][0], seen_ssec[ai][1]) for ai in sorted(seen_ssec)]
+    if limit is not None and len(episodes) > limit:
+        step = len(episodes) / limit
+        episodes = [episodes[int(i * step)] for i in range(limit)]
+
+    rule_actors = build_actors("rule", market="ssec")
+    homo_actors = build_actors("homogeneous", market="ssec")
+    llm_actors = (
+        build_actors("llm", market="ssec", root=root, llms=llms, models=llm_models) if include_llm else None
+    )
+
+    t1_models = ["multi_agent_rule", "homogeneous_ablation", "expanding_ols", "constant_0.5"]
+    if llm_actors is not None:
+        t1_models.insert(0, "multi_agent_llm")
+    t1_probs: dict[str, list[tuple[float, int]]] = {m: [] for m in t1_models}
+    t1_holdout_probs: dict[str, list[tuple[float, int]]] = {m: [] for m in t1_models}
+    t1_pred_ret: dict[str, list[tuple[float, float, bool]]] = {m: [] for m in t1_models if m != "constant_0.5"}
+
+    prior_X: list[list[float]] = []
+    prior_y: list[float] = []
+
+    t2_models = [
+        "multi_agent_rule",
+        "homogeneous_ablation",
+        "analogue_model",
+        "expanding_base_rate",
+        "constant_0.5",
+    ]
+    if llm_actors is not None:
+        t2_models.insert(0, "multi_agent_llm")
+    t2_vol_probs: dict[str, list[tuple[float, int]]] = {m: [] for m in t2_models}
+    t2_eq_probs: dict[str, list[tuple[float, int]]] = {m: [] for m in t2_models}
+    prior_vol_outcomes: list[int] = []
+    prior_eq_outcomes: list[int] = []
+
+    llm_usage = Usage()
+    sample_records: list[dict] = []
+
+    for ai, us_ev, kind in episodes:
+        ssec_day = ssec_dates[ai]
+        prev_ssec_day = ssec_dates[ai - 1]
+        in_holdout = ssec_day >= holdout
+
+        u_idx = us_idx_map[us_ev]
+        u_prev = us_common[u_idx - 1]
+        dy_bps = (tnx_map[us_ev] - tnx_map[u_prev]) * 100.0
+        dd_pct = math.log(dxy_map[us_ev] / dxy_map[u_prev]) * 100.0
+        ov_ndx_pct = (ndx_map[us_ev] / ndx_map[u_prev] - 1.0) * 100.0
+
+        actual_r0 = math.log(ssec_closes[ai] / ssec_closes[ai - 1])
+        actual_up0 = 1 if ssec_closes[ai] > ssec_closes[ai - 1] else 0
+
+        # Track 1: State frozen strictly at prior A-share close `prev_ssec_day` (15:05 CST)
+        gate_pre = as_of_for_market(prev_ssec_day, "ssec")
+        state_pre, res_ret_pre, res_rv_pre = panel.build_state(gate_pre, market="ssec")
+
+        shock_t0 = PolicyShock(
+            kind=kind,
+            title=f"Overnight US {kind.upper()} ({us_ev.isoformat()}) -> A-share {ssec_day.isoformat()}",
+            rate_bps=dy_bps,
+            fx_pct=dd_pct,
+            inflation_z=_clip(dy_bps / 12.0, -2.0, 2.0) if kind == "cpi" else 0.0,
+            growth_z=_clip(ov_ndx_pct / 1.8, -2.0, 2.0) * 0.35,
+            uncertainty_z=max(0.0, -ov_ndx_pct / 2.2),
+            overnight_equity_pct=ov_ndx_pct,
+        )
+
+        sim_rule_t1 = simulate(
+            state_pre,
+            shock_t0,
+            as_of=gate_pre,
+            actors=rule_actors,
+            mode="rule",
+            steps=1,
+            res_ret_step=res_ret_pre,
+            res_vxn_step=res_rv_pre,
+        )
+        sim_homo_t1 = simulate(
+            state_pre,
+            shock_t0,
+            as_of=gate_pre,
+            actors=homo_actors,
+            mode="homogeneous",
+            steps=1,
+            res_ret_step=res_ret_pre,
+            res_vxn_step=res_rv_pre,
+        )
+
+        if len(prior_X) >= 20:
+            X_mat = np.array(prior_X, dtype=float)
+            y_vec = np.array(prior_y, dtype=float)
+            beta, *_ = np.linalg.lstsq(X_mat, y_vec, rcond=None)
+            ols_r0 = float(np.dot([1.0, dy_bps, dd_pct, ov_ndx_pct], beta))
+        else:
+            ols_r0 = 0.0
+        ols_p0 = _clip(_normal_cdf((0.48 * ols_r0) / max(res_ret_pre * 1.35, 0.006)), 0.02, 0.98)
+        prior_X.append([1.0, dy_bps, dd_pct, ov_ndx_pct])
+        prior_y.append(actual_r0)
+
+        t1_entries = {
+            "multi_agent_rule": (sim_rule_t1.distribution.p_ndx_up, sim_rule_t1.cumulative_ndx_log_return),
+            "homogeneous_ablation": (sim_homo_t1.distribution.p_ndx_up, sim_homo_t1.cumulative_ndx_log_return),
+            "expanding_ols": (ols_p0, ols_r0),
+        }
+        if llm_actors is not None:
+            sim_llm_t1 = simulate(
+                state_pre,
+                shock_t0,
+                as_of=gate_pre,
+                actors=llm_actors,
+                mode="llm",
+                steps=1,
+                res_ret_step=res_ret_pre,
+                res_vxn_step=res_rv_pre,
+            )
+            llm_usage = llm_usage + sim_llm_t1.usage
+            t1_entries["multi_agent_llm"] = (
+                sim_llm_t1.distribution.p_ndx_up,
+                sim_llm_t1.cumulative_ndx_log_return,
+            )
+
+        for name, (prob, pred_r) in t1_entries.items():
+            t1_probs[name].append((prob, actual_up0))
+            if in_holdout:
+                t1_holdout_probs[name].append((prob, actual_up0))
+            t1_pred_ret[name].append((pred_r, actual_r0, in_holdout))
+        t1_probs["constant_0.5"].append((0.5, actual_up0))
+        if in_holdout:
+            t1_holdout_probs["constant_0.5"].append((0.5, actual_up0))
+
+        # Track 2: Pure Ex-Ante 5-Session A-share Propagation from `ssec_day` close (`15:05 CST`)
+        gate_t0 = as_of_for_market(ssec_day, "ssec")
+        state_t0, res_ret_t0, res_rv_t0 = panel.build_state(gate_t0, market="ssec")
+        drv0 = float(ssec_rv20[ai] - ssec_rv20[ai - 1])
+        aftershock = PolicyShock(
+            kind=kind,
+            title=f"Post-{kind.upper()} A-share propagation from {ssec_day.isoformat()}",
+            rate_bps=dy_bps * 0.06,
+            fx_pct=dd_pct * 0.06,
+            growth_z=_clip(actual_r0 / 0.015, -1.5, 1.5) * 0.12,
+            uncertainty_z=-0.18 * _clip(drv0 / 1.5, -1.0, 1.5),
+            persistence=0.35,
+        )
+
+        sim_rule_t2 = simulate(
+            state_t0,
+            aftershock,
+            as_of=gate_t0,
+            actors=rule_actors,
+            mode="rule",
+            steps=horizon,
+            res_ret_step=res_ret_t0,
+            res_vxn_step=res_rv_t0,
+        )
+        sim_homo_t2 = simulate(
+            state_t0,
+            aftershock,
+            as_of=gate_t0,
+            actors=homo_actors,
+            mode="homogeneous",
+            steps=horizon,
+            res_ret_step=res_ret_t0,
+            res_vxn_step=res_rv_t0,
+        )
+
+        rv_vis = ssec_rv20[: ai + 1]
+        eq_vis = ssec_closes[: ai + 1]
+        ana_vol_p = AnalogModel(rv_vis).forecast(len(rv_vis) - 1, horizon, float(rv_vis[-1])).probability
+        ana_eq_p = AnalogModel(eq_vis).forecast(len(eq_vis) - 1, horizon, float(eq_vis[-1])).probability
+
+        base_vol_p = statistics.fmean(prior_vol_outcomes) if len(prior_vol_outcomes) >= 15 else 0.5
+        base_eq_p = statistics.fmean(prior_eq_outcomes) if len(prior_eq_outcomes) >= 15 else 0.5
+
+        actual_vol_up5 = 1 if ssec_rv20[ai + horizon] > ssec_rv20[ai] else 0
+        actual_eq_up5 = 1 if ssec_closes[ai + horizon] > ssec_closes[ai] else 0
+        prior_vol_outcomes.append(actual_vol_up5)
+        prior_eq_outcomes.append(actual_eq_up5)
+
+        t2_vol_probs["multi_agent_rule"].append((sim_rule_t2.distribution.p_vxn_up, actual_vol_up5))
+        t2_vol_probs["homogeneous_ablation"].append((sim_homo_t2.distribution.p_vxn_up, actual_vol_up5))
+        t2_vol_probs["analogue_model"].append((ana_vol_p, actual_vol_up5))
+        t2_vol_probs["expanding_base_rate"].append((base_vol_p, actual_vol_up5))
+        t2_vol_probs["constant_0.5"].append((0.5, actual_vol_up5))
+
+        t2_eq_probs["multi_agent_rule"].append((sim_rule_t2.distribution.p_ndx_up, actual_eq_up5))
+        t2_eq_probs["homogeneous_ablation"].append((sim_homo_t2.distribution.p_ndx_up, actual_eq_up5))
+        t2_eq_probs["analogue_model"].append((ana_eq_p, actual_eq_up5))
+        t2_eq_probs["expanding_base_rate"].append((base_eq_p, actual_eq_up5))
+        t2_eq_probs["constant_0.5"].append((0.5, actual_eq_up5))
+
+        if llm_actors is not None:
+            sim_llm_t2 = simulate(
+                state_t0,
+                aftershock,
+                as_of=gate_t0,
+                actors=llm_actors,
+                mode="llm",
+                steps=horizon,
+                res_ret_step=res_ret_t0,
+                res_vxn_step=res_rv_t0,
+            )
+            llm_usage = llm_usage + sim_llm_t2.usage
+            t2_vol_probs["multi_agent_llm"].append((sim_llm_t2.distribution.p_vxn_up, actual_vol_up5))
+            t2_eq_probs["multi_agent_llm"].append((sim_llm_t2.distribution.p_ndx_up, actual_eq_up5))
+
+        if len(sample_records) < 16 or llm_actors is not None:
+            sample_records.append(
+                {
+                    "event_date": ssec_day.isoformat(),
+                    "us_event_date": us_ev.isoformat(),
+                    "kind": kind,
+                    "regime": state_pre.regime_label,
+                    "rate_bps": round(dy_bps, 1),
+                    "fx_pct": round(dd_pct, 2),
+                    "overnight_ndx_pct": round(ov_ndx_pct, 2),
+                    "pred_r0_pct": round(sim_rule_t1.cumulative_ndx_log_return * 100.0, 2),
+                    "actual_r0_pct": round(actual_r0 * 100.0, 2),
+                    "p_vxn_up_5d": round(sim_rule_t2.distribution.p_vxn_up, 3),
+                    "actual_vxn_up_5d": actual_vol_up5,
+                }
+            )
+
+    track1_summary = {}
+    for name in t1_models:
+        base_metrics = _score_prob_table(t1_probs[name])
+        hold_metrics = _score_prob_table(t1_holdout_probs[name])
+        if name in t1_pred_ret:
+            base_metrics.update(_ret_diagnostics(t1_pred_ret[name], holdout_only=False))
+            hold_metrics.update(_ret_diagnostics(t1_pred_ret[name], holdout_only=True))
+        track1_summary[name] = {"full_sample": base_metrics, "holdout_2021_plus": hold_metrics}
+
+    return {
+        "market": "ssec",
+        "index_symbol": "000001.SS",
+        "vol_symbol": "RV20",
+        "n_episodes": len(episodes),
+        "first_event": ssec_dates[episodes[0][0]].isoformat() if episodes else None,
+        "last_event": ssec_dates[episodes[-1][0]].isoformat() if episodes else None,
+        "holdout_from": holdout.isoformat(),
+        "horizon_sessions": horizon,
+        "kinds": list(kinds),
+        "llm_usage": llm_usage.to_json() if include_llm else None,
+        "track1_shock_transmission": track1_summary,
+        "track2_ex_ante_vxn_5d": {m: _score_prob_table(t2_vol_probs[m]) for m in t2_models},
+        "track2_ex_ante_ndx_5d": {m: _score_prob_table(t2_eq_probs[m]) for m in t2_models},
+        "samples": sample_records[-12:],
+    }
+
+
+def backtest_macro_shocks(
+    root: Path,
+    *,
+    market: SimMarket = "ndx",
+    kinds: Sequence[str] = ("fomc", "cpi", "nfp"),
+    start: date | None = None,
+    end: date | None = None,
+    holdout: date = date(2021, 1, 1),
+    horizon: int = 5,
+    limit: int | None = None,
+    include_llm: bool = False,
+    llm_models: Sequence[str] | None = None,
+    llms: Sequence[LLM] | dict[str, LLM] | None = None,
+) -> dict:
+    """Backtest the simulation engine across historical macro events (`ndx` or `ssec`)."""
+    if normalize_sim_market(market) == "ssec":
+        return backtest_ssec_shocks(
+            root,
+            kinds=kinds,
+            start=start,
+            end=end,
+            holdout=holdout,
+            horizon=horizon,
+            limit=limit,
+            include_llm=include_llm,
+            llm_models=llm_models,
+            llms=llms,
+        )
+
     panel = HistoricalPanel.load(root)
     common_dates, idx_map, episodes = _event_dates_aligned(
         root, panel, kinds=kinds, start=start, end=end
@@ -1250,13 +2057,12 @@ def backtest_macro_shocks(
     tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
     dxy_map = {b.date: b.close for b in panel.series_map["DX-Y.NYB"].bars}
 
-    rule_actors = build_actors("rule")
-    homo_actors = build_actors("homogeneous")
+    rule_actors = build_actors("rule", market="ndx")
+    homo_actors = build_actors("homogeneous", market="ndx")
     llm_actors = (
-        build_actors("llm", root=root, llms=llms, models=llm_models) if include_llm else None
+        build_actors("llm", market="ndx", root=root, llms=llms, models=llm_models) if include_llm else None
     )
 
-    # Track 1 accumulators: Shock transmission (t-1 -> t0)
     t1_models = ["multi_agent_rule", "homogeneous_ablation", "expanding_ols", "constant_0.5"]
     if llm_actors is not None:
         t1_models.insert(0, "multi_agent_llm")
@@ -1264,11 +2070,9 @@ def backtest_macro_shocks(
     t1_holdout_probs: dict[str, list[tuple[float, int]]] = {m: [] for m in t1_models}
     t1_pred_ret: dict[str, list[tuple[float, float, bool]]] = {m: [] for m in t1_models if m != "constant_0.5"}
 
-    # Expanding-window OLS state for Track 1 (strictly trained on prior events < idx)
     prior_X: list[list[float]] = []
     prior_y: list[float] = []
 
-    # Track 2 accumulators: Pure Ex-Ante 5-Day Post-Shock Propagation (t0 -> t0+h)
     t2_models = [
         "multi_agent_rule",
         "homogeneous_ablation",
@@ -1292,9 +2096,8 @@ def backtest_macro_shocks(
         target_day = common_dates[idx + horizon]
         in_holdout = ev_day >= holdout
 
-        # ---------------- Track 1: Conditioned Shock Transmission (t-1 -> t0)
         gate_pre = AsOf.at_session_close(prev_day)
-        state_pre, res_ret_pre, res_vxn_pre = panel.build_state(gate_pre)
+        state_pre, res_ret_pre, res_vxn_pre = panel.build_state(gate_pre, market="ndx")
 
         dy_bps = (tnx_map[ev_day] - tnx_map[prev_day]) * 100.0
         dd_pct = math.log(dxy_map[ev_day] / dxy_map[prev_day]) * 100.0
@@ -1334,7 +2137,6 @@ def backtest_macro_shocks(
             res_vxn_step=res_vxn_pre,
         )
 
-        # Expanding OLS baseline (uses only prior events!)
         if len(prior_X) >= 20:
             X_mat = np.array(prior_X, dtype=float)
             y_vec = np.array(prior_y, dtype=float)
@@ -1378,14 +2180,11 @@ def backtest_macro_shocks(
         if in_holdout:
             t1_holdout_probs["constant_0.5"].append((0.5, actual_up0))
 
-        # ---------------- Track 2: Pure Ex-Ante Post-Event 5d Propagation (t0 -> t0+h)
         gate_t0 = AsOf.at_session_close(ev_day)
-        state_t0, res_ret_t0, res_vxn_t0 = panel.build_state(gate_t0)
+        state_t0, res_ret_t0, res_vxn_t0 = panel.build_state(gate_t0, market="ndx")
         headlines_t0 = gated_headlines_for_day(root, ev_day, gate_t0, limit=5)
 
-        # Event-day observed shock (already printed at t0 close!) initializes decaying aftershocks
         dv0 = vxn_map[ev_day] - vxn_map[prev_day]
-        # Once a scheduled release prints at t0, pre-event uncertainty resolves (vol crush when dv0 > 0)
         aftershock = PolicyShock(
             kind=kind,
             title=f"Post-{kind.upper()} propagation from {ev_day.isoformat()}",
@@ -1419,7 +2218,6 @@ def backtest_macro_shocks(
             res_vxn_step=res_vxn_t0,
         )
 
-        # Point-in-time AnalogueModel baselines at t0
         _, vxn_vis = _visible_closes(panel.series_map["^VXN"], gate_t0)
         _, ndx_vis = _visible_closes(panel.series_map["^NDX"], gate_t0)
         ana_vxn_p = AnalogModel(vxn_vis).forecast(len(vxn_vis) - 1, horizon, float(vxn_vis[-1])).probability
@@ -1475,16 +2273,6 @@ def backtest_macro_shocks(
                 }
             )
 
-    def _ret_diagnostics(rows: list[tuple[float, float, bool]], holdout_only: bool = False) -> dict:
-        pts = [(p, a) for p, a, h in rows if (h or not holdout_only)]
-        if len(pts) < 3:
-            return {"mae_pct": None, "corr": None}
-        preds = np.array([p for p, _ in pts], dtype=float)
-        acts = np.array([a for _, a in pts], dtype=float)
-        mae = float(np.mean(np.abs(preds - acts))) * 100.0
-        corr = float(np.corrcoef(preds, acts)[0, 1]) if np.std(preds) > 1e-9 and np.std(acts) > 1e-9 else 0.0
-        return {"mae_pct": round(mae, 3), "corr": round(corr, 4)}
-
     track1_summary = {}
     for name in t1_models:
         base_metrics = _score_prob_table(t1_probs[name])
@@ -1495,6 +2283,9 @@ def backtest_macro_shocks(
         track1_summary[name] = {"full_sample": base_metrics, "holdout_2021_plus": hold_metrics}
 
     return {
+        "market": "ndx",
+        "index_symbol": "^NDX",
+        "vol_symbol": "^VXN",
         "n_episodes": len(episodes),
         "first_event": episodes[0][0].isoformat() if episodes else None,
         "last_event": episodes[-1][0].isoformat() if episodes else None,
@@ -1516,8 +2307,11 @@ def render_simulation(result: SimulationResult) -> str:
     init = result.initial_state
     fin = result.final_state
     dist = result.distribution
+    idx_lbl = init.index_symbol
+    vol_lbl = init.vol_symbol
+    aux_lbl = "SSEC/MA20" if init.market == "ssec" else "HYG/TLT"
     lines = [
-        f"Policy Simulation ({result.mode}) | as-of {init.as_of} | regime={init.regime_label}",
+        f"Policy Simulation ({result.mode}, market={init.market}) | as-of {init.as_of} | regime={init.regime_label}",
         f"Shock [{result.shock.kind}]: {result.shock.title or '(numeric impulse)'}",
         (
             f"Impulse: rate={result.shock.rate_bps:+.1f}bp, fx={result.shock.fx_pct:+.2f}%, "
@@ -1525,11 +2319,11 @@ def render_simulation(result: SimulationResult) -> str:
             f"tariff={result.shock.tariff_pct:.1f}%, unc_z={result.shock.uncertainty_z:+.2f}"
         ),
         "",
-        f"{'Step':<5}{'NetEq':>8}{'NetVolH':>9}{'Lambda':>9}{'NDX':>11}{'dNDX%':>8}{'VXN':>8}{'TNX%':>8}{'HYG/TLT':>9}",
-        "-" * 75,
+        f"{'Step':<5}{'NetEq':>8}{'NetVolH':>9}{'Lambda':>9}{idx_lbl:>11}{'dIdx%':>8}{vol_lbl:>8}{'TNX%':>8}{aux_lbl:>10}",
+        "-" * 76,
         (
             f"{0:<5}{'—':>8}{'—':>9}{'—':>9}{init.ndx:>11.2f}{'0.00%':>8}"
-            f"{init.vxn:>8.2f}{init.tnx:>8.3f}{init.credit_log_ratio:>9.4f}"
+            f"{init.vxn:>8.2f}{init.tnx:>8.3f}{init.credit_log_ratio:>10.4f}"
         ),
     ]
     for step in result.steps:
@@ -1539,7 +2333,7 @@ def render_simulation(result: SimulationResult) -> str:
         lines.append(
             f"{step.step:<5}{cl.net_equity_flow:>+8.3f}{cl.net_vol_hedge_flow:>+9.3f}"
             f"{cl.kyle_lambda:>9.4f}{st.ndx:>11.2f}{ret_pct:>+7.2f}%"
-            f"{st.vxn:>8.2f}{st.tnx:>8.3f}{st.credit_log_ratio:>9.4f}"
+            f"{st.vxn:>8.2f}{st.tnx:>8.3f}{st.credit_log_ratio:>10.4f}"
         )
 
     lines.append("")
@@ -1547,7 +2341,7 @@ def render_simulation(result: SimulationResult) -> str:
     if result.steps:
         for action in result.steps[0].actions:
             lines.append(
-                f"  - {action.actor_id:<20} [{action.model}] "
+                f"  - {action.actor_id:<22} [{action.model}] "
                 f"eq={action.equity_delta:+.3f} bond={action.bond_delta:+.3f} "
                 f"cred={action.credit_delta:+.3f} volH={action.vol_hedge_delta:+.3f} | {action.rationale}"
             )
@@ -1557,16 +2351,16 @@ def render_simulation(result: SimulationResult) -> str:
         [
             "",
             (
-                f"Terminal ({len(result.steps)}d): NDX {init.ndx:.2f} -> {fin.ndx:.2f} ({cum_pct:+.2f}%), "
-                f"VXN {init.vxn:.2f} -> {fin.vxn:.2f} ({result.cumulative_vxn_change:+.2f})"
+                f"Terminal ({len(result.steps)}d): {idx_lbl} {init.ndx:.2f} -> {fin.ndx:.2f} ({cum_pct:+.2f}%), "
+                f"{vol_lbl} {init.vxn:.2f} -> {fin.vxn:.2f} ({result.cumulative_vxn_change:+.2f})"
             ),
             (
-                f"Calibrated Probabilities: P(NDX up)={dist.p_ndx_up:.1%}, "
-                f"P(VXN up)={dist.p_vxn_up:.1%}, P(NDX <-2%)={dist.p_ndx_drawdown_gt_2pct:.1%}"
+                f"Calibrated Probabilities: P({idx_lbl} up)={dist.p_ndx_up:.1%}, "
+                f"P({vol_lbl} up)={dist.p_vxn_up:.1%}, P({idx_lbl} <-2%)={dist.p_ndx_drawdown_gt_2pct:.1%}"
             ),
             (
-                f"80% Band: NDX return [{dist.ndx_return_p10*100:+.2f}%, {dist.ndx_return_p90*100:+.2f}%], "
-                f"VXN [{dist.vxn_terminal_p10:.2f}, {dist.vxn_terminal_p90:.2f}]"
+                f"80% Band: {idx_lbl} return [{dist.ndx_return_p10*100:+.2f}%, {dist.ndx_return_p90*100:+.2f}%], "
+                f"{vol_lbl} [{dist.vxn_terminal_p10:.2f}, {dist.vxn_terminal_p90:.2f}]"
             ),
         ]
     )
@@ -1579,13 +2373,15 @@ def render_simulation(result: SimulationResult) -> str:
 
 
 def render_backtest(report: dict) -> str:
+    idx_lbl = report.get("index_symbol") or "^NDX"
+    vol_lbl = report.get("vol_symbol") or "^VXN"
     lines = [
         (
-            f"Macro Shock Simulation Backtest: {report['n_episodes']} events "
+            f"Macro Shock Simulation Backtest [{idx_lbl} / {vol_lbl}]: {report['n_episodes']} events "
             f"({report['first_event']} -> {report['last_event']}, kinds={','.join(report['kinds'])})"
         ),
         "",
-        "1. Shock Transmission (t-1 -> t0, given rate/FX impulse; regime-flip holdout >= 2021-01-01):",
+        "1. Shock Transmission (t-1 -> t0; holdout >= 2021-01-01):",
         f"{'Predictor':<24}{'Full Brier':>11}{'Full Hit':>10}{'Full Corr':>10}{'2021+ Brier':>13}{'2021+ Hit':>11}{'2021+ Corr':>11}",
         "-" * 90,
     ]
@@ -1602,7 +2398,7 @@ def render_backtest(report: dict) -> str:
     lines.extend(
         [
             "",
-            f"2. Pure Ex-Ante {report['horizon_sessions']}d Volatility Propagation P(VXN_{{t+{report['horizon_sessions']}}} > VXN_t) (strictly gated at t0):",
+            f"2. Pure Ex-Ante {report['horizon_sessions']}d Volatility Propagation P({vol_lbl}_{{t+{report['horizon_sessions']}}} > {vol_lbl}_t) (strictly gated at t0):",
             f"{'Predictor':<24}{'Brier':>10}{'LogLoss':>10}{'ECE':>9}{'HitRate':>10}{'MeanProb':>10}{'ObsRate':>10}",
             "-" * 83,
         ]
@@ -1616,7 +2412,7 @@ def render_backtest(report: dict) -> str:
     lines.extend(
         [
             "",
-            f"3. Pure Ex-Ante {report['horizon_sessions']}d Equity Drift P(NDX_{{t+{report['horizon_sessions']}}} > NDX_t) (strictly gated at t0):",
+            f"3. Pure Ex-Ante {report['horizon_sessions']}d Equity Drift P({idx_lbl}_{{t+{report['horizon_sessions']}}} > {idx_lbl}_t) (strictly gated at t0):",
             f"{'Predictor':<24}{'Brier':>10}{'LogLoss':>10}{'ECE':>9}{'HitRate':>10}{'MeanProb':>10}{'ObsRate':>10}",
             "-" * 83,
         ]
@@ -1638,7 +2434,8 @@ def render_backtest(report: dict) -> str:
 def sim_command(
     root: Path,
     *,
-    scenario: str = "tariff_25",
+    market: str = "ndx",
+    scenario: str | None = None,
     day: str | None = None,
     steps: int = 5,
     mode: ActorMode = "rule",
@@ -1652,12 +2449,17 @@ def sim_command(
     title: str | None = None,
     out: str | None = "artifacts/sim/latest_scenario.json",
 ) -> SimulationResult:
+    mkt = normalize_sim_market(market)
     panel = HistoricalPanel.load(root)
-    last_day = date.fromisoformat(day) if day else panel.series_map["^NDX"].bars[-1].date
-    as_of = AsOf.at_session_close(last_day)
-    state, res_ret, res_vxn = panel.build_state(as_of)
+    sym = "000001.SS" if mkt == "ssec" else "^NDX"
+    last_day = date.fromisoformat(day) if day else panel.series_map[sym].bars[-1].date
+    as_of = as_of_for_market(last_day, mkt)
+    state, res_ret, res_vxn = panel.build_state(as_of, market=mkt)
 
-    base = PRESET_SHOCKS.get(scenario, PolicyShock(kind="custom", title=scenario))
+    presets = presets_for_market(mkt)
+    default_scen = "pboc_924_bazooka" if mkt == "ssec" else "tariff_25"
+    scen_key = scenario or default_scen
+    base = presets.get(scen_key, PolicyShock(kind="custom", title=scen_key))
     shock = PolicyShock(
         kind=base.kind,
         title=title if title is not None else base.title,
@@ -1672,7 +2474,7 @@ def sim_command(
     )
 
     model_list = [m.strip() for m in (models or "").split(",") if m.strip()]
-    actors = build_actors(mode, root=root, models=model_list or None)
+    actors = build_actors(mode, market=mkt, root=root, models=model_list or None)
     result = simulate(
         state,
         shock,
@@ -1695,17 +2497,20 @@ def sim_command(
 def sim_backtest_command(
     root: Path,
     *,
+    market: str = "ndx",
     kinds: str = "fomc,cpi,nfp",
     horizon: int = 5,
     limit: int | None = None,
     with_llm: bool = False,
     models: str | None = None,
-    out: str = "artifacts/sim/backtest_report.json",
+    out: str | None = None,
 ) -> dict:
+    mkt = normalize_sim_market(market)
     kind_tuple = tuple(k.strip().lower() for k in kinds.split(",") if k.strip())
     model_list = [m.strip() for m in (models or "").split(",") if m.strip()]
     report = backtest_macro_shocks(
         root,
+        market=mkt,
         kinds=kind_tuple,
         horizon=horizon,
         limit=limit,
@@ -1713,8 +2518,13 @@ def sim_backtest_command(
         llm_models=model_list or None,
     )
     print(render_backtest(report))
-    if out:
-        target = root / out
+    out_path = out or (
+        "artifacts/sim/backtest_ssec_report.json"
+        if mkt == "ssec"
+        else "artifacts/sim/backtest_report.json"
+    )
+    if out_path:
+        target = root / out_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
         print(f"\nSaved backtest report -> {target}")
@@ -1722,9 +2532,6 @@ def sim_backtest_command(
 
 
 # --------------------------------------------------------- Web UI API helpers
-
-import threading as _threading
-from typing import Iterator
 
 _PANEL_LOCK = _threading.Lock()
 _PANEL_MEM_CACHE: dict[str, tuple[float, HistoricalPanel]] = {}
@@ -1736,6 +2543,79 @@ PRESET_UI_META: tuple[dict, ...] = (
     {"id": "cpi_hot_surprise", "short_label": "核心 CPI 超预期", "badge": "CPI"},
     {"id": "nfp_goldilocks", "short_label": "非农金发姑娘", "badge": "NFP"},
     {"id": "credit_crunch", "short_label": "信用利差危机", "badge": "CREDIT"},
+)
+
+SSEC_PRESET_UI_META: tuple[dict, ...] = (
+    {"id": "pboc_924_bazooka", "short_label": "央行 9·24 金融新政", "badge": "PBOC"},
+    {"id": "npc_fiscal_stimulus", "short_label": "人大财政化债扩内需", "badge": "FISCAL"},
+    {"id": "huijin_stabilization", "short_label": "汇金增持宽基护盘", "badge": "ETF"},
+    {"id": "us_china_tariff_35", "short_label": "对华 +35% 关税冲击", "badge": "TARIFF"},
+    {"id": "fed_dxy_squeeze", "short_label": "美联储鹰派 + 美元急升", "badge": "DXY"},
+    {"id": "stamp_duty_ipo_pace", "short_label": "印花税减半活跃市场", "badge": "POLICY"},
+)
+
+# Landmark A-share domestic policy & external tariff shock sessions for instant UI replay
+SSEC_LANDMARK_EVENTS: tuple[dict, ...] = (
+    {
+        "event_date": "2025-04-08",
+        "kind": "stabilization",
+        "label": "中央汇金平准增持宽基ETF反击外部关税恐慌",
+        "shock": {"rate_bps": -8.0, "fx_pct": -0.15, "inflation_z": 0.0, "growth_z": 0.90, "tariff_pct": 0.0, "uncertainty_z": -1.10},
+    },
+    {
+        "event_date": "2025-04-07",
+        "kind": "tariff",
+        "label": "美“对等关税”超预期升级引发全球与A股跳空冲击",
+        "shock": {"rate_bps": 4.0, "fx_pct": 0.85, "inflation_z": -0.40, "growth_z": -1.35, "tariff_pct": 34.0, "uncertainty_z": 1.95},
+    },
+    {
+        "event_date": "2024-09-24",
+        "kind": "pboc",
+        "label": "国新办 9·24 一揽子金融新政（降准降息+互换便利）",
+        "shock": {"rate_bps": -20.0, "fx_pct": -0.45, "inflation_z": 0.35, "growth_z": 1.75, "tariff_pct": 0.0, "uncertainty_z": -0.80},
+    },
+    {
+        "event_date": "2024-02-06",
+        "kind": "stabilization",
+        "label": "中央汇金宣布扩大宽基ETF增持范围托底流动性",
+        "shock": {"rate_bps": -10.0, "fx_pct": -0.15, "inflation_z": 0.05, "growth_z": 0.95, "tariff_pct": 0.0, "uncertainty_z": -1.15},
+    },
+    {
+        "event_date": "2023-08-28",
+        "kind": "stabilization",
+        "label": "证券交易印花税减半征收 + 阶段性收紧IPO节奏",
+        "shock": {"rate_bps": -6.0, "fx_pct": -0.10, "inflation_z": 0.10, "growth_z": 0.95, "tariff_pct": 0.0, "uncertainty_z": -0.60},
+    },
+    {
+        "event_date": "2022-11-01",
+        "kind": "fiscal",
+        "label": "内需与地产融资支持预期拐点驱动估值修复",
+        "shock": {"rate_bps": -8.0, "fx_pct": -0.35, "inflation_z": 0.25, "growth_z": 1.25, "tariff_pct": 0.0, "uncertainty_z": -0.55},
+    },
+    {
+        "event_date": "2022-03-16",
+        "kind": "stabilization",
+        "label": "国务院金稳委专题会议定调稳市场与中概股预期",
+        "shock": {"rate_bps": -10.0, "fx_pct": -0.25, "inflation_z": 0.10, "growth_z": 1.15, "tariff_pct": 0.0, "uncertainty_z": -1.00},
+    },
+    {
+        "event_date": "2020-02-03",
+        "kind": "credit",
+        "label": "春节后开市疫情避险冲击（次日央行超预期投放流动性）",
+        "shock": {"rate_bps": -10.0, "fx_pct": 0.55, "inflation_z": -0.60, "growth_z": -1.80, "tariff_pct": 0.0, "uncertainty_z": 2.10},
+    },
+    {
+        "event_date": "2019-05-06",
+        "kind": "tariff",
+        "label": "中美经贸摩擦关税上调消息冲击风险偏好",
+        "shock": {"rate_bps": 4.0, "fx_pct": 0.70, "inflation_z": -0.25, "growth_z": -1.10, "tariff_pct": 25.0, "uncertainty_z": 1.65},
+    },
+    {
+        "event_date": "2018-10-19",
+        "kind": "stabilization",
+        "label": "一行两会与高层联合发声化解股权质押流动性风险",
+        "shock": {"rate_bps": -10.0, "fx_pct": -0.15, "inflation_z": 0.10, "growth_z": 1.05, "tariff_pct": 0.0, "uncertainty_z": -0.95},
+    },
 )
 
 
@@ -1755,11 +2635,80 @@ def cached_panel(root: Path) -> HistoricalPanel:
         return panel
 
 
-def _realized_overlay(panel: HistoricalPanel, anchor_day: date, steps: int) -> dict | None:
-    """Return actual realised post-anchor ^NDX and ^VXN closes ONLY for UI visual comparison."""
+def _realized_overlay(
+    panel: HistoricalPanel,
+    anchor_day: date,
+    steps: int,
+    market: SimMarket = "ndx",
+) -> dict | None:
+    """Return actual realised post-anchor index and vol closes ONLY for UI visual comparison."""
+    mkt = normalize_sim_market(market)
+    tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
+
+    if mkt == "ssec":
+        if not panel.has_ssec():
+            return None
+        ssec_bars = panel.series_map["000001.SS"].bars
+        closes = np.array([b.close for b in ssec_bars], dtype=float)
+        rv20_arr = _rolling_rv_series(closes, window=20, floor_pct=5.5)
+        anchor_idx = None
+        for i, bar in enumerate(ssec_bars):
+            if bar.date <= anchor_day:
+                anchor_idx = i
+            else:
+                break
+        if anchor_idx is None or anchor_idx + 1 >= len(ssec_bars):
+            return None
+
+        base_bar = ssec_bars[anchor_idx]
+        base_vol = float(rv20_arr[anchor_idx])
+        points: list[dict] = [
+            {
+                "step": 0,
+                "date": base_bar.date.isoformat(),
+                "ndx": round(base_bar.close, 2),
+                "ndx_ret_pct": 0.0,
+                "vxn": round(base_vol, 2),
+                "vxn_chg": 0.0,
+                "tnx_pct": round(tnx_map.get(base_bar.date - timedelta(days=1), 0.0), 3),
+            }
+        ]
+        for s in range(1, steps + 1):
+            t_idx = anchor_idx + s
+            if t_idx >= len(ssec_bars):
+                break
+            bar = ssec_bars[t_idx]
+            v_val = float(rv20_arr[t_idx])
+            points.append(
+                {
+                    "step": s,
+                    "date": bar.date.isoformat(),
+                    "ndx": round(bar.close, 2),
+                    "ndx_ret_pct": round((bar.close / base_bar.close - 1.0) * 100.0, 2),
+                    "vxn": round(v_val, 2),
+                    "vxn_chg": round(v_val - base_vol, 2),
+                    "tnx_pct": round(tnx_map.get(bar.date - timedelta(days=1), 0.0), 3),
+                }
+            )
+        if len(points) <= 1:
+            return None
+        last_pt = points[-1]
+        return {
+            "market": "ssec",
+            "index_symbol": "000001.SS",
+            "vol_symbol": "RV20",
+            "anchor_date": base_bar.date.isoformat(),
+            "resolved_steps": len(points) - 1,
+            "requested_steps": steps,
+            "terminal_ndx": last_pt["ndx"],
+            "terminal_ndx_ret_pct": last_pt["ndx_ret_pct"],
+            "terminal_vxn": last_pt["vxn"],
+            "terminal_vxn_chg": last_pt["vxn_chg"],
+            "points": points,
+        }
+
     ndx_bars = panel.series_map["^NDX"].bars
     vxn_map = {b.date: b.close for b in panel.series_map["^VXN"].bars}
-    tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
 
     anchor_idx = None
     for i, bar in enumerate(ndx_bars):
@@ -1775,7 +2724,7 @@ def _realized_overlay(panel: HistoricalPanel, anchor_day: date, steps: int) -> d
     if base_vxn is None:
         return None
 
-    points: list[dict] = [
+    points = [
         {
             "step": 0,
             "date": base_bar.date.isoformat(),
@@ -1809,6 +2758,9 @@ def _realized_overlay(panel: HistoricalPanel, anchor_day: date, steps: int) -> d
         return None
     last_pt = points[-1]
     return {
+        "market": "ndx",
+        "index_symbol": "^NDX",
+        "vol_symbol": "^VXN",
         "anchor_date": base_bar.date.isoformat(),
         "resolved_steps": len(points) - 1,
         "requested_steps": steps,
@@ -1820,8 +2772,108 @@ def _realized_overlay(panel: HistoricalPanel, anchor_day: date, steps: int) -> d
     }
 
 
-def historical_replay_catalog(root: Path, panel: HistoricalPanel, limit: int = 36) -> list[dict]:
-    """Curated list of recent and largest-impulse historical FOMC/CPI/NFP shocks for UI replay."""
+def historical_ssec_replay_catalog(root: Path, panel: HistoricalPanel, limit: int = 36) -> list[dict]:
+    """Curated A-share domestic policy landmarks + cross-border macro shocks for UI replay."""
+    if not panel.has_ssec():
+        return []
+    ssec_bars = panel.series_map["000001.SS"].bars
+    ssec_dates = [b.date.isoformat() for b in ssec_bars]
+    ssec_closes = np.array([b.close for b in ssec_bars], dtype=float)
+    rv20_arr = _rolling_rv_series(ssec_closes, window=20, floor_pct=5.5)
+    pos = {d: i for i, d in enumerate(ssec_dates)}
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in SSEC_LANDMARK_EVENTS:
+        ed = item["event_date"]
+        idx = pos.get(ed)
+        if idx is None or idx < 292 or idx >= len(ssec_bars) - 1:
+            continue
+        r0_pct = (ssec_closes[idx] / ssec_closes[idx - 1] - 1.0) * 100.0
+        dv0 = float(rv20_arr[idx] - rv20_arr[idx - 1])
+        sh = item["shock"]
+        out.append(
+            {
+                "event_date": ed,
+                "pre_event_date": ssec_dates[idx - 1],
+                "kind": item["kind"],
+                "label": item["label"],
+                "rate_bps": sh["rate_bps"],
+                "fx_pct": sh["fx_pct"],
+                "inflation_z": sh["inflation_z"],
+                "growth_z": sh["growth_z"],
+                "tariff_pct": sh["tariff_pct"],
+                "uncertainty_z": sh["uncertainty_z"],
+                "actual_r0_pct": round(r0_pct, 2),
+                "actual_dv0": round(dv0, 2),
+            }
+        )
+        seen.add(ed)
+
+    # Also append recent cross-border FOMC/CPI/NFP sessions settled on 000001.SS
+    cal = events.load(root)
+    if cal:
+        us_common = sorted(
+            set.intersection(*({b.date for b in panel.series_map[sym].bars} for sym in ("^NDX", "^TNX", "DX-Y.NYB")))
+        )
+        us_idx = {d: i for i, d in enumerate(us_common)}
+        ndx_map = {b.date: b.close for b in panel.series_map["^NDX"].bars}
+        tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
+        dxy_map = {b.date: b.close for b in panel.series_map["DX-Y.NYB"].bars}
+        ssec_date_objs = [b.date for b in ssec_bars]
+
+        cross_items: list[dict] = []
+        for kind in ("fomc", "cpi", "nfp"):
+            for us_ev in cal.get(kind, []):
+                if us_ev not in us_idx or us_idx[us_ev] < 5:
+                    continue
+                ai = int(np.searchsorted(ssec_date_objs, us_ev, side="right"))
+                if ai < 292 or ai >= len(ssec_bars) - 1:
+                    continue
+                ed = ssec_dates[ai]
+                if ed in seen:
+                    continue
+                u_prev = us_common[us_idx[us_ev] - 1]
+                dy_bps = (tnx_map[us_ev] - tnx_map[u_prev]) * 100.0
+                dd_pct = math.log(dxy_map[us_ev] / dxy_map[u_prev]) * 100.0
+                ov_ndx = (ndx_map[us_ev] / ndx_map[u_prev] - 1.0) * 100.0
+                r0_pct = (ssec_closes[ai] / ssec_closes[ai - 1] - 1.0) * 100.0
+                dv0 = float(rv20_arr[ai] - rv20_arr[ai - 1])
+                cross_items.append(
+                    {
+                        "event_date": ed,
+                        "pre_event_date": ssec_dates[ai - 1],
+                        "kind": kind,
+                        "label": f"隔夜美 {kind.upper()} ({us_ev.isoformat()}, NDX {ov_ndx:+.1f}%)",
+                        "rate_bps": round(dy_bps, 1),
+                        "fx_pct": round(dd_pct, 2),
+                        "inflation_z": round(_clip(dy_bps / 12.0, -2.0, 2.0), 2) if kind == "cpi" else 0.0,
+                        "growth_z": round(_clip(ov_ndx / 1.8, -2.0, 2.0) * 0.35, 2),
+                        "tariff_pct": 0.0,
+                        "uncertainty_z": round(max(0.0, -ov_ndx / 2.2), 2),
+                        "overnight_equity_pct": round(ov_ndx, 2),
+                        "actual_r0_pct": round(r0_pct, 2),
+                        "actual_dv0": round(dv0, 2),
+                    }
+                )
+                seen.add(ed)
+        cross_items.sort(key=lambda x: x["event_date"], reverse=True)
+        out.extend(cross_items[: max(0, limit - len(out))])
+
+    out.sort(key=lambda x: x["event_date"], reverse=True)
+    return out[:limit]
+
+
+def historical_replay_catalog(
+    root: Path,
+    panel: HistoricalPanel,
+    limit: int = 36,
+    market: SimMarket = "ndx",
+) -> list[dict]:
+    """Curated list of historical policy/macro shocks for UI replay (`ndx` or `ssec`)."""
+    if normalize_sim_market(market) == "ssec":
+        return historical_ssec_replay_catalog(root, panel, limit=limit)
+
     try:
         common_dates, idx_map, episodes = _event_dates_aligned(root, panel)
     except Exception:
@@ -1872,9 +2924,17 @@ def _clip_int(val: object, low: int, high: int, default: int = 5) -> int:
     return max(low, min(parsed, high))
 
 
-def _build_shock_from_request(root: Path, body: dict, as_of: AsOf) -> PolicyShock:
-    scenario_key = str(body.get("scenario") or "tariff_25").strip()
-    base = PRESET_SHOCKS.get(scenario_key, PolicyShock(kind=str(body.get("kind") or "custom"), title=scenario_key))
+def _build_shock_from_request(
+    root: Path,
+    body: dict,
+    as_of: AsOf,
+    market: SimMarket = "ndx",
+) -> PolicyShock:
+    mkt = normalize_sim_market(market)
+    default_scen = "pboc_924_bazooka" if mkt == "ssec" else "tariff_25"
+    scenario_key = str(body.get("scenario") or body.get("preset") or default_scen).strip()
+    presets = presets_for_market(mkt)
+    base = presets.get(scenario_key, PolicyShock(kind=str(body.get("kind") or "custom"), title=scenario_key))
 
     def _num(key: str, default: float) -> float:
         val = body.get(key)
@@ -1892,28 +2952,33 @@ def _build_shock_from_request(root: Path, body: dict, as_of: AsOf) -> PolicyShoc
         uncertainty_z=_num("uncertainty_z", base.uncertainty_z),
         persistence=_clip(_num("persistence", base.persistence), 0.0, 0.90),
         headlines=headlines,
+        overnight_equity_pct=_num("overnight_equity_pct", base.overnight_equity_pct),
     )
 
 
 def run_sim_payload(root: Path, body: dict, llms: Sequence[LLM] | dict[str, LLM] | None = None) -> dict:
-    """Execute one simulation from a web request dict and attach optional realised overlay."""
+    """Execute one simulation from a web request dict (`ndx` or `ssec`) and attach realised overlay."""
+    mkt = normalize_sim_market(str(body.get("market") or "ndx"))
     panel = cached_panel(root)
-    ndx_bars = panel.series_map["^NDX"].bars
+    sym = "000001.SS" if mkt == "ssec" else "^NDX"
+    if sym not in panel.series_map:
+        raise ValueError(f"{sym} is not available in database.")
+    bars = panel.series_map[sym].bars
     raw_day = str(body.get("day") or "").strip()
-    anchor_day = date.fromisoformat(raw_day) if raw_day else ndx_bars[-1].date
-    if anchor_day > ndx_bars[-1].date:
-        anchor_day = ndx_bars[-1].date
+    anchor_day = date.fromisoformat(raw_day) if raw_day else bars[-1].date
+    if anchor_day > bars[-1].date:
+        anchor_day = bars[-1].date
 
-    as_of = AsOf.at_session_close(anchor_day)
-    state, res_ret, res_vxn = panel.build_state(as_of)
+    as_of = as_of_for_market(anchor_day, mkt)
+    state, res_ret, res_vxn = panel.build_state(as_of, market=mkt)
     steps = _clip_int(body.get("steps"), 1, 15, default=5)
     mode_raw = str(body.get("mode") or "rule").strip().lower()
     mode: ActorMode = mode_raw if mode_raw in ("rule", "homogeneous", "llm") else "rule"  # type: ignore[assignment]
     models_raw = str(body.get("models") or "").strip()
     model_list = [m.strip() for m in models_raw.split(",") if m.strip()] or None
 
-    shock = _build_shock_from_request(root, body, as_of)
-    actors = build_actors(mode, root=root, llms=llms, models=model_list)
+    shock = _build_shock_from_request(root, body, as_of, market=mkt)
+    actors = build_actors(mode, market=mkt, root=root, llms=llms, models=model_list)
     result = simulate(
         state,
         shock,
@@ -1926,33 +2991,40 @@ def run_sim_payload(root: Path, body: dict, llms: Sequence[LLM] | dict[str, LLM]
     )
     doc = result.to_json()
     doc["ok"] = True
-    doc["realized_overlay"] = _realized_overlay(panel, date.fromisoformat(state.as_of), steps)
+    doc["realized_overlay"] = _realized_overlay(
+        panel, date.fromisoformat(state.as_of), steps, market=mkt
+    )
     return doc
 
 
 def run_sim_stream(root: Path, body: dict, llms: Sequence[LLM] | dict[str, LLM] | None = None) -> Iterator[dict]:
-    """NDJSON event stream for live multi-step LLM simulation in the web UI."""
+    """NDJSON event stream for live multi-step LLM simulation in the web UI (`ndx` or `ssec`)."""
+    mkt = normalize_sim_market(str(body.get("market") or "ndx"))
     panel = cached_panel(root)
-    ndx_bars = panel.series_map["^NDX"].bars
+    sym = "000001.SS" if mkt == "ssec" else "^NDX"
+    if sym not in panel.series_map:
+        raise ValueError(f"{sym} is not available in database.")
+    bars = panel.series_map[sym].bars
     raw_day = str(body.get("day") or "").strip()
-    anchor_day = date.fromisoformat(raw_day) if raw_day else ndx_bars[-1].date
-    if anchor_day > ndx_bars[-1].date:
-        anchor_day = ndx_bars[-1].date
+    anchor_day = date.fromisoformat(raw_day) if raw_day else bars[-1].date
+    if anchor_day > bars[-1].date:
+        anchor_day = bars[-1].date
 
-    as_of = AsOf.at_session_close(anchor_day)
-    state, res_ret, res_vxn = panel.build_state(as_of)
+    as_of = as_of_for_market(anchor_day, mkt)
+    state, res_ret, res_vxn = panel.build_state(as_of, market=mkt)
     steps = _clip_int(body.get("steps"), 1, 15, default=5)
     mode_raw = str(body.get("mode") or "llm").strip().lower()
     mode: ActorMode = mode_raw if mode_raw in ("rule", "homogeneous", "llm") else "llm"  # type: ignore[assignment]
     models_raw = str(body.get("models") or "deepseek-chat,qwen3.8-flash").strip()
     model_list = [m.strip() for m in models_raw.split(",") if m.strip()] or None
 
-    shock = _build_shock_from_request(root, body, as_of)
-    roster = build_actors(mode, root=root, llms=llms, models=model_list)
+    shock = _build_shock_from_request(root, body, as_of, market=mkt)
+    roster = build_actors(mode, market=mkt, root=root, llms=llms, models=model_list)
     weights = {a.spec.actor_id: a.spec.weight for a in roster}
 
     yield {
         "type": "start",
+        "market": mkt,
         "as_of": state.as_of,
         "steps": steps,
         "mode": mode,
@@ -2010,22 +3082,25 @@ def run_sim_stream(root: Path, body: dict, llms: Sequence[LLM] | dict[str, LLM] 
     )
     doc = final_res.to_json()
     doc["ok"] = True
-    doc["realized_overlay"] = _realized_overlay(panel, date.fromisoformat(state.as_of), steps)
+    doc["realized_overlay"] = _realized_overlay(
+        panel, date.fromisoformat(state.as_of), steps, market=mkt
+    )
     yield {"type": "done", "result": doc}
 
 
-def sim_init_payload(root: Path) -> dict:
-    """Initial bundle for `web/sim.html`: presets, actors, replay events, LLM status, and default run."""
-    panel = cached_panel(root)
-    ndx_bars = panel.series_map["^NDX"].bars
-    latest_date = ndx_bars[-1].date.isoformat()
-    min_date = ndx_bars[min(295, len(ndx_bars) - 1)].date.isoformat()
-    env = merged_env(root)
+def _market_init_block(root: Path, panel: HistoricalPanel, mkt: SimMarket) -> dict:
+    sym = "000001.SS" if mkt == "ssec" else "^NDX"
+    bars = panel.series_map[sym].bars
+    latest_date = bars[-1].date.isoformat()
+    min_date = bars[min(295, len(bars) - 1)].date.isoformat()
+    ui_meta = SSEC_PRESET_UI_META if mkt == "ssec" else PRESET_UI_META
+    presets_map = presets_for_market(mkt)
+    default_preset = "pboc_924_bazooka" if mkt == "ssec" else "tariff_25"
 
     presets_out = []
-    for meta in PRESET_UI_META:
+    for meta in ui_meta:
         pid = meta["id"]
-        spec = PRESET_SHOCKS[pid]
+        spec = presets_map[pid]
         presets_out.append(
             {
                 "id": pid,
@@ -2043,33 +3118,70 @@ def sim_init_payload(root: Path) -> dict:
             "mandate": a.mandate,
             "constraints": a.constraints,
         }
-        for a in ACTOR_SPECS
+        for a in actor_specs_for_market(mkt)
     ]
-    llm_status = {
-        "deepseek": providers.describe("deepseek-chat", env),
-        "qwen": providers.describe("qwen3.8-flash", env),
-    }
-    initial_run = run_sim_payload(root, {"scenario": "tariff_25", "steps": 5, "mode": "rule"})
+    initial_run = run_sim_payload(
+        root,
+        {"market": mkt, "scenario": default_preset, "steps": 5, "mode": "rule"},
+    )
     return {
-        "ok": True,
+        "market": mkt,
+        "index_symbol": sym,
+        "vol_symbol": "RV20" if mkt == "ssec" else "^VXN",
+        "default_preset": default_preset,
         "latest_date": latest_date,
         "min_date": min_date,
         "presets": presets_out,
         "actors": actors_out,
-        "historical_events": historical_replay_catalog(root, panel, limit=36),
-        "llm_status": llm_status,
+        "historical_events": historical_replay_catalog(root, panel, limit=36, market=mkt),
         "initial": initial_run,
+    }
+
+
+def sim_init_payload(root: Path, market: str = "ndx") -> dict:
+    """Initial bundle for `web/sim.html`, preloading both US (`^NDX`) and A-share (`000001.SS`) configs."""
+    mkt = normalize_sim_market(market)
+    panel = cached_panel(root)
+    env = merged_env(root)
+
+    markets_bundle: dict[str, dict] = {
+        "ndx": _market_init_block(root, panel, "ndx"),
+    }
+    if panel.has_ssec():
+        markets_bundle["ssec"] = _market_init_block(root, panel, "ssec")
+
+    active_block = markets_bundle.get(mkt) or markets_bundle["ndx"]
+    llm_status = {
+        "deepseek": providers.describe("deepseek-chat", env),
+        "qwen": providers.describe("qwen3.8-flash", env),
+    }
+    return {
+        "ok": True,
+        "active_market": active_block["market"],
+        "available_markets": list(markets_bundle.keys()),
+        "markets": markets_bundle,
+        # Top-level aliases preserve full backward compatibility with existing single-market callers
+        "latest_date": active_block["latest_date"],
+        "min_date": active_block["min_date"],
+        "presets": active_block["presets"],
+        "actors": active_block["actors"],
+        "historical_events": active_block["historical_events"],
+        "llm_status": llm_status,
+        "initial": active_block["initial"],
     }
 
 
 def load_or_run_backtest(
     root: Path,
     *,
+    market: str = "ndx",
     force: bool = False,
     kinds: str = "fomc,cpi,nfp",
     horizon: int = 5,
 ) -> dict:
-    cache_path = root / "artifacts" / "sim" / "backtest_report.json"
+    mkt = normalize_sim_market(market)
+    fname = "backtest_ssec_report.json" if mkt == "ssec" else "backtest_report.json"
+    cache_path = root / "artifacts" / "sim" / fname
     kind_tuple = tuple(k.strip().lower() for k in kinds.split(",") if k.strip())
     if not force and cache_path.is_file() and kind_tuple == ("fomc", "cpi", "nfp") and horizon == 5:
         try:
@@ -2079,7 +3191,7 @@ def load_or_run_backtest(
             return doc
         except Exception:
             pass
-    report = backtest_macro_shocks(root, kinds=kind_tuple, horizon=horizon)
+    report = backtest_macro_shocks(root, market=mkt, kinds=kind_tuple, horizon=horizon)
     if kind_tuple == ("fomc", "cpi", "nfp") and horizon == 5:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")

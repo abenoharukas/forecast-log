@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <meta name="description" content="Multi-agent policy and macro-shock simulation workbench with explicit cross-asset market-clearing equations and historical event replay.">
+  <meta name="description" content="Multi-agent policy and macro-shock simulation workbench for US Nasdaq-100 (^NDX / ^VXN) and China A-Shares (000001.SS / RV20).">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <title>Policy &amp; Macro Shock Simulator · forecast-log</title>
@@ -43,6 +43,12 @@
       display: flex;
       align-items: baseline;
       gap: 12px 16px;
+      flex-wrap: wrap;
+    }
+    .head-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       flex-wrap: wrap;
     }
     h1 {
@@ -126,7 +132,7 @@
       padding: 3px 7px;
       min-block-size: 26px;
     }
-    .wb-select { max-width: 295px; }
+    .wb-select { max-width: 320px; }
     .wb-text { flex: 1; min-width: 200px; background: var(--sheet); }
 
     .sliders-grid {
@@ -192,7 +198,7 @@
     /* KPI Strip */
     .kpi-strip {
       display: grid;
-      grid-template-columns: 1.25fr 1.15fr 1.15fr 1.35fr;
+      grid-template-columns: 1.28fr 1.15fr 1.15fr 1.32fr;
       gap: 10px;
       font-family: "IBM Plex Mono", ui-monospace, monospace;
     }
@@ -361,7 +367,7 @@
 
     /* Right Aside: Actor Cards & Backtest Scoreboard */
     aside {
-      width: 465px;
+      width: 470px;
       flex: none;
       background: var(--sheet);
       border: 1px solid var(--rule);
@@ -512,28 +518,34 @@
     <header>
       <div class="head-left">
         <h1>Policy &amp; Macro Shock Simulator</h1>
-        <span class="sub">显式 5 维状态清算 · 异质机构角色博弈（Computed, not narrated）</span>
+        <span class="sub" id="head-sub">显式 5 维状态清算 · 异质机构角色博弈（Computed, not narrated）</span>
         <span class="sub">
           <a href="/">Signals →</a> ·
           <a href="/vxn">VXN →</a> ·
           <a href="/agent">Agent scoreboard →</a>
         </span>
       </div>
-      <div class="market-tabs" id="mode-tabs" role="tablist" aria-label="Simulation actor backend">
-        <button type="button" class="market-tab active" data-mode="rule" title="微观测度标定的 4 类异质机构行为函数（毫秒级实时滑块推演）">异质规则秒算 (Rule)</button>
-        <button type="button" class="market-tab" data-mode="homogeneous" title="消融实验对照：将 4 个角色退化为单一无差别交易员">同质消融对照 (Ablation)</button>
-        <button type="button" class="market-tab" data-mode="llm" title="调用真实大模型（DeepSeek × Qwen）并发扮演 4 类机构提交头寸向量">AI 多模型实盘 (LLM)</button>
+      <div class="head-right">
+        <div class="market-tabs" id="market-tabs" role="tablist" aria-label="Target equity market">
+          <button type="button" class="market-tab active" data-market="ndx" title="美股纳斯达克100 (^NDX) 与隐含波动率 (^VXN)，纽约 16:15 ET 收盘门控">美股 · ^NDX</button>
+          <button type="button" class="market-tab" data-market="ssec" title="A股上证综指 (000001.SS) 与20日年化实现波动率 (RV20)，上海 15:05 CST 收盘门控（严禁同日美盘穿越）">A股 · 上证 000001.SS</button>
+        </div>
+        <div class="market-tabs" id="mode-tabs" role="tablist" aria-label="Simulation actor backend">
+          <button type="button" class="market-tab active" data-mode="rule" title="微观测度标定的 4 类异质机构行为函数（毫秒级实时滑块推演）">异质规则 (Rule)</button>
+          <button type="button" class="market-tab" data-mode="homogeneous" title="消融实验对照：将 4 个角色退化为单一无差别交易员">同质消融 (Ablation)</button>
+          <button type="button" class="market-tab" data-mode="llm" title="调用真实大模型（DeepSeek × Qwen）并发扮演 4 类机构提交头寸向量">AI 实盘 (LLM)</button>
+        </div>
       </div>
     </header>
 
     <section class="workbench" aria-label="Scenario and shock controls">
       <div class="wb-row">
-        <span class="wb-label">预设政策冲击</span>
+        <span class="wb-label" id="lbl-preset-group">预设政策冲击</span>
         <div class="preset-group" id="preset-buttons"></div>
 
         <div class="replay-bar">
           <span class="wb-label">历史事件回放</span>
-          <select id="replay-select" class="wb-select" aria-label="选择历史 FOMC/CPI/NFP 事件并叠加真实走势">
+          <select id="replay-select" class="wb-select" aria-label="选择历史政策/宏观事件并叠加真实走势">
             <option value="">— 最新盘面推演（无历史未来数据） —</option>
           </select>
           <select id="replay-anchor" class="wb-select" title="回放起点：冲击传导从事件前一日收盘起算；事后消化从事件当日收盘起算">
@@ -553,32 +565,32 @@
           <button type="button" class="preset-pill active" data-steps="5">5 交易日</button>
           <button type="button" class="preset-pill" data-steps="10">10 交易日</button>
         </div>
-        <button type="button" class="ctxbar-btn" id="reset-btn" title="恢复当前预设默认参数">重置参数</button>
+        <button type="button" class="ctxbar-btn" id="reset-btn" title="恢复当前市场预设默认参数">重置参数</button>
       </div>
 
       <div class="sliders-grid">
         <div class="slider-cell">
-          <div class="slider-top"><span>10Y 利率冲击</span><span class="slider-val" id="val-rate">+6.0 bp</span></div>
+          <div class="slider-top"><span id="lbl-sl-rate">10Y 利率冲击</span><span class="slider-val" id="val-rate">+6.0 bp</span></div>
           <input type="range" id="sl-rate" min="-40" max="40" step="1" value="6">
         </div>
         <div class="slider-cell">
-          <div class="slider-top"><span>美元冲击 DXY</span><span class="slider-val" id="val-fx">+0.65%</span></div>
+          <div class="slider-top"><span id="lbl-sl-fx">美元冲击 DXY</span><span class="slider-val" id="val-fx">+0.65%</span></div>
           <input type="range" id="sl-fx" min="-2.0" max="2.0" step="0.05" value="0.65">
         </div>
         <div class="slider-cell">
-          <div class="slider-top"><span>通胀意外</span><span class="slider-val" id="val-infl">+1.35 σ</span></div>
+          <div class="slider-top"><span id="lbl-sl-infl">通胀意外</span><span class="slider-val" id="val-infl">+1.35 σ</span></div>
           <input type="range" id="sl-infl" min="-3.0" max="3.0" step="0.05" value="1.35">
         </div>
         <div class="slider-cell">
-          <div class="slider-top"><span>增长意外</span><span class="slider-val" id="val-grow">-0.90 σ</span></div>
+          <div class="slider-top"><span id="lbl-sl-grow">增长意外</span><span class="slider-val" id="val-grow">-0.90 σ</span></div>
           <input type="range" id="sl-grow" min="-3.0" max="3.0" step="0.05" value="-0.90">
         </div>
         <div class="slider-cell">
-          <div class="slider-top"><span>新增关税税率</span><span class="slider-val" id="val-tariff">25.0%</span></div>
+          <div class="slider-top"><span id="lbl-sl-tariff">新增关税税率</span><span class="slider-val" id="val-tariff">25.0%</span></div>
           <input type="range" id="sl-tariff" min="0" max="50" step="1" value="25">
         </div>
         <div class="slider-cell">
-          <div class="slider-top"><span>政策不确定性</span><span class="slider-val" id="val-unc">+1.60 σ</span></div>
+          <div class="slider-top"><span id="lbl-sl-unc">政策不确定性</span><span class="slider-val" id="val-unc">+1.60 σ</span></div>
           <input type="range" id="sl-unc" min="-1.5" max="3.0" step="0.05" value="1.60">
         </div>
       </div>
@@ -599,22 +611,22 @@
 
     <section class="kpi-strip" aria-label="Simulation summary metrics">
       <div class="kpi-card">
-        <div class="kpi-label"><span>时点快照与宏观制度 (As-Of Gate)</span><span id="kpi-mode-tag">rule</span></div>
+        <div class="kpi-label"><span id="kpi-gate-title">时点快照与宏观制度 (As-Of Gate)</span><span id="kpi-mode-tag">rule</span></div>
         <div class="kpi-main" id="kpi-asof">—</div>
         <div class="kpi-sub" id="kpi-regime">—</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label"><span>Nasdaq-100 (^NDX) 终端推演</span><span id="kpi-ndx-band">—</span></div>
+        <div class="kpi-label"><span id="kpi-idx-title">Nasdaq-100 (^NDX) 终端推演</span><span id="kpi-ndx-band">—</span></div>
         <div class="kpi-main" id="kpi-ndx">—</div>
-        <div class="kpi-sub" id="kpi-ndx-real">80% 置信扇区基于前序残差波动率标定</div>
+        <div class="kpi-sub" id="kpi-ndx-real">—</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label"><span>隐含波动率 (^VXN) 终端推演</span><span id="kpi-vxn-band">—</span></div>
+        <div class="kpi-label"><span id="kpi-vol-title">隐含波动率 (^VXN) 终端推演</span><span id="kpi-vxn-band">—</span></div>
         <div class="kpi-main" id="kpi-vxn">—</div>
-        <div class="kpi-sub" id="kpi-vxn-real">含 OU 均值回归 + 期限结构回落 + 负 Gamma</div>
+        <div class="kpi-sub" id="kpi-vxn-real">—</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label"><span>校准事件概率 (Calibrated Odds)</span><span id="kpi-cost">0 tokens</span></div>
+        <div class="kpi-label"><span>校准事件概率 (Calibrated Odds)</span><span id="kpi-cost">0 API cost</span></div>
         <div class="kpi-main" id="kpi-probs">—</div>
         <div class="kpi-sub" id="kpi-tail">—</div>
       </div>
@@ -634,14 +646,14 @@
         <div class="charts-stack">
           <div class="chart-box">
             <div class="chart-caption">
-              <span><b>^NDX</b> · Nasdaq-100 指数清算路径</span>
+              <span id="chart-idx-title"><b>^NDX</b> · Nasdaq-100 指数清算路径</span>
               <span id="cap-ndx">—</span>
             </div>
             <canvas id="canvas-ndx" class="sim-canvas"></canvas>
           </div>
           <div class="chart-box">
             <div class="chart-caption">
-              <span><b>^VXN</b> · 隐含波动率与期限结构传导</span>
+              <span id="chart-vol-title"><b>^VXN</b> · 隐含波动率与期限结构传导</span>
               <span id="cap-vxn">—</span>
             </div>
             <canvas id="canvas-vxn" class="sim-canvas"></canvas>
@@ -657,13 +669,13 @@
                 <th scope="col">净保护流 F_vol</th>
                 <th scope="col">分歧度</th>
                 <th scope="col">Kyle λ</th>
-                <th scope="col">仿真 ^NDX</th>
+                <th scope="col" id="th-sim-idx">仿真 ^NDX</th>
                 <th scope="col">单步涨跌</th>
-                <th scope="col">真实 ^NDX</th>
-                <th scope="col">仿真 ^VXN</th>
-                <th scope="col">真实 ^VXN</th>
-                <th scope="col">10Y ^TNX</th>
-                <th scope="col">ln(HYG/TLT)</th>
+                <th scope="col" id="th-real-idx">真实 ^NDX</th>
+                <th scope="col" id="th-sim-vol">仿真 ^VXN</th>
+                <th scope="col" id="th-real-vol">真实 ^VXN</th>
+                <th scope="col" id="th-tnx">10Y ^TNX</th>
+                <th scope="col" id="th-aux">ln(HYG/TLT)</th>
               </tr>
             </thead>
             <tbody id="ledger-rows"></tbody>
@@ -676,7 +688,7 @@
           <span style="font-weight:500;" id="aside-heading">异质机构角色博弈明细</span>
           <div class="preset-group">
             <button type="button" class="ctxbar-btn active" id="tab-actors-btn">角色动作 (4)</button>
-            <button type="button" class="ctxbar-btn" id="tab-bt-btn">488次历史回测</button>
+            <button type="button" class="ctxbar-btn" id="tab-bt-btn">历史回测记分牌</button>
           </div>
         </div>
 
@@ -690,8 +702,8 @@
 
         <div class="aside-body" id="bt-view" hidden>
           <div class="wb-row" style="justify-content:space-between;">
-            <span class="note" id="bt-meta">加载 488 次 FOMC/CPI/NFP 历史回测…</span>
-            <button type="button" class="ctxbar-btn" id="bt-refresh-btn" title="重新运行全量 488 次历史事件回测">↻ 重算回测</button>
+            <span class="note" id="bt-meta">加载历史宏观事件回测…</span>
+            <button type="button" class="ctxbar-btn" id="bt-refresh-btn" title="重新运行当前市场全量历史事件回测">↻ 重算回测</button>
           </div>
           <div id="bt-content" style="display:flex;flex-direction:column;gap:10px;"></div>
         </div>
@@ -702,23 +714,78 @@
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       const ACTOR_NAMES = {
+        // US (^NDX / ^VXN)
         macro_fund: "宏观对冲基金 · Global Macro (30%)",
         vol_target_cta: "波动率目标 CTA · Vol-Target (25%)",
         corp_credit_hedger: "企业与信用套保盘 · Corp/Credit (25%)",
         options_dealer_mm: "期权做市商 · Dealer Gamma (20%)",
+        // China A-Shares (000001.SS / RV20)
+        national_team_etf: "汇金 / 平准宽基 ETF 资金 (28%)",
+        northbound_global: "北向与外资宏观配置盘 (24%)",
+        quant_dma_margin: "两融与量化指增风控盘 (26%)",
+        mutual_insurer_value: "公募与险资绝对收益盘 (22%)",
       };
 
+      const MARKET_UI = {
+        ndx: {
+          idxSym: "^NDX",
+          idxFull: "Nasdaq-100 (^NDX)",
+          volSym: "^VXN",
+          volFull: "隐含波动率 (^VXN)",
+          volUnit: " pts",
+          gateTitle: "时点快照与宏观制度 (16:15 ET As-Of)",
+          chartIdx: "<b>^NDX</b> · Nasdaq-100 指数清算路径",
+          chartVol: "<b>^VXN</b> · 隐含波动率与期限结构传导",
+          thTnx: "10Y ^TNX",
+          thAux: "ln(HYG/TLT)",
+          slRate: "10Y 利率冲击",
+          slFx: "美元冲击 DXY",
+          slInfl: "通胀意外",
+          slGrow: "增长意外",
+          slTariff: "新增关税税率",
+          slUnc: "政策不确定性",
+          flowLabels: ["股票流 eq", "久期流 bond", "信用流 cred", "保护需求 volH"],
+          btNote: "诚实边界说明：无后续外生冲击时，事前 5d 纳指无条件漂移 Brier 为 0.2506（与常数 0.2500 持平），说明仿真引擎的真实 Alpha 在于「条件政策冲击传导」与「^VXN 期限结构消化」。",
+        },
+        ssec: {
+          idxSym: "000001.SS",
+          idxFull: "上证综指 (000001.SS)",
+          volSym: "RV20",
+          volFull: "20日年化实现波动率 (RV20 %)",
+          volUnit: "%",
+          gateTitle: "时点快照与本土趋势制度 (15:05 CST As-Of)",
+          chartIdx: "<b>000001.SS</b> · A股上证综指清算路径",
+          chartVol: "<b>RV20</b> · 上证20日年化实现波动率 (%)",
+          thTnx: "隔夜 ^TNX",
+          thAux: "ln(SSEC/MA20)",
+          slRate: "政策/外部利率冲击",
+          slFx: "汇率压力 DXY",
+          slInfl: "通胀 / PPI 意外",
+          slGrow: "内需 / 财政刺激",
+          slTariff: "对华新增关税",
+          slUnc: "外部与政策不确定性",
+          flowLabels: ["A股流 eq", "国债久期流 bond", "两融风偏流 cred", "期权保护流 volH"],
+          btNote: "时区防穿越说明：A股当日 15:00 收盘早于美股开盘，所有海外因子 (^NDX / ^TNX / DXY) 严格截断至前一交易日 (< session)，杜绝同日美盘未来数据泄露。",
+        },
+      };
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const initialMarketParam = (urlParams.get("market") || "").toLowerCase();
+      let activeMarket = (initialMarketParam === "ssec" || initialMarketParam === "a-shares") ? "ssec" : "ndx";
+
       let initBundle = null;
+      let marketsMap = {};
       let presetsById = {};
       let replayEvents = [];
       let currentResult = null;
       let activePreset = "tariff_25";
+      let activeOvernightEqPct = 0.0;
       let activeMode = "rule";
       let activeSteps = 5;
       let inspectedStep = 1;
       let debounceTimer = null;
       let runningLLM = false;
-      let backtestLoaded = false;
+      let backtestCache = {};
 
       const el = (sel) => document.querySelector(sel);
       const escapeHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -726,6 +793,31 @@
         const n = Number(v || 0);
         return (n >= 0 ? "+" : "−") + Math.abs(n).toFixed(d) + suffix;
       };
+
+      function uiMeta() {
+        return MARKET_UI[activeMarket] || MARKET_UI.ndx;
+      }
+
+      function syncMarketStaticLabels() {
+        const m = uiMeta();
+        el("#kpi-gate-title").textContent = m.gateTitle;
+        el("#kpi-idx-title").textContent = `${m.idxFull} 终端推演`;
+        el("#kpi-vol-title").textContent = `${m.volFull} 终端推演`;
+        el("#chart-idx-title").innerHTML = m.chartIdx;
+        el("#chart-vol-title").innerHTML = m.chartVol;
+        el("#th-sim-idx").textContent = `仿真 ${m.idxSym}`;
+        el("#th-real-idx").textContent = `真实 ${m.idxSym}`;
+        el("#th-sim-vol").textContent = `仿真 ${m.volSym}`;
+        el("#th-real-vol").textContent = `真实 ${m.volSym}`;
+        el("#th-tnx").textContent = m.thTnx;
+        el("#th-aux").textContent = m.thAux;
+        el("#lbl-sl-rate").textContent = m.slRate;
+        el("#lbl-sl-fx").textContent = m.slFx;
+        el("#lbl-sl-infl").textContent = m.slInfl;
+        el("#lbl-sl-grow").textContent = m.slGrow;
+        el("#lbl-sl-tariff").textContent = m.slTariff;
+        el("#lbl-sl-unc").textContent = m.slUnc;
+      }
 
       function readSliders() {
         return {
@@ -755,6 +847,7 @@
         el("#sl-grow").value = shock.growth_z ?? 0;
         el("#sl-tariff").value = shock.tariff_pct ?? 0;
         el("#sl-unc").value = shock.uncertainty_z ?? 0;
+        activeOvernightEqPct = Number(shock.overnight_equity_pct || 0);
         if (shock.title !== undefined) {
           el("#shock-title").value = shock.title;
         }
@@ -765,6 +858,7 @@
         const s = readSliders();
         const preset = presetsById[activePreset] || {};
         return {
+          market: activeMarket,
           scenario: activePreset || "custom",
           kind: preset.kind || "custom",
           title: el("#shock-title").value.trim(),
@@ -772,6 +866,7 @@
           steps: activeSteps,
           mode: activeMode,
           models: el("#llm-models").value,
+          overnight_equity_pct: activeOvernightEqPct,
           ...s,
         };
       }
@@ -779,7 +874,7 @@
       async function runFastSim() {
         if (activeMode === "llm") {
           el("#llm-status").className = "status-banner";
-          el("#llm-status").textContent = "参数已就绪，点击「▶ 运行 AI 多主体实盘推演」调用大模型角色";
+          el("#llm-status").textContent = `参数已就绪（当前市场：${uiMeta().idxFull}），点击左侧按钮发起实时大模型推演`;
           return;
         }
         try {
@@ -812,7 +907,7 @@
         btn.disabled = true;
         btn.textContent = "推演中…";
         status.className = "status-banner";
-        status.textContent = "正在冻结时点状态并并发唤醒 4 类 AI 机构角色…";
+        status.textContent = `正在冻结 ${uiMeta().idxSym} 时点状态并并发唤醒 4 类 AI 机构角色…`;
 
         try {
           const payload = buildRequestPayload();
@@ -849,6 +944,7 @@
                   inspectedStep = evt.step;
                   currentResult = {
                     ...currentResult,
+                    market: activeMarket,
                     mode: "llm",
                     initial_state: initState,
                     steps: partialSteps.slice(),
@@ -879,51 +975,58 @@
 
       function renderKPIs() {
         if (!currentResult) return;
+        const m = uiMeta();
         const init = currentResult.initial_state;
         const fin = currentResult.final_state;
         const dist = currentResult.distribution || {};
         const overlay = currentResult.realized_overlay;
-        const ndxPct = currentResult.cumulative_ndx_return_pct ?? ((fin.ndx / init.ndx - 1) * 100);
-        const vxnChg = currentResult.cumulative_vxn_change ?? (fin.vxn - init.vxn);
+        const idxPct = currentResult.cumulative_ndx_return_pct ?? ((fin.ndx / init.ndx - 1) * 100);
+        const volChg = currentResult.cumulative_vxn_change ?? (fin.vxn - init.vxn);
 
-        el("#kpi-mode-tag").textContent = currentResult.mode;
+        el("#kpi-mode-tag").textContent = `${activeMarket.toUpperCase()} · ${currentResult.mode}`;
         el("#kpi-asof").textContent = `${init.as_of} (${currentResult.steps.length}d)`;
         const regParts = (init.regime || "").split(":");
-        const regZh = regParts[0] === "inflation_discount_rate" ? "通胀折现率主导" : "增长再通胀主导";
-        const liqZh = regParts[1] === "stressed_backwardation" ? "期限倒挂承压" : "流动性平稳";
-        el("#kpi-regime").textContent = `${regZh} · ${liqZh} · 股债相关 ${fmtSigned(init.stock_yield_corr_63d, 2)} · VIX9D/3M ${Number(init.vol_term_ratio).toFixed(2)}`;
+        if (activeMarket === "ssec") {
+          const regZh = regParts[0] === "above_ma20_momentum" ? "20日均线上方动量" : "20日均线下方防御";
+          const liqZh = regParts[1] === "high_vol_breakout" ? "短期波动放大" : "波动平稳蓄势";
+          el("#kpi-regime").textContent = `${regZh} · ${liqZh} · MA20偏离 ${fmtSigned((init.credit_log_hyg_tlt || 0) * 100, 2, "%")} · RV5/RV20 ${Number(init.vol_term_ratio).toFixed(2)}`;
+        } else {
+          const regZh = regParts[0] === "inflation_discount_rate" ? "通胀折现率主导" : "增长再通胀主导";
+          const liqZh = regParts[1] === "stressed_backwardation" ? "期限倒挂承压" : "流动性平稳";
+          el("#kpi-regime").textContent = `${regZh} · ${liqZh} · 股债相关 ${fmtSigned(init.stock_yield_corr_63d, 2)} · VIX9D/3M ${Number(init.vol_term_ratio).toFixed(2)}`;
+        }
 
         const qRet = dist.ndx_return_pct_quantiles || {};
         el("#kpi-ndx-band").textContent = qRet.p10 !== undefined ? `80% [${fmtSigned(qRet.p10, 1, "%")}, ${fmtSigned(qRet.p90, 1, "%")}]` : "";
         el("#kpi-ndx").innerHTML =
           `<span>${Number(fin.ndx).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` +
-          `<span class="${ndxPct >= 0 ? "pos" : "neg"}">${fmtSigned(ndxPct, 2, "%")}</span>`;
+          `<span class="${idxPct >= 0 ? "pos" : "neg"}">${fmtSigned(idxPct, 2, "%")}</span>`;
         if (overlay && overlay.resolved_steps > 0) {
           el("#kpi-ndx-real").innerHTML =
             `历史真实 (${overlay.resolved_steps}d): <b>${Number(overlay.terminal_ndx).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b> ` +
             `(<span class="${overlay.terminal_ndx_ret_pct >= 0 ? "pos" : "neg"}">${fmtSigned(overlay.terminal_ndx_ret_pct, 2, "%")}</span>)`;
         } else {
-          el("#kpi-ndx-real").textContent = `起点 ${Number(init.ndx).toLocaleString("en-US", { minimumFractionDigits: 2 })} · 10Y 利率 ${init.tnx_pct.toFixed(2)}% → ${fin.tnx_pct.toFixed(2)}%`;
+          el("#kpi-ndx-real").textContent = `起点 ${Number(init.ndx).toLocaleString("en-US", { minimumFractionDigits: 2 })} · DXY ${Number(init.dxy).toFixed(2)} → ${Number(fin.dxy).toFixed(2)}`;
         }
 
-        const qVxn = dist.vxn_terminal_quantiles || {};
-        el("#kpi-vxn-band").textContent = qVxn.p10 !== undefined ? `80% [${Number(qVxn.p10).toFixed(1)}, ${Number(qVxn.p90).toFixed(1)}]` : "";
+        const qVol = dist.vxn_terminal_quantiles || {};
+        el("#kpi-vxn-band").textContent = qVol.p10 !== undefined ? `80% [${Number(qVol.p10).toFixed(1)}, ${Number(qVol.p90).toFixed(1)}]` : "";
         el("#kpi-vxn").innerHTML =
-          `<span>${Number(fin.vxn).toFixed(2)}</span>` +
-          `<span class="${vxnChg > 0 ? "warn" : "pos"}">${fmtSigned(vxnChg, 2, " pts")}</span>`;
+          `<span>${Number(fin.vxn).toFixed(2)}${activeMarket === "ssec" ? "%" : ""}</span>` +
+          `<span class="${volChg > 0 ? "warn" : "pos"}">${fmtSigned(volChg, 2, m.volUnit)}</span>`;
         if (overlay && overlay.resolved_steps > 0) {
           el("#kpi-vxn-real").innerHTML =
-            `历史真实 (${overlay.resolved_steps}d): <b>${Number(overlay.terminal_vxn).toFixed(2)}</b> ` +
-            `(${fmtSigned(overlay.terminal_vxn_chg, 2, " pts")})`;
+            `历史真实 (${overlay.resolved_steps}d): <b>${Number(overlay.terminal_vxn).toFixed(2)}${activeMarket === "ssec" ? "%" : ""}</b> ` +
+            `(${fmtSigned(overlay.terminal_vxn_chg, 2, m.volUnit)})`;
         } else {
           el("#kpi-vxn-real").textContent = `起点 ${Number(init.vxn).toFixed(2)} · 252d 中位锚点 ${Number(init.vxn_median_252d).toFixed(2)}`;
         }
 
         if (dist.p_ndx_up !== undefined) {
           el("#kpi-probs").innerHTML =
-            `<span>NDX涨 ${(dist.p_ndx_up * 100).toFixed(1)}%</span> · ` +
-            `<span>VXN升 ${(dist.p_vxn_up * 100).toFixed(1)}%</span>`;
-          el("#kpi-tail").textContent = `尾部风险 P(^NDX 累计回撤超 2%) = ${(dist.p_ndx_drawdown_gt_2pct * 100).toFixed(1)}%`;
+            `<span>${escapeHtml(m.idxSym)}涨 ${(dist.p_ndx_up * 100).toFixed(1)}%</span> · ` +
+            `<span>${escapeHtml(m.volSym)}升 ${(dist.p_vxn_up * 100).toFixed(1)}%</span>`;
+          el("#kpi-tail").textContent = `尾部风险 P(${m.idxSym} 累计回撤超 2%) = ${(dist.p_ndx_drawdown_gt_2pct * 100).toFixed(1)}%`;
         }
         const u = currentResult.usage || {};
         el("#kpi-cost").textContent = u.prompt_tokens ? `$${Number(u.cost_usd || 0).toFixed(5)} (${u.prompt_tokens + u.completion_tokens} tok)` : "0 API cost";
@@ -943,7 +1046,7 @@
         ctx.fillStyle = p.sheet;
         ctx.fillRect(0, 0, W, H);
 
-        const padL = 56, padR = 18, padT = 14, padB = 26;
+        const padL = 58, padR = 18, padT = 14, padB = 26;
         const plotW = W - padL - padR;
         const plotH = H - padT - padB;
         const N = opts.simValues.length - 1;
@@ -961,7 +1064,6 @@
         const xOf = (step) => padL + (step / N) * plotW;
         const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
 
-        // Grid & Y labels
         ctx.font = '10.5px "IBM Plex Mono", monospace';
         ctx.textAlign = "right";
         ctx.textBaseline = "middle";
@@ -978,7 +1080,6 @@
           ctx.fillText(opts.formatY(v), padL - 6, y);
         }
 
-        // Inspected step vertical highlight
         if (inspectedStep >= 1 && inspectedStep <= N) {
           const sx = xOf(inspectedStep);
           ctx.strokeStyle = p.rule;
@@ -990,7 +1091,6 @@
           ctx.setLineDash([]);
         }
 
-        // Optional horizontal anchor line (e.g. VXN 252d median or NDX base close)
         if (opts.anchorLine != null) {
           const ay = yOf(opts.anchorLine);
           ctx.strokeStyle = p.muted;
@@ -1003,7 +1103,6 @@
           ctx.setLineDash([]);
         }
 
-        // 10%-90% Fan Polygon
         ctx.fillStyle = p.dark ? "rgba(217, 165, 95, 0.17)" : "rgba(138, 90, 18, 0.14)";
         ctx.beginPath();
         for (let i = 0; i <= N; i++) {
@@ -1016,7 +1115,6 @@
         ctx.closePath();
         ctx.fill();
 
-        // Realised overlay line (solid blue)
         if (opts.realValues && opts.realValues.length > 1) {
           ctx.strokeStyle = p.blue;
           ctx.lineWidth = 2.2;
@@ -1034,7 +1132,6 @@
           });
         }
 
-        // Simulated median line (solid ochre)
         ctx.strokeStyle = p.ochre;
         ctx.lineWidth = 2.4;
         ctx.beginPath();
@@ -1052,7 +1149,6 @@
           ctx.fill();
         });
 
-        // X axis labels
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.fillStyle = p.muted;
@@ -1076,46 +1172,46 @@
         const H = steps.length;
         const dist = currentResult.distribution || {};
         const overlay = currentResult.realized_overlay;
+        const vFloor = activeMarket === "ssec" ? 5.5 : 9.0;
         el("#real-legend").hidden = !(overlay && overlay.resolved_steps > 0);
 
-        const simNdx = [init.ndx, ...steps.map((s) => s.state_after.ndx)];
-        const simVxn = [init.vxn, ...steps.map((s) => s.state_after.vxn)];
+        const simIdx = [init.ndx, ...steps.map((s) => s.state_after.ndx)];
+        const simVol = [init.vxn, ...steps.map((s) => s.state_after.vxn)];
 
-        // Construct smooth sqrt(s/H) fan bounds matching terminal p10 / p90 quantiles
         const qRet = (dist.ndx_return_pct_quantiles || { p10: -3, p50: 0, p90: 3 });
         const termLowRatio = (1 + (qRet.p10 / 100)) / Math.max(0.2, 1 + (qRet.p50 / 100));
         const termHighRatio = (1 + (qRet.p90 / 100)) / Math.max(0.2, 1 + (qRet.p50 / 100));
-        const ndxLow = simNdx.map((v, i) => (i === 0 ? v : v * Math.pow(termLowRatio, Math.sqrt(i / H))));
-        const ndxHigh = simNdx.map((v, i) => (i === 0 ? v : v * Math.pow(termHighRatio, Math.sqrt(i / H))));
+        const idxLow = simIdx.map((v, i) => (i === 0 ? v : v * Math.pow(termLowRatio, Math.sqrt(i / H))));
+        const idxHigh = simIdx.map((v, i) => (i === 0 ? v : v * Math.pow(termHighRatio, Math.sqrt(i / H))));
 
-        const qVxn = (dist.vxn_terminal_quantiles || { p10: init.vxn - 3, p50: simVxn[H], p90: init.vxn + 4 });
-        const vSpreadLow = (qVxn.p50 - qVxn.p10);
-        const vSpreadHigh = (qVxn.p90 - qVxn.p50);
-        const vxnLow = simVxn.map((v, i) => (i === 0 ? v : Math.max(9.0, v - vSpreadLow * Math.sqrt(i / H))));
-        const vxnHigh = simVxn.map((v, i) => (i === 0 ? v : v + vSpreadHigh * Math.sqrt(i / H)));
+        const qVol = (dist.vxn_terminal_quantiles || { p10: init.vxn - 3, p50: simVol[H], p90: init.vxn + 4 });
+        const vSpreadLow = (qVol.p50 - qVol.p10);
+        const vSpreadHigh = (qVol.p90 - qVol.p50);
+        const volLow = simVol.map((v, i) => (i === 0 ? v : Math.max(vFloor, v - vSpreadLow * Math.sqrt(i / H))));
+        const volHigh = simVol.map((v, i) => (i === 0 ? v : v + vSpreadHigh * Math.sqrt(i / H)));
 
-        const realNdx = overlay && overlay.points ? overlay.points.map((pt) => pt.ndx) : null;
-        const realVxn = overlay && overlay.points ? overlay.points.map((pt) => pt.vxn) : null;
+        const realIdx = overlay && overlay.points ? overlay.points.map((pt) => pt.ndx) : null;
+        const realVol = overlay && overlay.points ? overlay.points.map((pt) => pt.vxn) : null;
 
         const stepObj = steps[Math.min(inspectedStep, H) - 1];
         el("#cap-ndx").textContent = stepObj ? `选中 t+${stepObj.step}: ${Number(stepObj.state_after.ndx).toFixed(2)}` : "";
-        el("#cap-vxn").textContent = stepObj ? `选中 t+${stepObj.step}: ${Number(stepObj.state_after.vxn).toFixed(2)}` : "";
+        el("#cap-vxn").textContent = stepObj ? `选中 t+${stepObj.step}: ${Number(stepObj.state_after.vxn).toFixed(2)}${activeMarket === "ssec" ? "%" : ""}` : "";
 
         drawTrajectoryCanvas(el("#canvas-ndx"), {
-          simValues: simNdx,
-          lowBand: ndxLow,
-          highBand: ndxHigh,
-          realValues: realNdx,
+          simValues: simIdx,
+          lowBand: idxLow,
+          highBand: idxHigh,
+          realValues: realIdx,
           anchorLine: init.ndx,
-          formatY: (v) => Math.round(v).toLocaleString("en-US"),
+          formatY: (v) => activeMarket === "ssec" ? v.toFixed(0) : Math.round(v).toLocaleString("en-US"),
         });
         drawTrajectoryCanvas(el("#canvas-vxn"), {
-          simValues: simVxn,
-          lowBand: vxnLow,
-          highBand: vxnHigh,
-          realValues: realVxn,
+          simValues: simVol,
+          lowBand: volLow,
+          highBand: volHigh,
+          realValues: realVol,
           anchorLine: init.vxn_median_252d,
-          formatY: (v) => v.toFixed(1),
+          formatY: (v) => v.toFixed(1) + (activeMarket === "ssec" ? "%" : ""),
         });
       }
 
@@ -1128,16 +1224,17 @@
           overlay.points.forEach((pt) => { realByStep[pt.step] = pt; });
         }
 
+        const vSuffix = activeMarket === "ssec" ? "%" : "";
         const rows = [];
         const r0 = realByStep[0];
         rows.push(
-          `<tr class=" weak">` +
+          `<tr class="weak">` +
           `<td>t0 (${escapeHtml(init.as_of.slice(5))})</td>` +
           `<td>—</td><td>—</td><td>—</td><td>—</td>` +
           `<td>${Number(init.ndx).toFixed(2)}</td><td>0.00%</td>` +
           `<td>${r0 ? Number(r0.ndx).toFixed(2) : "—"}</td>` +
-          `<td>${Number(init.vxn).toFixed(2)}</td>` +
-          `<td>${r0 ? Number(r0.vxn).toFixed(2) : "—"}</td>` +
+          `<td>${Number(init.vxn).toFixed(2)}${vSuffix}</td>` +
+          `<td>${r0 ? Number(r0.vxn).toFixed(2) + vSuffix : "—"}</td>` +
           `<td>${Number(init.tnx_pct).toFixed(3)}%</td>` +
           `<td>${Number(init.credit_log_hyg_tlt).toFixed(4)}</td>` +
           `</tr>`
@@ -1159,8 +1256,8 @@
             `<td>${Number(st.ndx).toFixed(2)}</td>` +
             `<td class="${dPct >= 0 ? "pos" : "neg"}">${fmtSigned(dPct, 2, "%")}</td>` +
             `<td>${realPt ? Number(realPt.ndx).toFixed(2) + " (" + fmtSigned(realPt.ndx_ret_pct, 1, "%") + ")" : "—"}</td>` +
-            `<td>${Number(st.vxn).toFixed(2)}</td>` +
-            `<td>${realPt ? Number(realPt.vxn).toFixed(2) : "—"}</td>` +
+            `<td>${Number(st.vxn).toFixed(2)}${vSuffix}</td>` +
+            `<td>${realPt ? Number(realPt.vxn).toFixed(2) + vSuffix : "—"}</td>` +
             `<td>${Number(st.tnx_pct).toFixed(3)}%</td>` +
             `<td>${Number(st.credit_log_hyg_tlt).toFixed(4)}</td>` +
             `</tr>`
@@ -1186,6 +1283,7 @@
 
       function renderActors() {
         if (!currentResult || !currentResult.steps.length) return;
+        const fl = uiMeta().flowLabels;
         const H = currentResult.steps.length;
         const sIdx = Math.max(1, Math.min(H, inspectedStep));
         const stepObj = currentResult.steps[sIdx - 1];
@@ -1202,10 +1300,10 @@
             `<span class="actor-badge">${escapeHtml(a.model)}</span>` +
             `</div>` +
             `<div class="flow-grid">` +
-            flowBarHtml("股票流 eq", a.equity_delta, false) +
-            flowBarHtml("久期流 bond", a.bond_delta, false) +
-            flowBarHtml("信用流 cred", a.credit_delta, false) +
-            flowBarHtml("保护需求 volH", a.vol_hedge_delta, true) +
+            flowBarHtml(fl[0], a.equity_delta, false) +
+            flowBarHtml(fl[1], a.bond_delta, false) +
+            flowBarHtml(fl[2], a.credit_delta, false) +
+            flowBarHtml(fl[3], a.vol_hedge_delta, true) +
             `</div>` +
             `<div class="actor-why">${escapeHtml(a.rationale || "—")}</div>` +
             `</div>`
@@ -1214,55 +1312,65 @@
       }
 
       function renderAll() {
+        syncMarketStaticLabels();
         renderKPIs();
         renderCharts();
         renderLedger();
         renderActors();
       }
 
+      function renderBacktestDoc(rep) {
+        const m = uiMeta();
+        el("#bt-meta").textContent = `${m.idxSym} · ${rep.n_episodes} 次真实宏观冲击事件 (${rep.first_event} → ${rep.last_event})`;
+
+        const t1Rows = Object.entries(rep.track1_shock_transmission || {}).map(([name, obj]) => {
+          const f = obj.full_sample || {}, h = obj.holdout_2021_plus || {};
+          return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(f.brier).toFixed(4)}</td><td>${(f.hit_direction * 100).toFixed(1)}%</td><td>${f.corr != null ? fmtSigned(f.corr, 3) : "—"}</td><td>${Number(h.brier).toFixed(4)}</td><td>${(h.hit_direction * 100).toFixed(1)}%</td></tr>`;
+        }).join("");
+
+        const t2Rows = Object.entries(rep.track2_ex_ante_vxn_5d || {}).map(([name, r]) => {
+          return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(r.brier).toFixed(4)}</td><td>${Number(r.ece).toFixed(3)}</td><td>${(r.hit_direction * 100).toFixed(1)}%</td><td>${Number(r.mean_probability).toFixed(3)}</td></tr>`;
+        }).join("");
+
+        const sampleRows = (rep.samples || []).slice(0, 12).map((s) => {
+          return `<tr class="sample-row" data-evdate="${escapeHtml(s.event_date)}" title="点击在左侧回放该次历史冲击并叠加真实走势">` +
+            `<td>${escapeHtml(s.event_date)}</td>` +
+            `<td>${escapeHtml(s.kind.toUpperCase())}</td>` +
+            `<td>${fmtSigned(s.rate_bps, 1, "bp")}</td>` +
+            `<td>${fmtSigned(s.pred_r0_pct, 2, "%")}</td>` +
+            `<td>${fmtSigned(s.actual_r0_pct, 2, "%")}</td>` +
+            `</tr>`;
+        }).join("");
+
+        el("#bt-content").innerHTML =
+          `<div class="bt-block">` +
+          `<div class="bt-title">1. 冲击传导 (t-1 → t0, 预测 ${escapeHtml(m.idxSym)} 方向与收益)</div>` +
+          `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>命中</th><th>相关r</th><th>21+Brier</th><th>21+命中</th></tr></thead><tbody>${t1Rows}</tbody></table>` +
+          `</div>` +
+          `<div class="bt-block">` +
+          `<div class="bt-title">2. 事前 5d 波动率传导 P(${escapeHtml(m.volSym)}_{t+5} &gt; ${escapeHtml(m.volSym)}_t)</div>` +
+          `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>ECE</th><th>命中</th><th>均值P</th></tr></thead><tbody>${t2Rows}</tbody></table>` +
+          `</div>` +
+          `<div class="bt-block">` +
+          `<div class="bt-title">点击任一历史事件一键回放对比真实走势：</div>` +
+          `<table class="bt-table"><thead><tr><th>结算日</th><th>类型</th><th>利率冲击</th><th>仿真r0</th><th>真实r0</th></tr></thead><tbody>${sampleRows}</tbody></table>` +
+          `</div>` +
+          `<div class="note">${escapeHtml(m.btNote)}</div>`;
+      }
+
       async function loadBacktest(force = false) {
-        el("#bt-meta").textContent = force ? "正在重算 488 次历史宏观冲击回测…" : "加载回测报告…";
+        if (!force && backtestCache[activeMarket]) {
+          renderBacktestDoc(backtestCache[activeMarket]);
+          return;
+        }
+        el("#bt-meta").textContent = force ? `正在重算 ${uiMeta().idxSym} 全量历史回测…` : "加载回测报告…";
         el("#bt-refresh-btn").disabled = true;
         try {
-          const res = await fetch(`/api/sim/backtest?force=${force ? "1" : "0"}&t=${Date.now()}`);
+          const res = await fetch(`/api/sim/backtest?market=${encodeURIComponent(activeMarket)}&force=${force ? "1" : "0"}&t=${Date.now()}`);
           const rep = await res.json();
           if (!res.ok || !rep.ok) throw new Error(rep.error || "failed");
-          backtestLoaded = true;
-          el("#bt-meta").textContent = `${rep.n_episodes} 次真实宏观事件 (${rep.first_event} → ${rep.last_event})`;
-
-          const t1Rows = Object.entries(rep.track1_shock_transmission || {}).map(([name, obj]) => {
-            const f = obj.full_sample || {}, h = obj.holdout_2021_plus || {};
-            return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(f.brier).toFixed(4)}</td><td>${(f.hit_direction * 100).toFixed(1)}%</td><td>${f.corr != null ? fmtSigned(f.corr, 3) : "—"}</td><td>${Number(h.brier).toFixed(4)}</td><td>${h.corr != null ? fmtSigned(h.corr, 3) : "—"}</td></tr>`;
-          }).join("");
-
-          const t2Rows = Object.entries(rep.track2_ex_ante_vxn_5d || {}).map(([name, r]) => {
-            return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(r.brier).toFixed(4)}</td><td>${Number(r.ece).toFixed(3)}</td><td>${(r.hit_direction * 100).toFixed(1)}%</td><td>${Number(r.mean_probability).toFixed(3)}</td></tr>`;
-          }).join("");
-
-          const sampleRows = (rep.samples || []).slice(0, 12).map((s) => {
-            return `<tr class="sample-row" data-evdate="${escapeHtml(s.event_date)}" title="点击在左侧回放该次历史冲击并叠加真实走势">` +
-              `<td>${escapeHtml(s.event_date)}</td>` +
-              `<td>${escapeHtml(s.kind.toUpperCase())}</td>` +
-              `<td>${fmtSigned(s.rate_bps, 1, "bp")}</td>` +
-              `<td>${fmtSigned(s.pred_r0_pct, 2, "%")}</td>` +
-              `<td>${fmtSigned(s.actual_r0_pct, 2, "%")}</td>` +
-              `</tr>`;
-          }).join("");
-
-          el("#bt-content").innerHTML =
-            `<div class="bt-block">` +
-            `<div class="bt-title">1. 冲击当期传导 (t-1 → t0, 2021+ 制度反转检验)</div>` +
-            `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>命中</th><th>相关r</th><th>21+Brier</th><th>21+相关</th></tr></thead><tbody>${t1Rows}</tbody></table>` +
-            `</div>` +
-            `<div class="bt-block">` +
-            `<div class="bt-title">2. 事前 5d 波动率传导 P(VXN_{t+5} > VXN_t)</div>` +
-            `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>ECE</th><th>命中</th><th>均值P</th></tr></thead><tbody>${t2Rows}</tbody></table>` +
-            `</div>` +
-            `<div class="bt-block">` +
-            `<div class="bt-title">点击任一历史事件一键回放对比真实走势：</div>` +
-            `<table class="bt-table"><thead><tr><th>事件日</th><th>类型</th><th>利率冲击</th><th>仿真r0</th><th>真实r0</th></tr></thead><tbody>${sampleRows}</tbody></table>` +
-            `</div>` +
-            `<div class="note">诚实边界说明：无后续外生冲击时，事前 5d 股指无条件漂移 Brier 为 0.2506（与常数 0.2500 持平），说明仿真引擎的真实 Alpha 在于「条件政策冲击传导」与「波动率期限结构消化」。</div>`;
+          backtestCache[activeMarket] = rep;
+          renderBacktestDoc(rep);
         } catch (err) {
           el("#bt-meta").textContent = "回测加载失败：" + err.message;
         } finally {
@@ -1270,41 +1378,122 @@
         }
       }
 
+      function populateMarketControls(mktKey, runDefault = true) {
+        const block = marketsMap[mktKey];
+        if (!block) return;
+        activeMarket = mktKey;
+        presetsById = Object.fromEntries((block.presets || []).map((p) => [p.id, p]));
+        replayEvents = block.historical_events || [];
+        activePreset = block.default_preset || (block.presets[0] && block.presets[0].id) || "custom";
+
+        el("#market-tabs").querySelectorAll(".market-tab").forEach((b) => {
+          b.classList.toggle("active", b.dataset.market === mktKey);
+        });
+
+        el("#anchor-date").value = block.latest_date;
+        el("#anchor-date").max = block.latest_date;
+        el("#anchor-date").min = block.min_date;
+
+        el("#preset-buttons").innerHTML = (block.presets || []).map((p) =>
+          `<button type="button" class="preset-pill ${p.id === activePreset ? "active" : ""}" data-id="${escapeHtml(p.id)}">${escapeHtml(p.short_label)}</button>`
+        ).join("");
+
+        const sel = el("#replay-select");
+        sel.innerHTML = `<option value="">— 最新盘面推演（${escapeHtml(block.latest_date)} 收盘无穿越） —</option>`;
+        replayEvents.forEach((ev) => {
+          const opt = document.createElement("option");
+          opt.value = ev.event_date;
+          const desc = ev.label ? ev.label : `${ev.kind.toUpperCase()} (10Y ${fmtSigned(ev.rate_bps, 1, "bp")})`;
+          opt.textContent = `${ev.event_date} · ${desc} [当日真实 ${fmtSigned(ev.actual_r0_pct, 2, "%")}]`;
+          sel.appendChild(opt);
+        });
+
+        if (presetsById[activePreset]) {
+          applyShockToControls(presetsById[activePreset]);
+        }
+
+        if (!el("#bt-view").hidden) {
+          loadBacktest(false);
+        }
+
+        if (runDefault) {
+          if (activeSteps === 5 && activeMode === "rule" && block.initial) {
+            currentResult = block.initial;
+            inspectedStep = 1;
+            renderAll();
+          } else {
+            runFastSim();
+          }
+        }
+      }
+
       function triggerHistoricalReplay(evItem) {
         if (!evItem) return;
+        const m = uiMeta();
         const anchorMode = el("#replay-anchor").value;
         document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.remove("active"));
         activePreset = "custom";
         if (anchorMode === "pre") {
           el("#anchor-date").value = evItem.pre_event_date;
           applyShockToControls({
-            rate_bps: evItem.rate_bps,
-            fx_pct: evItem.fx_pct,
-            inflation_z: evItem.kind === "cpi" ? Math.max(-2.5, Math.min(2.5, evItem.rate_bps / 10)) : 0,
-            growth_z: evItem.kind === "nfp" ? Math.max(-2.5, Math.min(2.5, evItem.rate_bps / 10)) : 0,
-            tariff_pct: 0,
-            uncertainty_z: Math.min(2.5, Math.abs(evItem.rate_bps) / 14),
-            title: `历史 ${evItem.kind.toUpperCase()} 冲击传导回放 (${evItem.event_date}, 当日真实 NDX ${fmtSigned(evItem.actual_r0_pct, 2, "%")})`,
+            rate_bps: evItem.rate_bps ?? 0,
+            fx_pct: evItem.fx_pct ?? 0,
+            inflation_z: evItem.inflation_z !== undefined
+              ? evItem.inflation_z
+              : (evItem.kind === "cpi" ? Math.max(-2.5, Math.min(2.5, evItem.rate_bps / 10)) : 0),
+            growth_z: evItem.growth_z !== undefined
+              ? evItem.growth_z
+              : (evItem.kind === "nfp" ? Math.max(-2.5, Math.min(2.5, evItem.rate_bps / 10)) : 0),
+            tariff_pct: evItem.tariff_pct ?? 0,
+            uncertainty_z: evItem.uncertainty_z !== undefined
+              ? evItem.uncertainty_z
+              : Math.min(2.5, Math.abs(evItem.rate_bps) / 14),
+            overnight_equity_pct: evItem.overnight_equity_pct ?? 0,
+            title: `${evItem.label || ("历史 " + evItem.kind.toUpperCase())} (${evItem.event_date}, 当日真实 ${m.idxSym} ${fmtSigned(evItem.actual_r0_pct, 2, "%")})`,
           });
         } else {
           el("#anchor-date").value = evItem.event_date;
           applyShockToControls({
-            rate_bps: Number((evItem.rate_bps * 0.08).toFixed(1)),
-            fx_pct: Number((evItem.fx_pct * 0.08).toFixed(2)),
-            inflation_z: evItem.kind === "cpi" ? Number((evItem.rate_bps / 12 * 0.15).toFixed(2)) : 0,
+            rate_bps: Number(((evItem.rate_bps || 0) * 0.08).toFixed(1)),
+            fx_pct: Number(((evItem.fx_pct || 0) * 0.08).toFixed(2)),
+            inflation_z: 0,
             growth_z: 0,
             tariff_pct: 0,
-            uncertainty_z: Number((-0.22 * Math.max(-1, Math.min(1.5, evItem.actual_dv0 / 2.5))).toFixed(2)),
-            title: `历史 ${evItem.kind.toUpperCase()} 事后 5d 波动率消化 (${evItem.event_date} 收盘冻结)`,
+            uncertainty_z: Number((-0.20 * Math.max(-1, Math.min(1.5, (evItem.actual_dv0 || 0) / 2.0))).toFixed(2)),
+            overnight_equity_pct: 0,
+            title: `事后 ${activeSteps}d 波动消化回放 (${evItem.event_date} 收盘冻结, 严禁未来数据)`,
           });
         }
         runFastSim();
       }
 
       // Wire interactive events
+      el("#market-tabs").addEventListener("click", (e) => {
+        const btn = e.target.closest(".market-tab");
+        if (!btn) return;
+        const targetMkt = btn.dataset.market;
+        if (!targetMkt || targetMkt === activeMarket || !marketsMap[targetMkt]) return;
+        const nextUrl = targetMkt === "ssec" ? "/sim?market=ssec" : "/sim";
+        window.history.replaceState({}, "", nextUrl);
+        populateMarketControls(targetMkt, true);
+      });
+
+      el("#preset-buttons").addEventListener("click", (e) => {
+        const btn = e.target.closest(".preset-pill");
+        if (!btn) return;
+        activePreset = btn.dataset.id;
+        el("#preset-buttons").querySelectorAll(".preset-pill").forEach((b) => b.classList.toggle("active", b === btn));
+        el("#replay-select").value = "";
+        const block = marketsMap[activeMarket];
+        if (block) el("#anchor-date").value = block.latest_date;
+        if (presetsById[activePreset]) applyShockToControls(presetsById[activePreset]);
+        runFastSim();
+      });
+
       ["#sl-rate", "#sl-fx", "#sl-infl", "#sl-grow", "#sl-tariff", "#sl-unc"].forEach((id) => {
         el(id).addEventListener("input", () => {
           document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.remove("active"));
+          activeOvernightEqPct = 0.0;
           scheduleSim();
         });
       });
@@ -1332,10 +1521,12 @@
       el("#run-llm-btn").addEventListener("click", runStreamingLLMSim);
 
       el("#reset-btn").addEventListener("click", () => {
-        const p = presetsById[activePreset] || presetsById.tariff_25;
+        const block = marketsMap[activeMarket];
+        const defId = block ? block.default_preset : activePreset;
+        const p = presetsById[activePreset] || presetsById[defId];
         if (p) {
           el("#replay-select").value = "";
-          if (initBundle) el("#anchor-date").value = initBundle.latest_date;
+          if (block) el("#anchor-date").value = block.latest_date;
           applyShockToControls(p);
           runFastSim();
         }
@@ -1343,13 +1534,13 @@
 
       el("#replay-select").addEventListener("change", () => {
         const evDate = el("#replay-select").value;
+        const block = marketsMap[activeMarket];
         if (!evDate) {
-          if (initBundle) el("#anchor-date").value = initBundle.latest_date;
-          const p = presetsById.tariff_25;
-          if (p) {
-            activePreset = "tariff_25";
-            document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.toggle("active", b.dataset.id === "tariff_25"));
-            applyShockToControls(p);
+          if (block) {
+            el("#anchor-date").value = block.latest_date;
+            activePreset = block.default_preset;
+            document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.toggle("active", b.dataset.id === activePreset));
+            if (presetsById[activePreset]) applyShockToControls(presetsById[activePreset]);
           }
           runFastSim();
           return;
@@ -1407,8 +1598,8 @@
         el("#tab-actors-btn").classList.remove("active");
         el("#actors-view").hidden = true;
         el("#bt-view").hidden = false;
-        el("#aside-heading").textContent = "488次宏观事件回测记分牌";
-        if (!backtestLoaded) loadBacktest(false);
+        el("#aside-heading").textContent = `${uiMeta().idxSym} 历史回测记分牌`;
+        loadBacktest(false);
       });
 
       el("#bt-refresh-btn").addEventListener("click", () => loadBacktest(true));
@@ -1417,7 +1608,7 @@
         const tr = e.target.closest(".sample-row");
         if (!tr) return;
         const evDate = tr.dataset.evdate;
-        let found = replayEvents.find((x) => x.event_date === evDate);
+        const found = replayEvents.find((x) => x.event_date === evDate);
         if (found) {
           el("#replay-select").value = evDate;
           triggerHistoricalReplay(found);
@@ -1430,45 +1621,19 @@
       window.addEventListener("resize", () => renderCharts());
       fcTheme.subscribe(() => renderCharts());
 
-      // Bootstrap page from /api/sim/init
-      fetch("/api/sim/init?t=" + Date.now())
+      // Bootstrap page from /api/sim/init (loads both NDX and SSEC bundles)
+      fetch(`/api/sim/init?market=${encodeURIComponent(activeMarket)}&t=${Date.now()}`)
         .then((res) => res.json())
         .then((bundle) => {
           if (!bundle.ok) throw new Error(bundle.error || "init error");
           initBundle = bundle;
-          presetsById = Object.fromEntries((bundle.presets || []).map((p) => [p.id, p]));
-          replayEvents = bundle.historical_events || [];
-
-          el("#anchor-date").value = bundle.latest_date;
-          el("#anchor-date").max = bundle.latest_date;
-          el("#anchor-date").min = bundle.min_date;
-
-          el("#preset-buttons").innerHTML = (bundle.presets || []).map((p) =>
-            `<button type="button" class="preset-pill ${p.id === "tariff_25" ? "active" : ""}" data-id="${escapeHtml(p.id)}">${escapeHtml(p.short_label)}</button>`
-          ).join("");
-
-          el("#preset-buttons").addEventListener("click", (e) => {
-            const btn = e.target.closest(".preset-pill");
-            if (!btn) return;
-            activePreset = btn.dataset.id;
-            el("#preset-buttons").querySelectorAll(".preset-pill").forEach((b) => b.classList.toggle("active", b === btn));
-            el("#replay-select").value = "";
-            el("#anchor-date").value = bundle.latest_date;
-            applyShockToControls(presetsById[activePreset]);
-            runFastSim();
-          });
-
-          const sel = el("#replay-select");
-          replayEvents.forEach((ev) => {
-            const opt = document.createElement("option");
-            opt.value = ev.event_date;
-            opt.textContent = `${ev.event_date} · ${ev.kind.toUpperCase()} (10Y ${fmtSigned(ev.rate_bps, 1, "bp")}, 当日NDX ${fmtSigned(ev.actual_r0_pct, 2, "%")})`;
-            sel.appendChild(opt);
-          });
-
-          if (presetsById.tariff_25) applyShockToControls(presetsById.tariff_25);
-          currentResult = bundle.initial;
-          renderAll();
+          marketsMap = bundle.markets || { ndx: bundle };
+          if (!marketsMap.ssec) {
+            const ssecTab = el('#market-tabs [data-market="ssec"]');
+            if (ssecTab) ssecTab.disabled = true;
+            activeMarket = "ndx";
+          }
+          populateMarketControls(activeMarket, true);
         })
         .catch((err) => {
           el("#kpi-asof").textContent = "加载失败: " + err.message;

@@ -389,10 +389,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         if path.rstrip("/") == "/api/sim/init":
+            from urllib.parse import parse_qs
             from forecast_log.sim import sim_init_payload
 
+            qs = parse_qs(query)
+            market = (qs.get("market") or ["ndx"])[0]
             try:
-                self._send_json(sim_init_payload(ROOT), "sim init unavailable")
+                self._send_json(sim_init_payload(ROOT, market=market), "sim init unavailable")
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, str(exc))
             return
@@ -402,11 +405,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             from forecast_log.sim import load_or_run_backtest
 
             qs = parse_qs(query)
+            market = (qs.get("market") or ["ndx"])[0]
             force = (qs.get("force") or ["0"])[0] == "1"
             kinds = (qs.get("kinds") or ["fomc,cpi,nfp"])[0]
             horizon = int((qs.get("horizon") or ["5"])[0] or 5)
             try:
-                self._send_json(load_or_run_backtest(ROOT, force=force, kinds=kinds, horizon=horizon), "backtest unavailable")
+                self._send_json(
+                    load_or_run_backtest(ROOT, market=market, force=force, kinds=kinds, horizon=horizon),
+                    "backtest unavailable",
+                )
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, str(exc))
             return

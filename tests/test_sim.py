@@ -14,9 +14,11 @@ from forecast_log.db import save_news_fetch, upsert_series
 from forecast_log.sim import (
     ACTOR_SPECS,
     PRESET_SHOCKS,
+    SSEC_PRESET_SHOCKS,
     HistoricalPanel,
     MarketState,
     PolicyShock,
+    as_of_for_market,
     backtest_macro_shocks,
     build_actors,
     gated_headlines_for_day,
@@ -26,7 +28,7 @@ from forecast_log.sim import (
 )
 
 
-def _seed_cross_asset_panel(root: Path, n_days: int = 340) -> list[date]:
+def _seed_cross_asset_panel(root: Path, n_days: int = 340, include_ssec: bool = False) -> list[date]:
     rng = np.random.default_rng(42)
     start = date(2020, 1, 2)
     days: list[date] = []
@@ -46,6 +48,7 @@ def _seed_cross_asset_panel(root: Path, n_days: int = 340) -> list[date]:
     dxy = [97.0]
     vix9d = [20.0]
     vix3m = [23.0]
+    ssec = [3100.0]
 
     for i in range(1, n_days):
         high_rate = i >= n_days // 2
@@ -60,6 +63,11 @@ def _seed_cross_asset_panel(root: Path, n_days: int = 340) -> list[date]:
         hyg_next = hyg[-1] * float(np.exp(0.35 * r_eq))
         tlt_next = tlt[-1] * float(np.exp(-0.06 * dy))
 
+        # SSEC responds to PREVIOUS US session return (i-1) + domestic noise (never same-day US!)
+        prev_us_r = float(np.log(ndx[-1] / ndx[-2])) if len(ndx) >= 2 else 0.0
+        r_cn = 0.25 * prev_us_r + float(rng.normal(0.0002, 0.010))
+        ssec_next = ssec[-1] * float(np.exp(r_cn))
+
         ndx.append(ndx_next)
         vxn.append(vxn_next)
         tnx.append(tnx_next)
@@ -68,6 +76,7 @@ def _seed_cross_asset_panel(root: Path, n_days: int = 340) -> list[date]:
         dxy.append(dxy_next)
         vix9d.append(max(10.0, vxn_next * (1.08 if dv > 1.2 else 0.92)))
         vix3m.append(max(12.0, 0.7 * vix3m[-1] + 0.3 * vxn_next))
+        ssec.append(ssec_next)
 
     fetched = "2026-11-17T22:00:00Z"
     series_data = {
@@ -83,6 +92,10 @@ def _seed_cross_asset_panel(root: Path, n_days: int = 340) -> list[date]:
     for sym, vals in series_data.items():
         bars = tuple(Bar(d, round(float(v), 4), is_closed=True) for d, v in zip(days, vals))
         upsert_series(root, Series(sym, "America/New_York", fetched, bars))
+
+    if include_ssec:
+        ssec_bars = tuple(Bar(d, round(float(v), 4), is_closed=True) for d, v in zip(days, ssec))
+        upsert_series(root, Series("000001.SS", "Asia/Shanghai", fetched, ssec_bars))
 
     # Write synthetic macro event calendar inside the valid window
     ev_dates = days[295 : n_days - 8 : 6] if n_days >= 360 else days[260 : n_days - 8 : 6]
@@ -202,7 +215,6 @@ def test_tariff_shock_triggers_multi_step_vol_targeting_deleveraging(tmp_path: P
     assert res.distribution.p_ndx_up < 0.50
     assert res.distribution.p_vxn_up > 0.50
 
-    # Verify Vol-Target CTA reduces equity exposure after Step 1 VXN spike
     cta_step2 = next(a for a in res.steps[1].actions if a.actor_id == "vol_target_cta")
     assert cta_step2.equity_delta < 0.0
 
@@ -284,10 +296,11 @@ def test_web_sim_api_init_historical_overlay_and_stream(tmp_path: Path) -> None:
     from forecast_log.sim import run_sim_payload, run_sim_stream, sim_init_payload
 
     assert PAGES.get("/sim") == "web/sim.html"
-    days = _seed_cross_asset_panel(tmp_path, n_days=380)
+    days = _seed_cross_asset_panel(tmp_path, n_days=380, include_ssec=True)
 
     bundle = sim_init_payload(tmp_path)
     assert bundle["ok"] is True
+    assert "ndx" in bundle["markets"] and "ssec" in bundle["markets"]
     assert len(bundle["presets"]) == 6
     assert len(bundle["actors"]) == 4
     assert bundle["initial"]["realized_overlay"] is None  # latest date has no future bars
@@ -304,11 +317,23 @@ def test_web_sim_api_init_historical_overlay_and_stream(tmp_path: Path) -> None:
     assert overlay["resolved_steps"] == 5
     assert len(overlay["points"]) == 6
 
+    # A-share replay returns exact domain symbols 000001.SS and RV20
+    ssec_replay = run_sim_payload(
+        tmp_path,
+        {"market": "ssec", "scenario": "pboc_924_bazooka", "day": hist_day, "steps": 5, "mode": "rule"},
+    )
+    assert ssec_replay["ok"] is True
+    assert ssec_replay["index_symbol"] == "000001.SS"
+    assert ssec_replay["vol_symbol"] == "RV20"
+    assert ssec_replay["realized_overlay"]["index_symbol"] == "000001.SS"
+    assert ssec_replay["realized_overlay"]["vol_symbol"] == "RV20"
+    assert ssec_replay["realized_overlay"]["resolved_steps"] == 5
+
     # Streaming LLM mode emits start -> thinking/step -> done
     fake_llm = ScriptedLLM(
         [
             Reply(
-                content='{"equity_delta":-0.4,"bond_delta":-0.1,"credit_delta":-0.2,"vol_hedge_delta":0.5,"confidence":0.7,"rationale":"Tariff hedge"}',
+                content='{"equity_delta":0.6,"bond_delta":0.2,"credit_delta":0.3,"vol_hedge_delta":-0.2,"confidence":0.8,"rationale":"PBOC swap facility buy"}',
                 usage=Usage(prompt_tokens=100, completion_tokens=40, cost_usd=0.0001, latency_s=0.2),
             )
         ],
@@ -317,11 +342,97 @@ def test_web_sim_api_init_historical_overlay_and_stream(tmp_path: Path) -> None:
     events = list(
         run_sim_stream(
             tmp_path,
-            {"scenario": "tariff_25", "day": hist_day, "steps": 2, "mode": "llm"},
+            {"market": "ssec", "scenario": "pboc_924_bazooka", "day": hist_day, "steps": 2, "mode": "llm"},
             llms=[fake_llm],
         )
     )
     assert events[0]["type"] == "start"
+    assert events[0]["market"] == "ssec"
     assert events[-1]["type"] == "done"
     assert len(events[-1]["result"]["steps"]) == 2
 
+
+def test_ssec_timezone_gate_blocks_same_day_us_lookahead(tmp_path: Path) -> None:
+    days = _seed_cross_asset_panel(tmp_path, n_days=320, include_ssec=True)
+    cutoff = days[290]
+    sh_gate = as_of_for_market(cutoff, "ssec")
+
+    panel_before = HistoricalPanel.load(tmp_path)
+    state_before, _, _ = panel_before.build_state(sh_gate, market="ssec")
+    assert state_before.market == "ssec"
+    assert state_before.index_symbol == "000001.SS"
+    assert state_before.vol_symbol == "RV20"
+
+    # Mutate US series (^NDX, ^TNX, DX-Y.NYB) ON `cutoff` day (which closes 13h AFTER Shanghai!).
+    # A-share state at Shanghai 15:05 CST MUST remain 100% unchanged!
+    for sym, wild_val in (("^NDX", 999999.0), ("^TNX", 25.0), ("DX-Y.NYB", 250.0)):
+        orig = panel_before.series_map[sym]
+        mutated_bars = tuple(
+            Bar(b.date, wild_val if b.date == cutoff else b.close, is_closed=True)
+            for b in orig.bars
+        )
+        upsert_series(tmp_path, Series(sym, "America/New_York", orig.fetched_at, mutated_bars))
+
+    panel_after = HistoricalPanel.load(tmp_path)
+    state_after, _, _ = panel_after.build_state(sh_gate, market="ssec")
+    assert state_after == state_before
+
+    # News published at 17:00 Beijing time (+08:00) on `cutoff` is after 15:05 CST -> rejected!
+    save_news_fetch(
+        tmp_path,
+        {
+            "as_of": cutoff.isoformat(),
+            "source": "test",
+            "documents": [
+                {
+                    "id": "post-shanghai-close",
+                    "published_at": f"{cutoff.isoformat()}T17:00:00+08:00",
+                    "title": "Evening announcement after Shanghai close",
+                }
+            ],
+        },
+    )
+    with pytest.raises(LookAheadError, match="after the decision instant"):
+        gated_headlines_for_day(tmp_path, cutoff, sh_gate)
+
+
+def test_ssec_policy_bazooka_and_tariff_stabilization_and_backtest(tmp_path: Path) -> None:
+    days = _seed_cross_asset_panel(tmp_path, n_days=380, include_ssec=True)
+    panel = HistoricalPanel.load(tmp_path)
+    sh_gate = as_of_for_market(days[-1], "ssec")
+    state, res_r, res_v = panel.build_state(sh_gate, market="ssec")
+
+    # 1. PBOC 924 bazooka lifts BOTH 000001.SS and realized volatility RV20
+    res_pboc = simulate(
+        state,
+        SSEC_PRESET_SHOCKS["pboc_924_bazooka"],
+        as_of=sh_gate,
+        steps=5,
+        mode="rule",
+        res_ret_step=res_r,
+        res_vxn_step=res_v,
+    )
+    assert res_pboc.cumulative_ndx_log_return > 0.0
+    assert res_pboc.cumulative_vxn_change > 0.0
+
+    # 2. US +35% tariff triggers Northbound selling while National Team steps in on Step 2
+    res_tariff = simulate(
+        state,
+        SSEC_PRESET_SHOCKS["us_china_tariff_35"],
+        as_of=sh_gate,
+        steps=4,
+        mode="rule",
+        res_ret_step=res_r,
+        res_vxn_step=res_v,
+    )
+    nb_s1 = next(a for a in res_tariff.steps[0].actions if a.actor_id == "northbound_global")
+    nt_s2 = next(a for a in res_tariff.steps[1].actions if a.actor_id == "national_team_etf")
+    assert nb_s1.equity_delta < 0.0
+    assert nt_s2.equity_delta > 0.0
+
+    # 3. Cross-border A-share backtest runs cleanly
+    bt_ssec = backtest_macro_shocks(tmp_path, market="ssec", horizon=5)
+    assert bt_ssec["market"] == "ssec"
+    assert bt_ssec["index_symbol"] == "000001.SS"
+    assert bt_ssec["vol_symbol"] == "RV20"
+    assert bt_ssec["n_episodes"] >= 8

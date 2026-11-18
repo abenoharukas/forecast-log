@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> None:
     sim_p.add_argument(
         "--scenario",
         default=None,
-        help="预设情景（如美股 tariff_25 / fomc_hawkish_25；A股 pboc_924_bazooka / huijin_stabilization / us_china_tariff_35）",
+        help="预设情景（如美股 tariff_25 / fomc_hawkish_25；A股 pboc_monetary_bazooka / huijin_stabilization / us_china_tariff_35）",
     )
     sim_p.add_argument("--day", default=None, help="基准交易日 YYYY-MM-DD，默认最新交易日")
     sim_p.add_argument("--steps", type=int, default=5, help="推演交易日步数，默认 5")

@@ -219,7 +219,7 @@ class PolicyShock:
 PRESET_SHOCKS: dict[str, PolicyShock] = {
     "tariff_25": PolicyShock(
         kind="tariff",
-        title="US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+        title="核心科技与工业进口加征 +25% 关税冲击，引发供应链成本与双边反制预期",
         rate_bps=6.0,
         fx_pct=0.65,
         inflation_z=1.35,
@@ -230,7 +230,7 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "fomc_hawkish_25": PolicyShock(
         kind="fomc",
-        title="Surprise +25 bps hawkish FOMC guidance shift; median dot plot removes two cuts",
+        title="央行意外释放 +25bp 鹰派利率路径指引，中位点阵图削减降息预期",
         rate_bps=14.0,
         fx_pct=0.55,
         inflation_z=0.65,
@@ -241,7 +241,7 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "fomc_dovish_cut": PolicyShock(
         kind="fomc",
-        title="Dovish 50 bps Fed rate cut with liquidity backstop guidance and benign inflation outlook",
+        title="央行超预期降息 50bp 并释放流动性托底指引，通胀前景趋于温和",
         rate_bps=-18.0,
         fx_pct=-0.70,
         inflation_z=-0.50,
@@ -252,7 +252,7 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "cpi_hot_surprise": PolicyShock(
         kind="cpi",
-        title="Core CPI prints +0.5% MoM (2.1 sigma above consensus); shelter and services re-accelerate",
+        title="核心通胀环比显著超预期（高于共识 +2.1σ），服务与居住分项重燃再通胀担忧",
         rate_bps=16.0,
         fx_pct=0.60,
         inflation_z=2.10,
@@ -263,7 +263,7 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "nfp_goldilocks": PolicyShock(
         kind="nfp",
-        title="Nonfarm payrolls beat expectations (+265k) while hourly wage growth cools to +0.2% MoM",
+        title="新增就业显著超预期且时薪增速温和回落，强化软着陆与实际增长预期",
         rate_bps=3.0,
         fx_pct=0.15,
         inflation_z=-0.45,
@@ -274,7 +274,7 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "credit_crunch": PolicyShock(
         kind="credit",
-        title="Regional banking & high-yield refinancing stress; credit spreads widen sharply",
+        title="银行体系与高收益债再融资压力骤升，信用利差急剧走阔触发避险去杠杆",
         rate_bps=-12.0,
         fx_pct=0.40,
         inflation_z=-0.30,
@@ -286,9 +286,9 @@ PRESET_SHOCKS: dict[str, PolicyShock] = {
 }
 
 SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
-    "pboc_924_bazooka": PolicyShock(
+    "pboc_monetary_bazooka": PolicyShock(
         kind="pboc",
-        title="央行一揽子金融新政：降准 50bp + 政策利率下调 20bp + 创设证券基金互换便利与增持再贷款",
+        title="央行超常规降准降息（货币+流动性双宽）：全面降准 50bp + 政策利率下调 20bp + 创设互换便利与增持再贷款",
         rate_bps=-20.0,
         fx_pct=-0.45,
         inflation_z=0.35,
@@ -299,7 +299,7 @@ SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "npc_fiscal_stimulus": PolicyShock(
         kind="fiscal",
-        title="全国人大常委会批准超预期地方化债与特别国债扩内需一揽子增量财政方案",
+        title="大规模财政扩张与化债稳增长：大规模地方债务置换与特别国债扩内需一揽子增量财政方案",
         rate_bps=-8.0,
         fx_pct=-0.25,
         inflation_z=0.45,
@@ -310,7 +310,7 @@ SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "huijin_stabilization": PolicyShock(
         kind="stabilization",
-        title="中央汇金宣布扩大宽基 ETF 增持范围并持续入市，央行承诺提供充足再贷款流动性支持",
+        title="平准资金大举增持宽基 ETF 托底：扩大宽基 ETF 增持范围并持续入市，央行提供充足再贷款流动性支持",
         rate_bps=-10.0,
         fx_pct=-0.15,
         inflation_z=0.05,
@@ -321,7 +321,7 @@ SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "us_china_tariff_35": PolicyShock(
         kind="tariff",
-        title="美方宣布对华关键出口产业加征 +35% 关税，外部贸易摩擦与离岸汇率压力骤升",
+        title="外部关键出口产业加征 +35% 关税冲击：贸易壁垒升级与离岸汇率折价压力骤升",
         rate_bps=5.0,
         fx_pct=0.75,
         inflation_z=-0.35,
@@ -332,7 +332,7 @@ SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "fed_dxy_squeeze": PolicyShock(
         kind="fomc",
-        title="美联储鹰派推迟降息 + 美元指数与 10Y 美债急升，北向配置盘与新兴市场汇率承压",
+        title="海外央行鹰派紧缩与强美元挤压：美元指数与长端美债急升，跨境配置盘与汇率承压",
         rate_bps=15.0,
         fx_pct=0.80,
         inflation_z=0.30,
@@ -343,7 +343,7 @@ SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
     "stamp_duty_ipo_pace": PolicyShock(
         kind="stabilization",
-        title="证券交易印花税实施减半征收 + 阶段性收紧 IPO 与大股东减持节奏",
+        title="印花税减半与融资节奏逆周期调节：证券交易印花税减半征收 + 阶段性收紧 IPO 与再融资减持节奏",
         rate_bps=-6.0,
         fx_pct=-0.10,
         inflation_z=0.10,
@@ -354,9 +354,14 @@ SSEC_PRESET_SHOCKS: dict[str, PolicyShock] = {
     ),
 }
 
+SCENARIO_PRESETS: dict[str, dict[str, PolicyShock]] = {
+    "ndx": PRESET_SHOCKS,
+    "ssec": SSEC_PRESET_SHOCKS,
+}
+
 
 def presets_for_market(market: SimMarket = "ndx") -> dict[str, PolicyShock]:
-    return SSEC_PRESET_SHOCKS if normalize_sim_market(market) == "ssec" else PRESET_SHOCKS
+    return SCENARIO_PRESETS["ssec" if normalize_sim_market(market) == "ssec" else "ndx"]
 
 
 @dataclass(frozen=True)
@@ -1716,7 +1721,7 @@ def backtest_ssec_shocks(
     kinds: Sequence[str] = ("fomc", "cpi", "nfp"),
     start: date | None = None,
     end: date | None = None,
-    holdout: date = date(2021, 1, 1),
+    holdout: date | None = None,
     horizon: int = 5,
     limit: int | None = None,
     include_llm: bool = False,
@@ -1771,6 +1776,12 @@ def backtest_ssec_shocks(
         step = len(episodes) / limit
         episodes = [episodes[int(i * step)] for i in range(limit)]
 
+    holdout_cutoff = (
+        holdout
+        if holdout is not None
+        else (ssec_dates[episodes[int(len(episodes) * 0.65)][0]] if episodes else ssec_dates[-1])
+    )
+
     rule_actors = build_actors("rule", market="ssec")
     homo_actors = build_actors("homogeneous", market="ssec")
     llm_actors = (
@@ -1807,7 +1818,7 @@ def backtest_ssec_shocks(
     for ai, us_ev, kind in episodes:
         ssec_day = ssec_dates[ai]
         prev_ssec_day = ssec_dates[ai - 1]
-        in_holdout = ssec_day >= holdout
+        in_holdout = ssec_day >= holdout_cutoff
 
         u_idx = us_idx_map[us_ev]
         u_prev = us_common[u_idx - 1]
@@ -1995,7 +2006,11 @@ def backtest_ssec_shocks(
         if name in t1_pred_ret:
             base_metrics.update(_ret_diagnostics(t1_pred_ret[name], holdout_only=False))
             hold_metrics.update(_ret_diagnostics(t1_pred_ret[name], holdout_only=True))
-        track1_summary[name] = {"full_sample": base_metrics, "holdout_2021_plus": hold_metrics}
+        track1_summary[name] = {
+            "full_sample": base_metrics,
+            "holdout": hold_metrics,
+            "holdout_2021_plus": hold_metrics,
+        }
 
     return {
         "market": "ssec",
@@ -2004,7 +2019,7 @@ def backtest_ssec_shocks(
         "n_episodes": len(episodes),
         "first_event": ssec_dates[episodes[0][0]].isoformat() if episodes else None,
         "last_event": ssec_dates[episodes[-1][0]].isoformat() if episodes else None,
-        "holdout_from": holdout.isoformat(),
+        "holdout_from": holdout_cutoff.isoformat(),
         "horizon_sessions": horizon,
         "kinds": list(kinds),
         "llm_usage": llm_usage.to_json() if include_llm else None,
@@ -2022,7 +2037,7 @@ def backtest_macro_shocks(
     kinds: Sequence[str] = ("fomc", "cpi", "nfp"),
     start: date | None = None,
     end: date | None = None,
-    holdout: date = date(2021, 1, 1),
+    holdout: date | None = None,
     horizon: int = 5,
     limit: int | None = None,
     include_llm: bool = False,
@@ -2051,6 +2066,12 @@ def backtest_macro_shocks(
     if limit is not None and len(episodes) > limit:
         step = len(episodes) / limit
         episodes = [episodes[int(i * step)] for i in range(limit)]
+
+    holdout_cutoff = (
+        holdout
+        if holdout is not None
+        else (episodes[int(len(episodes) * 0.65)][0] if episodes else common_dates[-1])
+    )
 
     ndx_map = {b.date: b.close for b in panel.series_map["^NDX"].bars}
     vxn_map = {b.date: b.close for b in panel.series_map["^VXN"].bars}
@@ -2094,7 +2115,7 @@ def backtest_macro_shocks(
         idx = idx_map[ev_day]
         prev_day = common_dates[idx - 1]
         target_day = common_dates[idx + horizon]
-        in_holdout = ev_day >= holdout
+        in_holdout = ev_day >= holdout_cutoff
 
         gate_pre = AsOf.at_session_close(prev_day)
         state_pre, res_ret_pre, res_vxn_pre = panel.build_state(gate_pre, market="ndx")
@@ -2280,7 +2301,11 @@ def backtest_macro_shocks(
         if name in t1_pred_ret:
             base_metrics.update(_ret_diagnostics(t1_pred_ret[name], holdout_only=False))
             hold_metrics.update(_ret_diagnostics(t1_pred_ret[name], holdout_only=True))
-        track1_summary[name] = {"full_sample": base_metrics, "holdout_2021_plus": hold_metrics}
+        track1_summary[name] = {
+            "full_sample": base_metrics,
+            "holdout": hold_metrics,
+            "holdout_2021_plus": hold_metrics,
+        }
 
     return {
         "market": "ndx",
@@ -2289,7 +2314,7 @@ def backtest_macro_shocks(
         "n_episodes": len(episodes),
         "first_event": episodes[0][0].isoformat() if episodes else None,
         "last_event": episodes[-1][0].isoformat() if episodes else None,
-        "holdout_from": holdout.isoformat(),
+        "holdout_from": holdout_cutoff.isoformat(),
         "horizon_sessions": horizon,
         "kinds": list(kinds),
         "llm_usage": llm_usage.to_json() if include_llm else None,
@@ -2375,19 +2400,20 @@ def render_simulation(result: SimulationResult) -> str:
 def render_backtest(report: dict) -> str:
     idx_lbl = report.get("index_symbol") or "^NDX"
     vol_lbl = report.get("vol_symbol") or "^VXN"
+    holdout_from = report.get("holdout_from") or "holdout"
     lines = [
         (
             f"Macro Shock Simulation Backtest [{idx_lbl} / {vol_lbl}]: {report['n_episodes']} events "
             f"({report['first_event']} -> {report['last_event']}, kinds={','.join(report['kinds'])})"
         ),
         "",
-        "1. Shock Transmission (t-1 -> t0; holdout >= 2021-01-01):",
-        f"{'Predictor':<24}{'Full Brier':>11}{'Full Hit':>10}{'Full Corr':>10}{'2021+ Brier':>13}{'2021+ Hit':>11}{'2021+ Corr':>11}",
+        f"1. Shock Transmission (t-1 -> t0; holdout >= {holdout_from}):",
+        f"{'Predictor':<24}{'Full Brier':>11}{'Full Hit':>10}{'Full Corr':>10}{'Hold Brier':>13}{'Hold Hit':>11}{'Hold Corr':>11}",
         "-" * 90,
     ]
     for name, entry in report["track1_shock_transmission"].items():
         full = entry["full_sample"]
-        hold = entry["holdout_2021_plus"]
+        hold = entry.get("holdout") or entry.get("holdout_2021_plus") or full
         fc = f"{full['corr']:+.3f}" if full.get("corr") is not None else "—"
         hc = f"{hold['corr']:+.3f}" if hold.get("corr") is not None else "—"
         lines.append(
@@ -2457,7 +2483,7 @@ def sim_command(
     state, res_ret, res_vxn = panel.build_state(as_of, market=mkt)
 
     presets = presets_for_market(mkt)
-    default_scen = "pboc_924_bazooka" if mkt == "ssec" else "tariff_25"
+    default_scen = "pboc_monetary_bazooka" if mkt == "ssec" else "tariff_25"
     scen_key = scenario or default_scen
     base = presets.get(scen_key, PolicyShock(kind="custom", title=scen_key))
     shock = PolicyShock(
@@ -2537,86 +2563,24 @@ _PANEL_LOCK = _threading.Lock()
 _PANEL_MEM_CACHE: dict[str, tuple[float, HistoricalPanel]] = {}
 
 PRESET_UI_META: tuple[dict, ...] = (
-    {"id": "tariff_25", "short_label": "+25% 半导体关税", "badge": "TARIFF"},
-    {"id": "fomc_hawkish_25", "short_label": "FOMC 鹰派 +25bp", "badge": "FOMC"},
-    {"id": "fomc_dovish_cut", "short_label": "FOMC 鸽派降息 -50bp", "badge": "FOMC"},
-    {"id": "cpi_hot_surprise", "short_label": "核心 CPI 超预期", "badge": "CPI"},
-    {"id": "nfp_goldilocks", "short_label": "非农金发姑娘", "badge": "NFP"},
-    {"id": "credit_crunch", "short_label": "信用利差危机", "badge": "CREDIT"},
+    {"id": "tariff_25", "short_label": "核心产业加征 +25% 关税冲击", "badge": "TARIFF"},
+    {"id": "fomc_hawkish_25", "short_label": "央行鹰派加息引导 +25bp", "badge": "FOMC"},
+    {"id": "fomc_dovish_cut", "short_label": "央行预防式降息 -50bp（流动性托底）", "badge": "FOMC"},
+    {"id": "cpi_hot_surprise", "short_label": "核心通胀超预期反弹（+2.1σ）", "badge": "CPI"},
+    {"id": "nfp_goldilocks", "short_label": "新增就业强劲且薪资降温（金发姑娘）", "badge": "NFP"},
+    {"id": "credit_crunch", "short_label": "高收益信用利差走阔与再融资压力", "badge": "CREDIT"},
 )
 
 SSEC_PRESET_UI_META: tuple[dict, ...] = (
-    {"id": "pboc_924_bazooka", "short_label": "央行 9·24 金融新政", "badge": "PBOC"},
-    {"id": "npc_fiscal_stimulus", "short_label": "人大财政化债扩内需", "badge": "FISCAL"},
-    {"id": "huijin_stabilization", "short_label": "汇金增持宽基护盘", "badge": "ETF"},
-    {"id": "us_china_tariff_35", "short_label": "对华 +35% 关税冲击", "badge": "TARIFF"},
-    {"id": "fed_dxy_squeeze", "short_label": "美联储鹰派 + 美元急升", "badge": "DXY"},
-    {"id": "stamp_duty_ipo_pace", "short_label": "印花税减半活跃市场", "badge": "POLICY"},
+    {"id": "pboc_monetary_bazooka", "short_label": "央行超常规降准降息（货币+流动性双宽）", "badge": "PBOC"},
+    {"id": "npc_fiscal_stimulus", "short_label": "大规模财政扩张与化债稳增长", "badge": "FISCAL"},
+    {"id": "huijin_stabilization", "short_label": "平准资金大举增持宽基 ETF 托底", "badge": "ETF"},
+    {"id": "us_china_tariff_35", "short_label": "外部加征 +35% 关税冲击", "badge": "TARIFF"},
+    {"id": "fed_dxy_squeeze", "short_label": "海外央行鹰派紧缩与强美元挤压", "badge": "DXY"},
+    {"id": "stamp_duty_ipo_pace", "short_label": "印花税减半与融资节奏逆周期调节", "badge": "POLICY"},
 )
 
-# Landmark A-share domestic policy & external tariff shock sessions for instant UI replay
-SSEC_LANDMARK_EVENTS: tuple[dict, ...] = (
-    {
-        "event_date": "2025-04-08",
-        "kind": "stabilization",
-        "label": "中央汇金平准增持宽基ETF反击外部关税恐慌",
-        "shock": {"rate_bps": -8.0, "fx_pct": -0.15, "inflation_z": 0.0, "growth_z": 0.90, "tariff_pct": 0.0, "uncertainty_z": -1.10},
-    },
-    {
-        "event_date": "2025-04-07",
-        "kind": "tariff",
-        "label": "美“对等关税”超预期升级引发全球与A股跳空冲击",
-        "shock": {"rate_bps": 4.0, "fx_pct": 0.85, "inflation_z": -0.40, "growth_z": -1.35, "tariff_pct": 34.0, "uncertainty_z": 1.95},
-    },
-    {
-        "event_date": "2024-09-24",
-        "kind": "pboc",
-        "label": "国新办 9·24 一揽子金融新政（降准降息+互换便利）",
-        "shock": {"rate_bps": -20.0, "fx_pct": -0.45, "inflation_z": 0.35, "growth_z": 1.75, "tariff_pct": 0.0, "uncertainty_z": -0.80},
-    },
-    {
-        "event_date": "2024-02-06",
-        "kind": "stabilization",
-        "label": "中央汇金宣布扩大宽基ETF增持范围托底流动性",
-        "shock": {"rate_bps": -10.0, "fx_pct": -0.15, "inflation_z": 0.05, "growth_z": 0.95, "tariff_pct": 0.0, "uncertainty_z": -1.15},
-    },
-    {
-        "event_date": "2023-08-28",
-        "kind": "stabilization",
-        "label": "证券交易印花税减半征收 + 阶段性收紧IPO节奏",
-        "shock": {"rate_bps": -6.0, "fx_pct": -0.10, "inflation_z": 0.10, "growth_z": 0.95, "tariff_pct": 0.0, "uncertainty_z": -0.60},
-    },
-    {
-        "event_date": "2022-11-01",
-        "kind": "fiscal",
-        "label": "内需与地产融资支持预期拐点驱动估值修复",
-        "shock": {"rate_bps": -8.0, "fx_pct": -0.35, "inflation_z": 0.25, "growth_z": 1.25, "tariff_pct": 0.0, "uncertainty_z": -0.55},
-    },
-    {
-        "event_date": "2022-03-16",
-        "kind": "stabilization",
-        "label": "国务院金稳委专题会议定调稳市场与中概股预期",
-        "shock": {"rate_bps": -10.0, "fx_pct": -0.25, "inflation_z": 0.10, "growth_z": 1.15, "tariff_pct": 0.0, "uncertainty_z": -1.00},
-    },
-    {
-        "event_date": "2020-02-03",
-        "kind": "credit",
-        "label": "春节后开市疫情避险冲击（次日央行超预期投放流动性）",
-        "shock": {"rate_bps": -10.0, "fx_pct": 0.55, "inflation_z": -0.60, "growth_z": -1.80, "tariff_pct": 0.0, "uncertainty_z": 2.10},
-    },
-    {
-        "event_date": "2019-05-06",
-        "kind": "tariff",
-        "label": "中美经贸摩擦关税上调消息冲击风险偏好",
-        "shock": {"rate_bps": 4.0, "fx_pct": 0.70, "inflation_z": -0.25, "growth_z": -1.10, "tariff_pct": 25.0, "uncertainty_z": 1.65},
-    },
-    {
-        "event_date": "2018-10-19",
-        "kind": "stabilization",
-        "label": "一行两会与高层联合发声化解股权质押流动性风险",
-        "shock": {"rate_bps": -10.0, "fx_pct": -0.15, "inflation_z": 0.10, "growth_z": 1.05, "tariff_pct": 0.0, "uncertainty_z": -0.95},
-    },
-)
+RELATIVE_ANCHOR_OFFSETS: tuple[int, ...] = (20, 63, 126, 252)
 
 
 def cached_panel(root: Path) -> HistoricalPanel:
@@ -2772,47 +2736,154 @@ def _realized_overlay(
     }
 
 
-def historical_ssec_replay_catalog(root: Path, panel: HistoricalPanel, limit: int = 36) -> list[dict]:
-    """Curated A-share domestic policy landmarks + cross-border macro shocks for UI replay."""
+def _resolve_as_of_index(dates: Sequence[date], as_of_date: date | str | None) -> int:
+    if not dates:
+        return 0
+    if as_of_date is None or as_of_date == "":
+        return len(dates) - 1
+    target = date.fromisoformat(as_of_date) if isinstance(as_of_date, str) else as_of_date
+    idx = int(np.searchsorted(dates, target, side="right")) - 1
+    return max(0, min(idx, len(dates) - 1))
+
+
+def historical_ssec_replay_catalog(
+    root: Path,
+    panel: HistoricalPanel,
+    limit: int = 36,
+    as_of_date: date | str | None = None,
+) -> list[dict]:
+    """Dynamic A-share (`000001.SS` / `RV20`) replay catalog anchored at `as_of_date`:
+    1. Relative time anchors (`T-20`, `T-63`, `T-126`, `T-252` trading days)
+    2. Trailing 252-trading-day auto-detected extremes (max daily gain, max daily drop, max RV20)
+    3. Dynamically aligned cross-border macro sessions (`FOMC`, `CPI`, `NFP`) up to `as_of_date`
+    """
     if not panel.has_ssec():
         return []
     ssec_bars = panel.series_map["000001.SS"].bars
-    ssec_dates = [b.date.isoformat() for b in ssec_bars]
+    if len(ssec_bars) < 35:
+        return []
+    ssec_date_objs = [b.date for b in ssec_bars]
+    ssec_dates = [d.isoformat() for d in ssec_date_objs]
     ssec_closes = np.array([b.close for b in ssec_bars], dtype=float)
     rv20_arr = _rolling_rv_series(ssec_closes, window=20, floor_pct=5.5)
-    pos = {d: i for i, d in enumerate(ssec_dates)}
 
-    out: list[dict] = []
-    seen: set[str] = set()
-    for item in SSEC_LANDMARK_EVENTS:
-        ed = item["event_date"]
-        idx = pos.get(ed)
-        if idx is None or idx < 292 or idx >= len(ssec_bars) - 1:
-            continue
+    as_of_idx = _resolve_as_of_index(ssec_date_objs, as_of_date)
+    as_of_day = ssec_date_objs[as_of_idx]
+    us_gate = AsOf.at_session_close(as_of_day - timedelta(days=1))
+    us_target_days = [d - timedelta(days=1) for d in ssec_date_objs[: as_of_idx + 1]]
+    tnx_us = _aligned_at_or_before(panel.series_map["^TNX"], us_target_days, us_gate)
+    dxy_us = _aligned_at_or_before(panel.series_map["DX-Y.NYB"], us_target_days, us_gate)
+    ndx_us = _aligned_at_or_before(panel.series_map["^NDX"], us_target_days, us_gate)
+
+    def _entry_at(idx: int, *, item_id: str, kind: str, label: str, category: str, anchor_tag: str = "") -> dict:
         r0_pct = (ssec_closes[idx] / ssec_closes[idx - 1] - 1.0) * 100.0
         dv0 = float(rv20_arr[idx] - rv20_arr[idx - 1])
-        sh = item["shock"]
-        out.append(
-            {
-                "event_date": ed,
-                "pre_event_date": ssec_dates[idx - 1],
-                "kind": item["kind"],
-                "label": item["label"],
-                "rate_bps": sh["rate_bps"],
-                "fx_pct": sh["fx_pct"],
-                "inflation_z": sh["inflation_z"],
-                "growth_z": sh["growth_z"],
-                "tariff_pct": sh["tariff_pct"],
-                "uncertainty_z": sh["uncertainty_z"],
-                "actual_r0_pct": round(r0_pct, 2),
-                "actual_dv0": round(dv0, 2),
-            }
+        vol_val = float(rv20_arr[idx])
+        dy_bps = (
+            float((tnx_us[idx] - tnx_us[idx - 1]) * 100.0)
+            if (np.isfinite(tnx_us[idx]) and np.isfinite(tnx_us[idx - 1]))
+            else 0.0
         )
-        seen.add(ed)
+        dd_pct = (
+            float(math.log(dxy_us[idx] / dxy_us[idx - 1]) * 100.0)
+            if (np.isfinite(dxy_us[idx]) and np.isfinite(dxy_us[idx - 1]) and dxy_us[idx - 1] > 0)
+            else 0.0
+        )
+        ov_ndx = (
+            float((ndx_us[idx] / ndx_us[idx - 1] - 1.0) * 100.0)
+            if (np.isfinite(ndx_us[idx]) and np.isfinite(ndx_us[idx - 1]) and ndx_us[idx - 1] > 0)
+            else 0.0
+        )
+        rate_imp = dy_bps if abs(dy_bps) >= 2.0 else _clip(-r0_pct * 2.5, -20.0, 20.0)
+        grow_imp = _clip(r0_pct / 1.6, -2.5, 2.5)
+        unc_imp = _clip(-r0_pct / 1.8 if r0_pct < 0 else -0.35 * (r0_pct / 2.0), -1.5, 2.5)
+        return {
+            "id": item_id,
+            "anchor_tag": anchor_tag or item_id,
+            "category": category,
+            "as_of_date": as_of_day.isoformat(),
+            "event_date": ssec_dates[idx],
+            "pre_event_date": ssec_dates[idx - 1],
+            "kind": kind,
+            "label": label,
+            "rate_bps": round(float(rate_imp), 1),
+            "fx_pct": round(float(dd_pct), 2),
+            "inflation_z": round(float(_clip(dy_bps / 12.0, -2.0, 2.0)), 2),
+            "growth_z": round(float(grow_imp), 2),
+            "tariff_pct": 0.0,
+            "uncertainty_z": round(float(unc_imp), 2),
+            "overnight_equity_pct": round(float(ov_ndx), 2),
+            "actual_r0_pct": round(float(r0_pct), 2),
+            "actual_dv0": round(float(dv0), 2),
+            "vol_level": round(vol_val, 2),
+        }
 
-    # Also append recent cross-border FOMC/CPI/NFP sessions settled on 000001.SS
+    out: list[dict] = []
+
+    # 1. Dynamic relative trading-day anchors: T-20, T-63, T-126, T-252
+    for offset in RELATIVE_ANCHOR_OFFSETS:
+        target_idx = as_of_idx - offset
+        if target_idx >= 1:
+            out.append(
+                _entry_at(
+                    target_idx,
+                    item_id=f"T-{offset}",
+                    anchor_tag=f"T-{offset}",
+                    category="relative_anchor",
+                    kind="anchor",
+                    label=f"T-{offset} 交易日相对时间锚点",
+                )
+            )
+
+    # 2. Auto-retrieved trailing 252-trading-day extremes: max gain, max drop, max volatility
+    win_start = max(1, as_of_idx - 251)
+    win_indices = list(range(win_start, as_of_idx + 1))
+    if win_indices:
+        day_rets = [(ssec_closes[i] / ssec_closes[i - 1] - 1.0) * 100.0 for i in win_indices]
+        day_vols = [float(rv20_arr[i]) for i in win_indices]
+
+        idx_max_gain = win_indices[int(np.argmax(day_rets))]
+        idx_max_drop = win_indices[int(np.argmin(day_rets))]
+        idx_max_vol = win_indices[int(np.argmax(day_vols))]
+
+        gain_val = (ssec_closes[idx_max_gain] / ssec_closes[idx_max_gain - 1] - 1.0) * 100.0
+        drop_val = (ssec_closes[idx_max_drop] / ssec_closes[idx_max_drop - 1] - 1.0) * 100.0
+        vol_val = float(rv20_arr[idx_max_vol])
+
+        out.append(
+            _entry_at(
+                idx_max_gain,
+                item_id="MAX_GAIN_252D",
+                anchor_tag="MAX_GAIN_252D",
+                category="extreme_252d",
+                kind="max_gain",
+                label=f"近252交易日最大单日涨幅日 ({gain_val:+.2f}%)",
+            )
+        )
+        out.append(
+            _entry_at(
+                idx_max_drop,
+                item_id="MAX_DROP_252D",
+                anchor_tag="MAX_DROP_252D",
+                category="extreme_252d",
+                kind="max_drop",
+                label=f"近252交易日最大单日跌幅日 ({drop_val:+.2f}%)",
+            )
+        )
+        out.append(
+            _entry_at(
+                idx_max_vol,
+                item_id="MAX_VOL_252D",
+                anchor_tag="MAX_VOL_252D",
+                category="extreme_252d",
+                kind="max_vol",
+                label=f"近252交易日最高波动率日 (RV20 {vol_val:.2f}%)",
+            )
+        )
+
+    # 3. Dynamically aligned cross-border macro releases up to `as_of_date`
     cal = events.load(root)
-    if cal:
+    if cal and len(out) < limit:
         us_common = sorted(
             set.intersection(*({b.date for b in panel.series_map[sym].bars} for sym in ("^NDX", "^TNX", "DX-Y.NYB")))
         )
@@ -2820,18 +2891,18 @@ def historical_ssec_replay_catalog(root: Path, panel: HistoricalPanel, limit: in
         ndx_map = {b.date: b.close for b in panel.series_map["^NDX"].bars}
         tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
         dxy_map = {b.date: b.close for b in panel.series_map["DX-Y.NYB"].bars}
-        ssec_date_objs = [b.date for b in ssec_bars]
 
+        seen_dates: set[str] = set()
         cross_items: list[dict] = []
         for kind in ("fomc", "cpi", "nfp"):
             for us_ev in cal.get(kind, []):
                 if us_ev not in us_idx or us_idx[us_ev] < 5:
                     continue
                 ai = int(np.searchsorted(ssec_date_objs, us_ev, side="right"))
-                if ai < 292 or ai >= len(ssec_bars) - 1:
+                if ai < 65 or ai > as_of_idx or ai >= len(ssec_bars) - 1:
                     continue
                 ed = ssec_dates[ai]
-                if ed in seen:
+                if ed in seen_dates:
                     continue
                 u_prev = us_common[us_idx[us_ev] - 1]
                 dy_bps = (tnx_map[us_ev] - tnx_map[u_prev]) * 100.0
@@ -2841,6 +2912,10 @@ def historical_ssec_replay_catalog(root: Path, panel: HistoricalPanel, limit: in
                 dv0 = float(rv20_arr[ai] - rv20_arr[ai - 1])
                 cross_items.append(
                     {
+                        "id": f"MACRO_{ed}",
+                        "anchor_tag": kind.upper(),
+                        "category": "macro_event",
+                        "as_of_date": as_of_day.isoformat(),
                         "event_date": ed,
                         "pre_event_date": ssec_dates[ai - 1],
                         "kind": kind,
@@ -2854,13 +2929,13 @@ def historical_ssec_replay_catalog(root: Path, panel: HistoricalPanel, limit: in
                         "overnight_equity_pct": round(ov_ndx, 2),
                         "actual_r0_pct": round(r0_pct, 2),
                         "actual_dv0": round(dv0, 2),
+                        "vol_level": round(float(rv20_arr[ai]), 2),
                     }
                 )
-                seen.add(ed)
+                seen_dates.add(ed)
         cross_items.sort(key=lambda x: x["event_date"], reverse=True)
         out.extend(cross_items[: max(0, limit - len(out))])
 
-    out.sort(key=lambda x: x["event_date"], reverse=True)
     return out[:limit]
 
 
@@ -2869,51 +2944,171 @@ def historical_replay_catalog(
     panel: HistoricalPanel,
     limit: int = 36,
     market: SimMarket = "ndx",
+    as_of_date: date | str | None = None,
 ) -> list[dict]:
-    """Curated list of historical policy/macro shocks for UI replay (`ndx` or `ssec`)."""
+    """Dynamic replay catalog (`ndx` or `ssec`) anchored at `as_of_date`:
+    1. Relative time anchors (`T-20`, `T-63`, `T-126`, `T-252` trading days)
+    2. Trailing 252-trading-day auto-detected extremes (max daily gain, max daily drop, max volatility)
+    3. Dynamically aligned macro release sessions (`FOMC`, `CPI`, `NFP`) up to `as_of_date`
+    """
     if normalize_sim_market(market) == "ssec":
-        return historical_ssec_replay_catalog(root, panel, limit=limit)
+        return historical_ssec_replay_catalog(root, panel, limit=limit, as_of_date=as_of_date)
 
-    try:
-        common_dates, idx_map, episodes = _event_dates_aligned(root, panel)
-    except Exception:
+    common_sets = [{b.date for b in panel.series_map[sym].bars} for sym in REQUIRED_SYMBOLS]
+    common_dates = sorted(set.intersection(*common_sets))
+    if len(common_dates) < 35:
         return []
+    date_strs = [d.isoformat() for d in common_dates]
+    as_of_idx = _resolve_as_of_index(common_dates, as_of_date)
+    as_of_day = common_dates[as_of_idx]
+
     ndx_map = {b.date: b.close for b in panel.series_map["^NDX"].bars}
     vxn_map = {b.date: b.close for b in panel.series_map["^VXN"].bars}
     tnx_map = {b.date: b.close for b in panel.series_map["^TNX"].bars}
     dxy_map = {b.date: b.close for b in panel.series_map["DX-Y.NYB"].bars}
 
-    enriched: list[dict] = []
-    for ev_day, kind in episodes:
-        idx = idx_map[ev_day]
+    def _ndx_entry_at(idx: int, *, item_id: str, kind: str, label: str, category: str, anchor_tag: str = "") -> dict:
+        ev_day = common_dates[idx]
         prev_day = common_dates[idx - 1]
         dy_bps = (tnx_map[ev_day] - tnx_map[prev_day]) * 100.0
         dd_pct = math.log(dxy_map[ev_day] / dxy_map[prev_day]) * 100.0
         r0_pct = (ndx_map[ev_day] / ndx_map[prev_day] - 1.0) * 100.0
         dv0 = vxn_map[ev_day] - vxn_map[prev_day]
-        enriched.append(
-            {
-                "event_date": ev_day.isoformat(),
-                "pre_event_date": prev_day.isoformat(),
-                "kind": kind,
-                "rate_bps": round(dy_bps, 1),
-                "fx_pct": round(dd_pct, 2),
-                "actual_r0_pct": round(r0_pct, 2),
-                "actual_dv0": round(dv0, 2),
-                "abs_move": abs(r0_pct) + abs(dy_bps) / 10.0,
-            }
+        vol_val = float(vxn_map[ev_day])
+        return {
+            "id": item_id,
+            "anchor_tag": anchor_tag or item_id,
+            "category": category,
+            "as_of_date": as_of_day.isoformat(),
+            "event_date": date_strs[idx],
+            "pre_event_date": date_strs[idx - 1],
+            "kind": kind,
+            "label": label,
+            "rate_bps": round(float(dy_bps), 1),
+            "fx_pct": round(float(dd_pct), 2),
+            "inflation_z": round(float(_clip(dy_bps / 10.0, -2.5, 2.5)), 2),
+            "growth_z": round(float(_clip(r0_pct / 1.8, -2.5, 2.5)), 2),
+            "tariff_pct": 0.0,
+            "uncertainty_z": round(float(_clip(dv0 / 2.2, -1.5, 3.0)), 2),
+            "actual_r0_pct": round(float(r0_pct), 2),
+            "actual_dv0": round(float(dv0), 2),
+            "vol_level": round(vol_val, 2),
+        }
+
+    out: list[dict] = []
+
+    # 1. Dynamic relative trading-day anchors: T-20, T-63, T-126, T-252
+    for offset in RELATIVE_ANCHOR_OFFSETS:
+        target_idx = as_of_idx - offset
+        if target_idx >= 1:
+            out.append(
+                _ndx_entry_at(
+                    target_idx,
+                    item_id=f"T-{offset}",
+                    anchor_tag=f"T-{offset}",
+                    category="relative_anchor",
+                    kind="anchor",
+                    label=f"T-{offset} 交易日相对时间锚点",
+                )
+            )
+
+    # 2. Auto-retrieved trailing 252-trading-day extremes: max gain, max drop, max VXN
+    win_start = max(1, as_of_idx - 251)
+    win_indices = list(range(win_start, as_of_idx + 1))
+    if win_indices:
+        day_rets = [
+            (ndx_map[common_dates[i]] / ndx_map[common_dates[i - 1]] - 1.0) * 100.0
+            for i in win_indices
+        ]
+        day_vols = [float(vxn_map[common_dates[i]]) for i in win_indices]
+
+        idx_max_gain = win_indices[int(np.argmax(day_rets))]
+        idx_max_drop = win_indices[int(np.argmin(day_rets))]
+        idx_max_vol = win_indices[int(np.argmax(day_vols))]
+
+        gain_val = (ndx_map[common_dates[idx_max_gain]] / ndx_map[common_dates[idx_max_gain - 1]] - 1.0) * 100.0
+        drop_val = (ndx_map[common_dates[idx_max_drop]] / ndx_map[common_dates[idx_max_drop - 1]] - 1.0) * 100.0
+        vol_val = float(vxn_map[common_dates[idx_max_vol]])
+
+        out.append(
+            _ndx_entry_at(
+                idx_max_gain,
+                item_id="MAX_GAIN_252D",
+                anchor_tag="MAX_GAIN_252D",
+                category="extreme_252d",
+                kind="max_gain",
+                label=f"近252交易日最大单日涨幅日 ({gain_val:+.2f}%)",
+            )
         )
-    recent = enriched[-16:]
-    recent_dates = {e["event_date"] for e in recent}
-    major = sorted(
-        (e for e in enriched if e["event_date"] not in recent_dates),
-        key=lambda x: x["abs_move"],
-        reverse=True,
-    )[: max(0, limit - len(recent))]
-    merged = sorted(recent + major, key=lambda x: x["event_date"], reverse=True)
-    for item in merged:
-        item.pop("abs_move", None)
-    return merged
+        out.append(
+            _ndx_entry_at(
+                idx_max_drop,
+                item_id="MAX_DROP_252D",
+                anchor_tag="MAX_DROP_252D",
+                category="extreme_252d",
+                kind="max_drop",
+                label=f"近252交易日最大单日跌幅日 ({drop_val:+.2f}%)",
+            )
+        )
+        out.append(
+            _ndx_entry_at(
+                idx_max_vol,
+                item_id="MAX_VOL_252D",
+                anchor_tag="MAX_VOL_252D",
+                category="extreme_252d",
+                kind="max_vol",
+                label=f"近252交易日最高波动率日 (^VXN {vol_val:.2f})",
+            )
+        )
+
+    # 3. Dynamically aligned macro release sessions up to `as_of_date`
+    try:
+        _, idx_map, episodes = _event_dates_aligned(root, panel, end=as_of_day)
+    except Exception:
+        episodes = []
+        idx_map = {}
+
+    if episodes and len(out) < limit:
+        enriched: list[dict] = []
+        for ev_day, kind in episodes:
+            idx = idx_map[ev_day]
+            prev_day = common_dates[idx - 1]
+            dy_bps = (tnx_map[ev_day] - tnx_map[prev_day]) * 100.0
+            dd_pct = math.log(dxy_map[ev_day] / dxy_map[prev_day]) * 100.0
+            r0_pct = (ndx_map[ev_day] / ndx_map[prev_day] - 1.0) * 100.0
+            dv0 = vxn_map[ev_day] - vxn_map[prev_day]
+            enriched.append(
+                {
+                    "id": f"MACRO_{ev_day.isoformat()}",
+                    "anchor_tag": kind.upper(),
+                    "category": "macro_event",
+                    "as_of_date": as_of_day.isoformat(),
+                    "event_date": ev_day.isoformat(),
+                    "pre_event_date": prev_day.isoformat(),
+                    "kind": kind,
+                    "label": f"{kind.upper()} 宏观发布日 (10Y {dy_bps:+.1f}bp)",
+                    "rate_bps": round(dy_bps, 1),
+                    "fx_pct": round(dd_pct, 2),
+                    "actual_r0_pct": round(r0_pct, 2),
+                    "actual_dv0": round(dv0, 2),
+                    "vol_level": round(float(vxn_map[ev_day]), 2),
+                    "abs_move": abs(r0_pct) + abs(dy_bps) / 10.0,
+                }
+            )
+        rem = max(0, limit - len(out))
+        recent = enriched[-min(12, rem) :]
+        recent_dates = {e["event_date"] for e in recent}
+        major = sorted(
+            (e for e in enriched if e["event_date"] not in recent_dates),
+            key=lambda x: x["abs_move"],
+            reverse=True,
+        )[: max(0, rem - len(recent))]
+        merged = sorted(recent + major, key=lambda x: x["event_date"], reverse=True)
+        for item in merged:
+            item.pop("abs_move", None)
+        out.extend(merged)
+
+    return out[:limit]
 
 
 def _clip_int(val: object, low: int, high: int, default: int = 5) -> int:
@@ -2931,7 +3126,7 @@ def _build_shock_from_request(
     market: SimMarket = "ndx",
 ) -> PolicyShock:
     mkt = normalize_sim_market(market)
-    default_scen = "pboc_924_bazooka" if mkt == "ssec" else "tariff_25"
+    default_scen = "pboc_monetary_bazooka" if mkt == "ssec" else "tariff_25"
     scenario_key = str(body.get("scenario") or body.get("preset") or default_scen).strip()
     presets = presets_for_market(mkt)
     base = presets.get(scenario_key, PolicyShock(kind=str(body.get("kind") or "custom"), title=scenario_key))
@@ -3088,14 +3283,23 @@ def run_sim_stream(root: Path, body: dict, llms: Sequence[LLM] | dict[str, LLM] 
     yield {"type": "done", "result": doc}
 
 
-def _market_init_block(root: Path, panel: HistoricalPanel, mkt: SimMarket) -> dict:
+def _market_init_block(
+    root: Path,
+    panel: HistoricalPanel,
+    mkt: SimMarket,
+    as_of_date: date | str | None = None,
+) -> dict:
     sym = "000001.SS" if mkt == "ssec" else "^NDX"
     bars = panel.series_map[sym].bars
     latest_date = bars[-1].date.isoformat()
     min_date = bars[min(295, len(bars) - 1)].date.isoformat()
+    bar_dates = [b.date for b in bars]
+    as_of_idx = _resolve_as_of_index(bar_dates, as_of_date)
+    resolved_as_of = bar_dates[as_of_idx].isoformat()
+
     ui_meta = SSEC_PRESET_UI_META if mkt == "ssec" else PRESET_UI_META
     presets_map = presets_for_market(mkt)
-    default_preset = "pboc_924_bazooka" if mkt == "ssec" else "tariff_25"
+    default_preset = "pboc_monetary_bazooka" if mkt == "ssec" else "tariff_25"
 
     presets_out = []
     for meta in ui_meta:
@@ -3122,33 +3326,42 @@ def _market_init_block(root: Path, panel: HistoricalPanel, mkt: SimMarket) -> di
     ]
     initial_run = run_sim_payload(
         root,
-        {"market": mkt, "scenario": default_preset, "steps": 5, "mode": "rule"},
+        {"market": mkt, "scenario": default_preset, "day": resolved_as_of, "steps": 5, "mode": "rule"},
     )
     return {
         "market": mkt,
         "index_symbol": sym,
         "vol_symbol": "RV20" if mkt == "ssec" else "^VXN",
         "default_preset": default_preset,
+        "as_of_date": resolved_as_of,
         "latest_date": latest_date,
         "min_date": min_date,
         "presets": presets_out,
         "actors": actors_out,
-        "historical_events": historical_replay_catalog(root, panel, limit=36, market=mkt),
+        "historical_events": historical_replay_catalog(
+            root, panel, limit=36, market=mkt, as_of_date=resolved_as_of
+        ),
         "initial": initial_run,
     }
 
 
-def sim_init_payload(root: Path, market: str = "ndx") -> dict:
+def sim_init_payload(
+    root: Path,
+    market: str = "ndx",
+    as_of_date: date | str | None = None,
+) -> dict:
     """Initial bundle for `web/sim.html`, preloading both US (`^NDX`) and A-share (`000001.SS`) configs."""
     mkt = normalize_sim_market(market)
     panel = cached_panel(root)
     env = merged_env(root)
 
     markets_bundle: dict[str, dict] = {
-        "ndx": _market_init_block(root, panel, "ndx"),
+        "ndx": _market_init_block(root, panel, "ndx", as_of_date=as_of_date if mkt == "ndx" else None),
     }
     if panel.has_ssec():
-        markets_bundle["ssec"] = _market_init_block(root, panel, "ssec")
+        markets_bundle["ssec"] = _market_init_block(
+            root, panel, "ssec", as_of_date=as_of_date if mkt == "ssec" else None
+        )
 
     active_block = markets_bundle.get(mkt) or markets_bundle["ndx"]
     llm_status = {
@@ -3161,6 +3374,7 @@ def sim_init_payload(root: Path, market: str = "ndx") -> dict:
         "available_markets": list(markets_bundle.keys()),
         "markets": markets_bundle,
         # Top-level aliases preserve full backward compatibility with existing single-market callers
+        "as_of_date": active_block["as_of_date"],
         "latest_date": active_block["latest_date"],
         "min_date": active_block["min_date"],
         "presets": active_block["presets"],

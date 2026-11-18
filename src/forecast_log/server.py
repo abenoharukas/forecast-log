@@ -23,8 +23,27 @@ ROOT = Path(__file__).resolve().parents[2]
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 _REFRESH_LOCK = threading.Lock()
 _TIMELINE_LOCK = threading.Lock()
+_SIM_RELOAD_LOCK = threading.Lock()
+_SIM_MTIME: float = 0.0
 INTRADAY_COOLDOWN_SECONDS = 300
 DEFAULT_PORT = 8731
+
+
+def _sim_module():
+    """Import `forecast_log.sim` and hot-reload it if `sim.py` changed on disk."""
+    import importlib
+    import forecast_log.sim as sim_mod
+
+    global _SIM_MTIME
+    sim_file = ROOT / "src" / "forecast_log" / "sim.py"
+    mtime = sim_file.stat().st_mtime if sim_file.is_file() else 0.0
+    with _SIM_RELOAD_LOCK:
+        if _SIM_MTIME == 0.0:
+            _SIM_MTIME = mtime
+        elif mtime > _SIM_MTIME:
+            sim_mod = importlib.reload(sim_mod)
+            _SIM_MTIME = mtime
+    return sim_mod
 
 # 干净的 URL → 实际文件。地址里不带 .html，也不带 /web/ 前缀。
 PAGES = {
@@ -390,20 +409,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if path.rstrip("/") == "/api/sim/init":
             from urllib.parse import parse_qs
-            from forecast_log.sim import sim_init_payload
 
+            sim_mod = _sim_module()
             qs = parse_qs(query)
             market = (qs.get("market") or ["ndx"])[0]
+            as_of = (qs.get("as_of") or qs.get("day") or [None])[0]
             try:
-                self._send_json(sim_init_payload(ROOT, market=market), "sim init unavailable")
+                self._send_json(
+                    sim_mod.sim_init_payload(ROOT, market=market, as_of_date=as_of),
+                    "sim init unavailable",
+                )
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, str(exc))
             return
 
         if path.rstrip("/") == "/api/sim/backtest":
             from urllib.parse import parse_qs
-            from forecast_log.sim import load_or_run_backtest
 
+            sim_mod = _sim_module()
             qs = parse_qs(query)
             market = (qs.get("market") or ["ndx"])[0]
             force = (qs.get("force") or ["0"])[0] == "1"
@@ -411,7 +434,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             horizon = int((qs.get("horizon") or ["5"])[0] or 5)
             try:
                 self._send_json(
-                    load_or_run_backtest(ROOT, market=market, force=force, kinds=kinds, horizon=horizon),
+                    sim_mod.load_or_run_backtest(ROOT, market=market, force=force, kinds=kinds, horizon=horizon),
                     "backtest unavailable",
                 )
             except Exception as exc:
@@ -491,13 +514,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 pass
 
     def _handle_sim_run(self) -> None:
-        from forecast_log.sim import run_sim_payload
-
+        sim_mod = _sim_module()
         try:
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
             body = json.loads(raw or "{}")
-            payload = run_sim_payload(ROOT, body)
+            payload = sim_mod.run_sim_payload(ROOT, body)
             status = 200
         except Exception as exc:
             payload = {"ok": False, "error": str(exc)}
@@ -510,7 +532,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(out)
 
     def _handle_sim_stream(self) -> None:
-        from forecast_log.sim import run_sim_stream
+        run_sim_stream = _sim_module().run_sim_stream
 
         try:
             length = int(self.headers.get("Content-Length") or 0)

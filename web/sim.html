@@ -1324,7 +1324,7 @@
         el("#bt-meta").textContent = `${m.idxSym} · ${rep.n_episodes} 次真实宏观冲击事件 (${rep.first_event} → ${rep.last_event})`;
 
         const t1Rows = Object.entries(rep.track1_shock_transmission || {}).map(([name, obj]) => {
-          const f = obj.full_sample || {}, h = obj.holdout_2021_plus || {};
+          const f = obj.full_sample || {}, h = obj.holdout || obj.holdout_2021_plus || {};
           return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(f.brier).toFixed(4)}</td><td>${(f.hit_direction * 100).toFixed(1)}%</td><td>${f.corr != null ? fmtSigned(f.corr, 3) : "—"}</td><td>${Number(h.brier).toFixed(4)}</td><td>${(h.hit_direction * 100).toFixed(1)}%</td></tr>`;
         }).join("");
 
@@ -1345,7 +1345,7 @@
         el("#bt-content").innerHTML =
           `<div class="bt-block">` +
           `<div class="bt-title">1. 冲击传导 (t-1 → t0, 预测 ${escapeHtml(m.idxSym)} 方向与收益)</div>` +
-          `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>命中</th><th>相关r</th><th>21+Brier</th><th>21+命中</th></tr></thead><tbody>${t1Rows}</tbody></table>` +
+          `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>命中</th><th>相关r</th><th>样本外Brier</th><th>样本外命中</th></tr></thead><tbody>${t1Rows}</tbody></table>` +
           `</div>` +
           `<div class="bt-block">` +
           `<div class="bt-title">2. 事前 5d 波动率传导 P(${escapeHtml(m.volSym)}_{t+5} &gt; ${escapeHtml(m.volSym)}_t)</div>` +
@@ -1378,6 +1378,38 @@
         }
       }
 
+      function renderReplaySelectOptions(asOfLabel) {
+        const sel = el("#replay-select");
+        sel.innerHTML = `<option value="">— 最新盘面推演（${escapeHtml(asOfLabel)} 收盘无穿越） —</option>`;
+
+        const relAnchors = replayEvents.filter((ev) => ev.category === "relative_anchor");
+        const extremes = replayEvents.filter((ev) => ev.category === "extreme_252d");
+        const others = replayEvents.filter((ev) => ev.category !== "relative_anchor" && ev.category !== "extreme_252d");
+
+        const appendGroup = (groupLabel, items) => {
+          if (!items.length) return;
+          const grp = document.createElement("optgroup");
+          grp.label = groupLabel;
+          items.forEach((ev) => {
+            const opt = document.createElement("option");
+            opt.value = ev.id || ev.event_date;
+            const desc = ev.label ? ev.label : `${ev.kind.toUpperCase()} (10Y ${fmtSigned(ev.rate_bps, 1, "bp")})`;
+            opt.textContent = `${ev.event_date} · ${desc} [当日真实 ${fmtSigned(ev.actual_r0_pct, 2, "%")}]`;
+            grp.appendChild(opt);
+          });
+          sel.appendChild(grp);
+        };
+
+        appendGroup("相对时间锚点 (基于当前 As-Of 动态计算)", relAnchors);
+        appendGroup("近 252 交易日极值检索", extremes);
+        appendGroup("宏观事件样本回放", others);
+      }
+
+      function findReplayEvent(key) {
+        if (!key) return null;
+        return replayEvents.find((x) => (x.id && x.id === key) || x.event_date === key) || null;
+      }
+
       function populateMarketControls(mktKey, runDefault = true) {
         const block = marketsMap[mktKey];
         if (!block) return;
@@ -1390,7 +1422,8 @@
           b.classList.toggle("active", b.dataset.market === mktKey);
         });
 
-        el("#anchor-date").value = block.latest_date;
+        const anchorVal = block.as_of_date || block.latest_date;
+        el("#anchor-date").value = anchorVal;
         el("#anchor-date").max = block.latest_date;
         el("#anchor-date").min = block.min_date;
 
@@ -1398,15 +1431,7 @@
           `<button type="button" class="preset-pill ${p.id === activePreset ? "active" : ""}" data-id="${escapeHtml(p.id)}">${escapeHtml(p.short_label)}</button>`
         ).join("");
 
-        const sel = el("#replay-select");
-        sel.innerHTML = `<option value="">— 最新盘面推演（${escapeHtml(block.latest_date)} 收盘无穿越） —</option>`;
-        replayEvents.forEach((ev) => {
-          const opt = document.createElement("option");
-          opt.value = ev.event_date;
-          const desc = ev.label ? ev.label : `${ev.kind.toUpperCase()} (10Y ${fmtSigned(ev.rate_bps, 1, "bp")})`;
-          opt.textContent = `${ev.event_date} · ${desc} [当日真实 ${fmtSigned(ev.actual_r0_pct, 2, "%")}]`;
-          sel.appendChild(opt);
-        });
+        renderReplaySelectOptions(anchorVal);
 
         if (presetsById[activePreset]) {
           applyShockToControls(presetsById[activePreset]);
@@ -1485,7 +1510,7 @@
         el("#preset-buttons").querySelectorAll(".preset-pill").forEach((b) => b.classList.toggle("active", b === btn));
         el("#replay-select").value = "";
         const block = marketsMap[activeMarket];
-        if (block) el("#anchor-date").value = block.latest_date;
+        if (block) el("#anchor-date").value = block.as_of_date || block.latest_date;
         if (presetsById[activePreset]) applyShockToControls(presetsById[activePreset]);
         runFastSim();
       });
@@ -1498,7 +1523,26 @@
         });
       });
 
-      el("#anchor-date").addEventListener("change", () => runFastSim());
+      el("#anchor-date").addEventListener("change", () => {
+        const newAsOf = el("#anchor-date").value;
+        if (newAsOf) {
+          fetch(`/api/sim/init?market=${encodeURIComponent(activeMarket)}&as_of=${encodeURIComponent(newAsOf)}&t=${Date.now()}`)
+            .then((res) => res.json())
+            .then((bundle) => {
+              if (bundle && bundle.ok) {
+                const blk = (bundle.markets && bundle.markets[activeMarket]) || bundle;
+                if (marketsMap[activeMarket]) {
+                  marketsMap[activeMarket].as_of_date = blk.as_of_date || newAsOf;
+                  marketsMap[activeMarket].historical_events = blk.historical_events || [];
+                }
+                replayEvents = blk.historical_events || [];
+                renderReplaySelectOptions(blk.as_of_date || newAsOf);
+              }
+            })
+            .catch(() => {});
+        }
+        runFastSim();
+      });
       el("#shock-title").addEventListener("change", () => { if (activeMode !== "llm") runFastSim(); });
 
       el("#horizon-pills").addEventListener("click", (e) => {
@@ -1533,11 +1577,11 @@
       });
 
       el("#replay-select").addEventListener("change", () => {
-        const evDate = el("#replay-select").value;
+        const selKey = el("#replay-select").value;
         const block = marketsMap[activeMarket];
-        if (!evDate) {
+        if (!selKey) {
           if (block) {
-            el("#anchor-date").value = block.latest_date;
+            el("#anchor-date").value = block.as_of_date || block.latest_date;
             activePreset = block.default_preset;
             document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.toggle("active", b.dataset.id === activePreset));
             if (presetsById[activePreset]) applyShockToControls(presetsById[activePreset]);
@@ -1545,13 +1589,13 @@
           runFastSim();
           return;
         }
-        const found = replayEvents.find((x) => x.event_date === evDate);
+        const found = findReplayEvent(selKey);
         if (found) triggerHistoricalReplay(found);
       });
 
       el("#replay-anchor").addEventListener("change", () => {
-        const evDate = el("#replay-select").value;
-        const found = replayEvents.find((x) => x.event_date === evDate);
+        const selKey = el("#replay-select").value;
+        const found = findReplayEvent(selKey);
         if (found) triggerHistoricalReplay(found);
       });
 
@@ -1608,9 +1652,9 @@
         const tr = e.target.closest(".sample-row");
         if (!tr) return;
         const evDate = tr.dataset.evdate;
-        const found = replayEvents.find((x) => x.event_date === evDate);
+        const found = findReplayEvent(evDate);
         if (found) {
-          el("#replay-select").value = evDate;
+          el("#replay-select").value = found.id || found.event_date;
           triggerHistoricalReplay(found);
         } else {
           el("#anchor-date").value = evDate;

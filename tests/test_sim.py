@@ -320,7 +320,7 @@ def test_web_sim_api_init_historical_overlay_and_stream(tmp_path: Path) -> None:
     # A-share replay returns exact domain symbols 000001.SS and RV20
     ssec_replay = run_sim_payload(
         tmp_path,
-        {"market": "ssec", "scenario": "pboc_924_bazooka", "day": hist_day, "steps": 5, "mode": "rule"},
+        {"market": "ssec", "scenario": "pboc_monetary_bazooka", "day": hist_day, "steps": 5, "mode": "rule"},
     )
     assert ssec_replay["ok"] is True
     assert ssec_replay["index_symbol"] == "000001.SS"
@@ -328,6 +328,12 @@ def test_web_sim_api_init_historical_overlay_and_stream(tmp_path: Path) -> None:
     assert ssec_replay["realized_overlay"]["index_symbol"] == "000001.SS"
     assert ssec_replay["realized_overlay"]["vol_symbol"] == "RV20"
     assert ssec_replay["realized_overlay"]["resolved_steps"] == 5
+
+    # Dynamic replay list includes relative time anchors (T-20, T-63, T-126, T-252) and 252d extremes
+    for mkt_key in ("ndx", "ssec"):
+        evs = bundle["markets"][mkt_key]["historical_events"]
+        tags = {e.get("anchor_tag") for e in evs}
+        assert {"T-20", "T-63", "T-126", "T-252", "MAX_GAIN_252D", "MAX_DROP_252D", "MAX_VOL_252D"}.issubset(tags)
 
     # Streaming LLM mode emits start -> thinking/step -> done
     fake_llm = ScriptedLLM(
@@ -342,7 +348,7 @@ def test_web_sim_api_init_historical_overlay_and_stream(tmp_path: Path) -> None:
     events = list(
         run_sim_stream(
             tmp_path,
-            {"market": "ssec", "scenario": "pboc_924_bazooka", "day": hist_day, "steps": 2, "mode": "llm"},
+            {"market": "ssec", "scenario": "pboc_monetary_bazooka", "day": hist_day, "steps": 2, "mode": "llm"},
             llms=[fake_llm],
         )
     )
@@ -402,10 +408,10 @@ def test_ssec_policy_bazooka_and_tariff_stabilization_and_backtest(tmp_path: Pat
     sh_gate = as_of_for_market(days[-1], "ssec")
     state, res_r, res_v = panel.build_state(sh_gate, market="ssec")
 
-    # 1. PBOC 924 bazooka lifts BOTH 000001.SS and realized volatility RV20
+    # 1. PBOC monetary bazooka lifts BOTH 000001.SS and realized volatility RV20
     res_pboc = simulate(
         state,
-        SSEC_PRESET_SHOCKS["pboc_924_bazooka"],
+        SSEC_PRESET_SHOCKS["pboc_monetary_bazooka"],
         as_of=sh_gate,
         steps=5,
         mode="rule",

@@ -89,21 +89,61 @@
       color: var(--muted);
       font-weight: 500;
     }
-    .preset-group {
+
+    .wb-top-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(360px, 1fr);
+      gap: 10px 12px;
+      align-items: stretch;
+    }
+    @media (max-width: 1120px) {
+      .wb-top-grid { grid-template-columns: 1fr; }
+    }
+
+    .wb-group {
+      margin: 0;
+      padding: 8px 11px 10px;
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      background: var(--paper);
       display: flex;
-      align-items: center;
-      gap: 5px;
-      flex-wrap: wrap;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .wb-group > legend {
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0 6px;
+    }
+
+    /* 3x2 uniform grid for policy scenario archetypes */
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    @media (max-width: 720px) {
+      .preset-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     .preset-pill {
       font: inherit;
       font-size: 11px;
+      line-height: 1.3;
       color: var(--ink);
-      background: var(--paper);
+      background: var(--sheet);
       border: 1px solid var(--rule);
       border-radius: 2px;
-      padding: 4px 9px;
+      padding: 5px 8px;
       cursor: pointer;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-block-size: 32px;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
     }
     .preset-pill:hover {
@@ -115,48 +155,134 @@
       border-color: var(--ink);
       font-weight: 500;
     }
-    .replay-bar {
-      margin-left: auto;
+    .preset-badge {
+      flex: none;
+      font-size: 9px;
+      letter-spacing: 0.04em;
+      padding: 1px 4px;
+      border-radius: 2px;
+      border: 1px solid var(--rule);
+      color: var(--muted);
+      background: var(--paper);
+      font-weight: 500;
+    }
+    .preset-pill.active .preset-badge {
+      background: color-mix(in oklab, var(--sheet) 16%, transparent);
+      border-color: color-mix(in oklab, var(--sheet) 35%, transparent);
+      color: var(--sheet);
+    }
+    .preset-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .wb-desc-row {
       display: flex;
       align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
     }
     .wb-select, .wb-date, .wb-text {
       font: inherit;
       font-size: 11px;
       color: var(--ink);
-      background: var(--paper);
+      background: var(--sheet);
       border: 1px solid var(--control);
       border-radius: 2px;
-      padding: 3px 7px;
-      min-block-size: 26px;
+      padding: 4px 7px;
+      min-block-size: 28px;
     }
-    .wb-select { max-width: 320px; }
-    .wb-text { flex: 1; min-width: 200px; background: var(--sheet); }
+    .wb-text { flex: 1; min-width: 0; }
+    .wb-select { width: 100%; min-width: 0; }
+    .wb-date { width: 100%; min-width: 0; }
 
-    .sliders-grid {
+    /* As-Of & Replay structured 2x2 grid */
+    .wb-time-grid {
       display: grid;
-      grid-template-columns: repeat(6, minmax(135px, 1fr));
-      gap: 8px 12px;
-      padding-top: 8px;
-      border-top: 1px solid var(--rule);
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+      gap: 8px 10px;
+      align-items: end;
+      flex: 1;
     }
-    @media (max-width: 1180px) {
-      .sliders-grid { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+    @media (max-width: 560px) {
+      .wb-time-grid { grid-template-columns: 1fr; }
+    }
+    .wb-field {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+    .wb-field-label {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+    }
+    .horizon-group {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .horizon-btn {
+      font: inherit;
+      font-size: 11px;
+      color: var(--ink);
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      padding: 4px 6px;
+      min-block-size: 28px;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .horizon-btn:hover { border-color: var(--ink); }
+    .horizon-btn.active {
+      background: var(--ink);
+      color: var(--sheet);
+      border-color: var(--ink);
+      font-weight: 500;
+    }
+
+    /* Grouped parameter matrix: 3 economic channels x 2 sliders each */
+    .param-groups-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 12px;
+    }
+    @media (max-width: 1120px) {
+      .param-groups-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     @media (max-width: 680px) {
-      .sliders-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
-      .replay-bar { margin-left: 0; }
+      .param-groups-grid { grid-template-columns: 1fr; }
+    }
+    .param-group {
+      margin: 0;
+      padding: 6px 10px 8px;
+      border: 1px solid var(--rule);
+      border-radius: 3px;
+      background: var(--paper);
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .param-group > legend {
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0 5px;
     }
     .slider-cell {
       display: flex;
       flex-direction: column;
-      gap: 3px;
-      background: var(--paper);
+      gap: 4px;
+      background: var(--sheet);
       border: 1px solid var(--rule);
       border-radius: 2px;
       padding: 5px 8px 6px;
+      min-width: 0;
     }
     .slider-top {
       display: flex;
@@ -165,17 +291,30 @@
       gap: 4px;
       font-size: 10.5px;
       color: var(--muted);
+      white-space: nowrap;
+    }
+    .slider-top > span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .slider-val {
       font-weight: 500;
       color: var(--ink);
       font-variant-numeric: tabular-nums;
+      flex: none;
     }
     .slider-cell input[type="range"] {
       width: 100%;
-      margin: 2px 0 0;
+      margin: 1px 0 0;
       accent-color: var(--blue);
       cursor: pointer;
+    }
+
+    .preset-group {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
     }
 
     .llm-bar {
@@ -198,7 +337,7 @@
     /* KPI Strip */
     .kpi-strip {
       display: grid;
-      grid-template-columns: 1.28fr 1.15fr 1.15fr 1.32fr;
+      grid-template-columns: 1.42fr 1.12fr 1.12fr 1.24fr;
       gap: 10px;
       font-family: "IBM Plex Mono", ui-monospace, monospace;
     }
@@ -539,66 +678,91 @@
     </header>
 
     <section class="workbench" aria-label="Scenario and shock controls">
-      <div class="wb-row">
-        <span class="wb-label" id="lbl-preset-group">预设政策冲击</span>
-        <div class="preset-group" id="preset-buttons"></div>
+      <div class="wb-top-grid">
+        <fieldset class="wb-group wb-scenario">
+          <legend id="lbl-preset-group">预设政策冲击 · Scenario Archetypes</legend>
+          <div class="preset-grid" id="preset-buttons"></div>
+          <div class="wb-desc-row">
+            <span class="wb-label" style="flex:none;">情景描述</span>
+            <input type="text" id="shock-title" class="wb-text" placeholder="输入政策假设或事件描述（AI 实盘模式下会直接注入各机构角色 Prompt）…">
+            <button type="button" class="ctxbar-btn" id="reset-btn" title="恢复当前市场预设默认参数" style="flex:none;">↻ 重置</button>
+          </div>
+        </fieldset>
 
-        <div class="replay-bar">
-          <span class="wb-label">历史事件回放</span>
-          <select id="replay-select" class="wb-select" aria-label="选择历史政策/宏观事件并叠加真实走势">
-            <option value="">— 最新盘面推演（无历史未来数据） —</option>
-          </select>
-          <select id="replay-anchor" class="wb-select" title="回放起点：冲击传导从事件前一日收盘起算；事后消化从事件当日收盘起算">
-            <option value="pre">冲击传导 (t-1 → t0..)</option>
-            <option value="post">事后消化 (t0 → t0+H)</option>
-          </select>
-          <input type="date" id="anchor-date" class="wb-date" title="自定义基准交易日 (As-Of Session Close)">
-        </div>
+        <fieldset class="wb-group wb-time">
+          <legend>基准时点与回放 · As-Of &amp; Replay</legend>
+          <div class="wb-time-grid">
+            <label class="wb-field">
+              <span class="wb-field-label">历史 / 锚点回放</span>
+              <select id="replay-select" class="wb-select" aria-label="选择历史政策/宏观事件并叠加真实走势">
+                <option value="">— 最新盘面推演（无历史未来数据） —</option>
+              </select>
+            </label>
+            <label class="wb-field">
+              <span class="wb-field-label">回放起点</span>
+              <select id="replay-anchor" class="wb-select" title="回放起点：冲击传导从事件前一日收盘起算；事后消化从事件当日收盘起算">
+                <option value="pre">冲击传导 (t-1 → t0..)</option>
+                <option value="post">事后消化 (t0 → t0+H)</option>
+              </select>
+            </label>
+            <label class="wb-field">
+              <span class="wb-field-label">基准交易日 (As-Of Close)</span>
+              <input type="date" id="anchor-date" class="wb-date" title="自定义基准交易日 (As-Of Session Close)">
+            </label>
+            <div class="wb-field">
+              <span class="wb-field-label">推演步数 (Horizon)</span>
+              <div class="horizon-group" id="horizon-pills">
+                <button type="button" class="horizon-btn" data-steps="3">3 交易日</button>
+                <button type="button" class="horizon-btn active" data-steps="5">5 交易日</button>
+                <button type="button" class="horizon-btn" data-steps="10">10 交易日</button>
+              </div>
+            </div>
+          </div>
+        </fieldset>
       </div>
 
-      <div class="wb-row">
-        <span class="wb-label">情景描述</span>
-        <input type="text" id="shock-title" class="wb-text" placeholder="输入政策假设或事件描述（在 AI 实盘模式下会直接注入各机构角色 Prompt）…">
-        <span class="wb-label">推演步数</span>
-        <div class="preset-group" id="horizon-pills">
-          <button type="button" class="preset-pill" data-steps="3">3 交易日</button>
-          <button type="button" class="preset-pill active" data-steps="5">5 交易日</button>
-          <button type="button" class="preset-pill" data-steps="10">10 交易日</button>
-        </div>
-        <button type="button" class="ctxbar-btn" id="reset-btn" title="恢复当前市场预设默认参数">重置参数</button>
-      </div>
+      <div class="param-groups-grid">
+        <fieldset class="param-group">
+          <legend>利率与汇率渠道 · Rates &amp; FX</legend>
+          <div class="slider-cell">
+            <div class="slider-top"><span id="lbl-sl-rate">10Y 利率冲击</span><span class="slider-val" id="val-rate">+6.0 bp</span></div>
+            <input type="range" id="sl-rate" min="-40" max="40" step="1" value="6">
+          </div>
+          <div class="slider-cell">
+            <div class="slider-top"><span id="lbl-sl-fx">美元冲击 DXY</span><span class="slider-val" id="val-fx">+0.65%</span></div>
+            <input type="range" id="sl-fx" min="-2.0" max="2.0" step="0.05" value="0.65">
+          </div>
+        </fieldset>
 
-      <div class="sliders-grid">
-        <div class="slider-cell">
-          <div class="slider-top"><span id="lbl-sl-rate">10Y 利率冲击</span><span class="slider-val" id="val-rate">+6.0 bp</span></div>
-          <input type="range" id="sl-rate" min="-40" max="40" step="1" value="6">
-        </div>
-        <div class="slider-cell">
-          <div class="slider-top"><span id="lbl-sl-fx">美元冲击 DXY</span><span class="slider-val" id="val-fx">+0.65%</span></div>
-          <input type="range" id="sl-fx" min="-2.0" max="2.0" step="0.05" value="0.65">
-        </div>
-        <div class="slider-cell">
-          <div class="slider-top"><span id="lbl-sl-infl">通胀意外</span><span class="slider-val" id="val-infl">+1.35 σ</span></div>
-          <input type="range" id="sl-infl" min="-3.0" max="3.0" step="0.05" value="1.35">
-        </div>
-        <div class="slider-cell">
-          <div class="slider-top"><span id="lbl-sl-grow">增长意外</span><span class="slider-val" id="val-grow">-0.90 σ</span></div>
-          <input type="range" id="sl-grow" min="-3.0" max="3.0" step="0.05" value="-0.90">
-        </div>
-        <div class="slider-cell">
-          <div class="slider-top"><span id="lbl-sl-tariff">新增关税税率</span><span class="slider-val" id="val-tariff">25.0%</span></div>
-          <input type="range" id="sl-tariff" min="0" max="50" step="1" value="25">
-        </div>
-        <div class="slider-cell">
-          <div class="slider-top"><span id="lbl-sl-unc">政策不确定性</span><span class="slider-val" id="val-unc">+1.60 σ</span></div>
-          <input type="range" id="sl-unc" min="-1.5" max="3.0" step="0.05" value="1.60">
-        </div>
+        <fieldset class="param-group">
+          <legend>宏观基本面意外 · Macro Surprises</legend>
+          <div class="slider-cell">
+            <div class="slider-top"><span id="lbl-sl-infl">通胀意外</span><span class="slider-val" id="val-infl">+1.35 σ</span></div>
+            <input type="range" id="sl-infl" min="-3.0" max="3.0" step="0.05" value="1.35">
+          </div>
+          <div class="slider-cell">
+            <div class="slider-top"><span id="lbl-sl-grow">增长意外</span><span class="slider-val" id="val-grow">-0.90 σ</span></div>
+            <input type="range" id="sl-grow" min="-3.0" max="3.0" step="0.05" value="-0.90">
+          </div>
+        </fieldset>
+
+        <fieldset class="param-group">
+          <legend>贸易壁垒与不确定性 · Trade &amp; Policy</legend>
+          <div class="slider-cell">
+            <div class="slider-top"><span id="lbl-sl-tariff">新增关税税率</span><span class="slider-val" id="val-tariff">25.0%</span></div>
+            <input type="range" id="sl-tariff" min="0" max="50" step="1" value="25">
+          </div>
+          <div class="slider-cell">
+            <div class="slider-top"><span id="lbl-sl-unc">政策不确定性</span><span class="slider-val" id="val-unc">+1.60 σ</span></div>
+            <input type="range" id="sl-unc" min="-1.5" max="3.0" step="0.05" value="1.60">
+          </div>
+        </fieldset>
       </div>
 
       <div class="llm-bar" id="llm-bar" hidden>
         <div class="wb-row">
           <span class="wb-label">AI 角色模型编排</span>
-          <select id="llm-models" class="wb-select">
+          <select id="llm-models" class="wb-select" style="width:auto;min-width:260px;">
             <option value="deepseek-chat,qwen3.8-flash" selected>异构混编：DeepSeek-Chat × Qwen3.8-Flash</option>
             <option value="deepseek-chat">全角色：DeepSeek-Chat</option>
             <option value="qwen3.8-flash">全角色：Qwen3.8-Flash</option>
@@ -832,12 +996,17 @@
 
       function syncSliderLabels() {
         const s = readSliders();
-        el("#val-rate").textContent = fmtSigned(s.rate_bps, 1, " bp");
-        el("#val-fx").textContent = fmtSigned(s.fx_pct, 2, "%");
-        el("#val-infl").textContent = fmtSigned(s.inflation_z, 2, " σ");
-        el("#val-grow").textContent = fmtSigned(s.growth_z, 2, " σ");
-        el("#val-tariff").textContent = s.tariff_pct.toFixed(1) + "%";
-        el("#val-unc").textContent = fmtSigned(s.uncertainty_z, 2, " σ");
+        const setVal = (id, text, cls = "") => {
+          const node = el(id);
+          node.textContent = text;
+          node.className = "slider-val" + (cls ? " " + cls : "");
+        };
+        setVal("#val-rate", fmtSigned(s.rate_bps, 1, " bp"), s.rate_bps > 0 ? "neg" : (s.rate_bps < 0 ? "pos" : ""));
+        setVal("#val-fx", fmtSigned(s.fx_pct, 2, "%"), s.fx_pct > 0 ? "warn" : (s.fx_pct < 0 ? "pos" : ""));
+        setVal("#val-infl", fmtSigned(s.inflation_z, 2, " σ"), s.inflation_z > 0.2 ? "warn" : (s.inflation_z < -0.2 ? "pos" : ""));
+        setVal("#val-grow", fmtSigned(s.growth_z, 2, " σ"), s.growth_z > 0 ? "pos" : (s.growth_z < 0 ? "neg" : ""));
+        setVal("#val-tariff", s.tariff_pct.toFixed(1) + "%", s.tariff_pct > 0 ? "neg" : "");
+        setVal("#val-unc", fmtSigned(s.uncertainty_z, 2, " σ"), s.uncertainty_z > 0 ? "warn" : (s.uncertainty_z < 0 ? "pos" : ""));
       }
 
       function applyShockToControls(shock) {
@@ -1428,7 +1597,10 @@
         el("#anchor-date").min = block.min_date;
 
         el("#preset-buttons").innerHTML = (block.presets || []).map((p) =>
-          `<button type="button" class="preset-pill ${p.id === activePreset ? "active" : ""}" data-id="${escapeHtml(p.id)}">${escapeHtml(p.short_label)}</button>`
+          `<button type="button" class="preset-pill ${p.id === activePreset ? "active" : ""}" data-id="${escapeHtml(p.id)}" title="${escapeHtml(p.title || p.short_label)}">` +
+          `<span class="preset-badge">${escapeHtml(p.badge || "SCEN")}</span>` +
+          `<span class="preset-text">${escapeHtml(p.short_label)}</span>` +
+          `</button>`
         ).join("");
 
         renderReplaySelectOptions(anchorVal);

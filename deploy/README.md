@@ -1,76 +1,92 @@
-# Cloudflare 部署（数据在 D1）
+# Cloudflare 部署（D1 + Worker + Static Assets）
 
-信号页的三个市场（`^NDX` / `QQQ` / `000001.SS`）已经改成**从 D1 读数据**，
-不再读任何 `artifacts/*.json`。D1 是 Cloudflare 的 SQLite，免费额度内。
+线上数据库和本地 `data/forecast.db` **同一套结构、同一份内容**：
+
+| 表 | 内容 | 本地行数（示例） |
+|---|---|---|
+| `bars` | 全品种客观日线 OHLCV | ~107,600 |
+| `signals` | 三个信号市场的信号列 + `factors_packed` | ~13,700 |
+| `news` | 每日新闻文档 | ~127,900 |
+| `agent_eval` | LLM 盲测结果扁平表 | ~1,150 |
+| `chat_messages` | DeepSeek × Qwen 群聊记录 | 少量 |
+
+结构定义来自 `src/forecast_log/db.py::ensure_schema`，部署用的 SQL 是
+`deploy/schema.sql`（全部 `CREATE TABLE IF NOT EXISTS`，可重复执行）。本地库新增表/列时，
+两处要一起改。
 
 ## 一条命令
 
 ```bash
-INGEST_TOKEN=$(openssl rand -hex 24) make cf
+make cf              # 常规部署：建库（不存在时）、建表、空库时灌种子、部署、增量同步
+RESEED=1 make cf     # 删掉线上 D1，按本地 data/forecast.db 重新全量导入
 ```
 
-`scripts/deploy_cf.sh` 按顺序做 8 件事，任何一步不通就停下并说清楚缺什么：
+`scripts/deploy_cf.sh` 的步骤：
 
-1. 检查能不能连上 `api.cloudflare.com`
-2. 检查 `wrangler login` 是否有效
-3. 打包 `deploy/dist`（页面 + 字体 + 图表库，6.22 MB）
-4. D1 建库（已存在就复用），把 `database_id` 写回 `wrangler.jsonc`
-5. 建表：`deploy/schema.sql`（全是 `CREATE TABLE IF NOT EXISTS`，可重复跑）
+1. 检查 `wrangler login`
+2. `scripts/build_static.py` + `scripts/build_d1_payloads.py` 打包页面与派生数据
+3. D1 建库/复用（`RESEED=1` 时先 `wrangler d1 delete`），把 `database_id` 写回 `wrangler.jsonc`
+4. `wrangler d1 execute --file=deploy/schema.sql`
+5. 空库时 `scripts/export_d1_seed.py` 生成 `deploy/seed/*.sql` 并逐片导入
 6. `wrangler secret put INGEST_TOKEN`
-7. `wrangler deploy`，从输出里抓出 `*.workers.dev` 地址
-8. `scripts/publish_d1.py` 把当天算好的信号写进 D1
+7. `wrangler deploy`
+8. `scripts/publish_d1.py` 做一次增量同步（刚灌过种子时基本空转）
 
-## 数据怎么进的库
+`deploy/seed/` 是 70 MB 左右的生成物，已在 `.gitignore` 里；`make seed` 可单独重新生成。
 
-```
-本地 Python 算信号          线上
-──────────────            ─────────────────────────────
-artifacts/cross*.json  →  /api/ingest  →  D1 表
-                                            ↓
-                          页面 → /api/cross/ndx|qqq|ssec → Worker 拼 JSON 返回
-```
+## 数据怎么读
 
-- **写**：`scripts/publish_d1.py`。它把 JSON 读进来、拆成行，用一条条 `INSERT` 通过
-  `/api/ingest` 发给 Worker，Worker 用 Bearer Token 校验后写 D1。本地和线上走同一套代码。
-  `/api/ingest` 只接受 `INSERT INTO session|market|market_node|contexts|factor_key`，
-  别的 SQL 一律 400，token 泄漏也不能删库。
-- **读**：Worker 从 D1 查出来，按原来的 JSON 形状拼回去，页面代码只改了 URL。
+Worker 直接查上面五张表，不再有 `market` / `session` / `timeline_*` 这些旧表：
 
-## 表结构（`deploy/schema.sql`）
-
-| 表 | 干什么 | 行数 |
+| 接口 | 数据来源 | 说明 |
 |---|---|---|
-| `market` | 每个标签页一行：标的、问题、规则、首末交易日 | 3 |
-| `session` | 每个交易日一行：OHLCV + 信号列 + `factors_packed` | 13,737 |
-| `factor_key` | `factors_packed` 的哪个 4 bit 槽位是哪个开关 | 29 |
-| `contexts` | 页面上那些开关的定义（标签、阈值、可用起点） | 27 |
-| `market_node` | 所有嵌套值，一行一个标量，路径带下标（`bands.0.hit`） | 386 |
+| `/api/cross/ndx\|qqq\|ssec` | `signals LEFT JOIN bars` | 逐日序列、命中率汇总、A 股分档在 Worker 里算 |
+| `/api/agent/deepseek\|qwen` | `agent_eval` | Brier / LogLoss / ECE 在 Worker 里重算 |
+| `/api/timeline` | `_meta/timeline.json` 静态资源 | VXN 类比模型是 ~900 行 numpy，部署时算好 |
+| `/api/state` | 五张表 | 给增量同步用的水位线 |
+| `/api/chat/threads\|messages` | `chat_messages` | 群聊历史 |
 
-`factors_packed` 是把 8–11 个开关压进一个整数，每个开关占 4 bit（`riskoff_hits`
-最大是 5，不是 0/1）。11 个开关 44 bit，还在 JS 安全整数范围内——所以一天一行就够，
-不用给每个开关建一行（那会是 11 万行，超过免费额度每天 10 万行的写入上限）。
+`_meta/` 下的 `cross-*.json` 只放**静态定义**（问题文案、开关列表、日历/新闻来源说明）；
+每天的数值仍然来自 D1。`_meta/timeline.json` 是唯一整份缓存的派生数据——它无法在
+Worker 的 CPU 预算里重算，数据变了要重新部署静态资源（`make cf`）。
 
-没有任何一列存 JSON 字符串：`market_node` 的 `path` 就是结构本身，
-`kind` 说明该按数字、整数、布尔还是字符串还原。
+`/api/chat/run`（真正的多模型群聊）仍只在本地 Python 服务里有，线上 Worker 不跑 LLM。
 
-## 现在还没搬的两页
+## 增量同步
 
-`/vxn`（`artifacts/timeline.json`，3.5 MB，七层嵌套）和 `/agent`
-（两份 `agent_eval*_summary.json`）仍然读静态文件。把这两份也搬进 D1 需要各自的表
-（timeline 是 rolling / ladder / forward / vxn / ndx / daily / questions 七组序列），
-是下一步的工作，不影响信号页。
+`scripts/publish_d1.py` 不是全量上传：
 
-## 本地验证过什么
+- `bars`：每个品种回传最近 20 天的尾部（覆盖盘中修订和 `is_closed`）
+- `signals`：最近 20 天 + 所有 `outcome IS NULL` 的行
+- `news`：最近 3 天的 `as_of`（同一天可能补抓文档）
+- `agent_eval`：`COUNT` 或 `generated_at` 变了才整份重发
+- `chat_messages`：水位线之后的新消息
 
-`wrangler dev` + 本地 D1（不需要登录、不需要网络）：
+写入走 `POST /api/ingest`，Worker 只接受对五张表的 `INSERT [OR REPLACE|IGNORE]`，
+单条 SQL 上限 95 KB。token 泄漏也删不了库。
 
-- 三个市场写入 D1 后，`/api/cross/<market>` 返回的 JSON 与 Python 产物**逐字段一致**
-  （13,737 个交易日 × 全部数组、components、summary、contexts、context、bands、comparison）
-- 页面在浏览器里渲染正常，图表、统计表、开关都从数据库出来
-- `/api/ingest` 无 token → 401，非 INSERT → 400，重复推送先 `DELETE` 再写
+## `/api/refresh`
 
-## 关于 /api/refresh
+线上只做两件安全的事：从 Yahoo 补 `bars`，以及按新 K 线重算已存在信号行的
+`entry/close3/close5/hit3/outcome/peak`。**它不会生成新交易日的信号**——`flag` / `score`
+依赖完整的 Python 因子计算。要推进到新的一天：
 
-线上这个按钮仍然返回 501。原因没变：它是 31 秒的 numpy 计算，Workers 的 CPU 预算
-放不下，容器才行。现在的做法是本地 `make refresh`（算完写 `artifacts/`），
-再 `make cf`（或只重跑第 8 步 `publish_d1.py`）把新数据推进 D1。
+```bash
+make refresh     # 本地拉行情并重算信号
+make cf          # 重新打包派生数据 + 增量同步
+```
+
+## 本地验证
+
+`wrangler dev --local` + 本地 D1，逐接口和 Python 产物对比：
+
+- `/api/cross/ndx|qqq|ssec`、`/api/agent/deepseek|qwen`、`/api/timeline` 与本地
+  `load_cross_market` / `load_agent_eval` / `load_timeline` **逐字段一致**（含浮点末位；
+  `round()` 和 `statistics.fmean` 都在 Worker 里按 Python 语义实现）
+- 页面 `/`、`/ndx`、`/qqq`、`/a-shares`、`/vxn`、`/agent`、`/sim` 均返回 200
+- 群聊历史、`/api/state` 从 D1 读出
+
+## 额度
+
+全库约 100 MB，远低于 D1 单库上限。`news` 占大头（约 62 MB），写入主要发生在全量
+seed；日常增量每天只有几十到几百行。

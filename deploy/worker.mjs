@@ -1,17 +1,26 @@
 /**
  * Cloudflare Worker for forecast-log.
  *
- * Three jobs:
- *   1. Serve the pages on clean URLs, with all dashboard data read from D1 (Cloudflare's
- *      SQLite), not from static JSON files.
- *   2. Expose GET/POST /api/refresh (and /api/fetch) to incrementally fetch missing
- *      daily bars from Yahoo Finance after D1's latest date and upsert only the
- *      new/unresolved tail rows into D1.
- *   3. Expose GET /api/state and POST /api/ingest for strictly incremental, append-only
- *      syncing from publish_d1.py (never truncating historical tables).
+ * Data model: the same five tables as the local `data/forecast.db`
+ * (`bars`, `signals`, `news`, `agent_eval`, `chat_messages`). Nothing else lives in D1.
+ *
+ * What is read from D1 vs. served as an asset:
+ *   - /api/cross/<market>  D1: signals + bars joined on (instrument, date). The per-day
+ *                          series, hit-rate summaries and A-share bands are computed here.
+ *                          `_meta/cross-<market>.json` only supplies the static bits
+ *                          (question text, context switch definitions, provenance).
+ *   - /api/agent/<dataset> D1: the flat `agent_eval` table. Brier / log-loss / ECE are
+ *                          recomputed here, exactly like the local Python server.
+ *   - /api/timeline        Asset: the VXN analogue-model fan charts are ~900 lines of
+ *                          numpy and are built once at deploy time by
+ *                          `scripts/build_d1_payloads.py`.
+ *   - /api/state, /api/chat/*, /api/ingest, /api/refresh use the five tables directly.
  */
 
 const MARKET_BY_SLUG = { ndx: "ndx", qqq: "qqq", ssec: "ssec", "a-shares": "ssec" };
+const INSTRUMENT = { ndx: "^NDX", qqq: "QQQ", ssec: "000001.SS" };
+const HORIZON = 5;
+const HOLDOUT = "2015-01-01";
 
 const PAGES = {
   "/": "/web/points.html",
@@ -52,6 +61,7 @@ const LEGACY = {
 const ASSET_FILES = new Set(["/theme.css", "/theme.js", "/ctxbar.js"]);
 const ASSET_DIRS = ["/fonts/", "/vendor/"];
 
+const PRICE_COLUMNS = new Set(["open", "high", "low", "close"]);
 const ARRAY_COLUMNS = [
   "open",
   "high",
@@ -64,11 +74,11 @@ const ARRAY_COLUMNS = [
   "close3",
   "close5",
   "hit3",
-  "score",
-  "threshold",
   "flag",
   "flag_price_only",
   "news_veto",
+  "score",
+  "threshold",
   "outcome",
   "target",
   "peak",
@@ -86,27 +96,32 @@ export default {
     if (api) {
       const market = MARKET_BY_SLUG[api[1]];
       if (!market) return json({ ok: false, error: "unknown market" }, 404);
-      const doc = await loadMarket(env, market);
-      if (!doc) return json({ ok: false, error: `no rows for ${market}; run scripts/publish_d1.py` }, 404);
+      const doc = await loadMarket(env, url, market);
+      if (!doc) return json({ ok: false, error: `no rows for ${market}; run make cf` }, 404);
       return json(doc);
     }
 
     if (clean === "/api/timeline") {
-      const doc = await loadTimeline(env);
-      if (!doc) return json({ ok: false, error: "no timeline rows; run scripts/publish_d1.py" }, 404);
-      return json(doc);
+      const res = await env.ASSETS.fetch(new Request(new URL("/_meta/timeline.json", url)));
+      if (!res.ok) return json({ ok: false, error: "timeline payload missing; run make cf" }, 404);
+      return new Response(res.body, {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+      });
     }
 
     const agentApi = clean.match(/^\/api\/agent\/([a-z0-9_-]+)$/);
     if (agentApi) {
       const doc = await loadAgentEval(env, agentApi[1]);
-      if (!doc) return json({ ok: false, error: `no agent rows for ${agentApi[1]}; run scripts/publish_d1.py` }, 404);
+      if (!doc) return json({ ok: false, error: `no agent rows for ${agentApi[1]}; run make cf` }, 404);
       return json(doc);
     }
 
-    if (clean === "/api/state") {
-      return getD1State(env);
-    }
+    if (clean === "/api/state") return getD1State(env);
+
+    if (clean === "/api/chat/threads") return chatThreads(env, url);
+
+    if (clean === "/api/chat/messages") return chatMessages(env, url);
 
     if (clean === "/api/ingest") {
       if (request.method !== "POST") return json({ ok: false, error: "POST only" }, 405);
@@ -140,6 +155,8 @@ export default {
   },
 };
 
+// ------------------------------------------------------------------ utilities
+
 function redirect(location) {
   return new Response(null, { status: 301, headers: { Location: location, "Cache-Control": "no-store" } });
 }
@@ -151,117 +168,793 @@ function json(body, status = 200) {
   });
 }
 
-function cast(kind, value) {
-  if (kind === "list") return [];
-  if (kind === "obj") return {};
+/**
+ * Python's round(value, digits): correctly-rounded decimal, ties to even.
+ * `Math.round(x * 10**d)` is not the same thing — it rounds the scaled binary
+ * product, which drifts by one cent on values such as 2941.115.
+ */
+function rnd(value, digits) {
   if (value === null || value === undefined) return null;
-  if (kind === "num") return Number.parseFloat(value);
-  if (kind === "int") return Number.parseInt(value, 10);
-  if (kind === "bool") return value === "1" || value === "true";
-  return value;
+  const x = Number(value);
+  if (!Number.isFinite(x)) return null;
+  const negative = x < 0;
+  const abs = Math.abs(x);
+  const text = abs.toFixed(digits + 25);
+  const dot = text.indexOf(".");
+  const integerPart = text.slice(0, dot);
+  const fraction = text.slice(dot + 1);
+  const head = fraction.slice(0, digits);
+  const rest = fraction.slice(digits);
+  let scaled = BigInt(integerPart + head);
+  const first = rest[0] || "0";
+  const tail = rest.slice(1);
+  let roundUp = false;
+  if (first > "5") roundUp = true;
+  else if (first === "5") {
+    if (tail.replace(/0+$/, "") !== "") roundUp = true;
+    else roundUp = scaled % 2n === 1n;
+  }
+  if (roundUp) scaled += 1n;
+  const out = Number(scaled) / 10 ** digits;
+  return negative ? -out : out;
 }
 
-function setPath(root, path, value) {
-  const parts = path.includes("\x1f") ? path.split("\x1f") : path.split(".");
-  let cursor = root;
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    const key = /^\d+$/.test(parts[i]) ? Number(parts[i]) : parts[i];
-    if (cursor[key] === undefined || cursor[key] === null) {
-      cursor[key] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+/** math.fsum: exactly-rounded float summation (Python's `statistics.fmean` uses it). */
+function fsum(values) {
+  const partials = [];
+  for (let value of values) {
+    let x = Number(value);
+    let index = 0;
+    for (let j = 0; j < partials.length; j += 1) {
+      let y = partials[j];
+      if (Math.abs(x) < Math.abs(y)) {
+        const swap = x;
+        x = y;
+        y = swap;
+      }
+      const hi = x + y;
+      const lo = y - (hi - x);
+      if (lo !== 0) {
+        partials[index] = lo;
+        index += 1;
+      }
+      x = hi;
     }
-    cursor = cursor[key];
+    partials.length = index;
+    partials.push(x);
   }
-  const last = parts[parts.length - 1];
-  cursor[/^\d+$/.test(last) ? Number(last) : last] = value;
+  let n = partials.length - 1;
+  let hi = partials[n] ?? 0;
+  let lo = 0;
+  while (n > 0) {
+    const x = hi;
+    n -= 1;
+    hi = x + partials[n];
+    lo = partials[n] - (hi - x);
+    if (lo !== 0) break;
+  }
+  if (n > 0 && ((lo < 0 && partials[n - 1] < 0) || (lo > 0 && partials[n - 1] > 0))) {
+    const y = lo * 2;
+    const x = hi + y;
+    if (y === x - hi) hi = x;
+  }
+  return hi;
 }
+
+function mean(values) {
+  return values.length ? fsum(values) / values.length : null;
+}
+
+function sum(values) {
+  return values.reduce((acc, value) => acc + value, 0);
+}
+
+async function assetJson(env, url, path) {
+  const res = await env.ASSETS.fetch(new Request(new URL(path, url)));
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ------------------------------------------------------------------ /api/cross
+
+async function loadMarket(env, url, market) {
+  const instrument = INSTRUMENT[market];
+  const res = await env.DB.prepare(
+    `SELECT s.*, b.open, b.high, b.low, b.close, b.volume,
+            COALESCE(b.is_closed, 1) AS is_closed,
+            COALESCE(NULLIF(s.fetched_at, ''), b.fetched_at, '') AS eff_fetched_at
+     FROM signals s
+     LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
+     WHERE s.market = ?
+     ORDER BY s.date ASC`,
+  )
+    .bind(instrument, market)
+    .all();
+  const rows = res.results ?? [];
+  if (!rows.length) return null;
+
+  const meta = (await assetJson(env, url, `/_meta/cross-${market}.json`)) || {};
+  const ndxDoc = market === "ndx" ? null : await loadMarketRows(env, "ndx");
+
+  const doc = {};
+  if (meta.name) doc.name = meta.name;
+  doc.instrument = meta.instrument || instrument;
+  doc.question = meta.question;
+  doc.fetched_at = String(rows[rows.length - 1].eff_fetched_at || "");
+  doc.first_session = rows[0].date;
+  doc.last_session = rows[rows.length - 1].date;
+  doc.time = rows.map((row) => row.date);
+
+  for (const column of ARRAY_COLUMNS) {
+    if (!(column in rows[0])) continue;
+    const values = rows.map((row) =>
+      PRICE_COLUMNS.has(column) && row[column] !== null ? rnd(row[column], 2) : row[column],
+    );
+    if (values.some((value) => value !== null && value !== undefined)) doc[column] = values;
+  }
+
+  const contexts = meta.contexts || [];
+  doc.components = {};
+  for (let position = 0; position < contexts.length; position += 1) {
+    doc.components[contexts[position].key] = rows.map((row) =>
+      Math.floor(Number(row.factors_packed || 0) / 2 ** (4 * position)) % 16,
+    );
+  }
+  doc.contexts = contexts;
+
+  const last = rows[rows.length - 1];
+  if (market === "ssec") {
+    const ssec = ssecSummary(rows, ndxDoc);
+    doc.summary = ssec.summary;
+    doc.bands = ssec.bands;
+    if (ssec.reference) doc.reference = ssec.reference;
+    doc.signals_seen = ssec.signalsSeen;
+    doc.latest = {
+      date: last.date,
+      open: rnd(last.open, 2),
+      high: rnd(last.high, 2),
+      low: rnd(last.low, 2),
+      close: rnd(last.close, 2),
+      volume: last.volume,
+      us_date: last.us_date || previousSession(ndxDoc?.time, last.date),
+      flag: Number(last.flag || 0),
+      is_closed: Boolean(last.is_closed),
+    };
+  } else {
+    doc.summary = usTally(rows, "flag");
+    doc.summary_price_only = usTally(rows, "flag_price_only");
+    if (meta.calendar) doc.calendar = meta.calendar;
+    if (meta.news) {
+      doc.news = {
+        ...meta.news,
+        vetoed_signals: sum(rows.filter((row) => row.outcome !== null).map((row) => Number(row.news_veto || 0))),
+      };
+    }
+    if (meta.context) doc.context = meta.context;
+    if (market === "qqq" && ndxDoc && sameArray(ndxDoc.time, doc.time)) {
+      doc.comparison = comparison(ndxDoc, doc);
+    }
+    doc.latest = {
+      date: last.date,
+      open: rnd(last.open, 2),
+      high: rnd(last.high, 2),
+      low: rnd(last.low, 2),
+      close: rnd(last.close, 2),
+      volume: last.volume,
+      score: rnd(last.score, 4),
+      threshold: rnd(last.threshold, 4),
+      flag: last.flag === null ? 0 : Number(last.flag || 0),
+      flag_price_only: last.flag_price_only === null ? 0 : Number(last.flag_price_only || 0),
+      news_veto: Boolean(last.news_veto),
+      is_closed: Boolean(last.is_closed),
+    };
+  }
+
+  return doc;
+}
+
+/** Load only the per-session rows (no meta) — used for the NDX cross-reference. */
+async function loadMarketRows(env, market) {
+  const instrument = INSTRUMENT[market];
+  const res = await env.DB.prepare(
+    `SELECT s.*, b.open, b.high, b.low, b.close, b.volume,
+            COALESCE(b.is_closed, 1) AS is_closed
+     FROM signals s
+     LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
+     WHERE s.market = ?
+     ORDER BY s.date ASC`,
+  )
+    .bind(instrument, market)
+    .all();
+  const rows = res.results ?? [];
+  if (!rows.length) return null;
+  const doc = {
+    instrument,
+    time: rows.map((row) => row.date),
+    flag: rows.map((row) => row.flag),
+    flag_price_only: rows.map((row) => row.flag_price_only),
+    outcome: rows.map((row) => row.outcome),
+    hit3: rows.map((row) => row.hit3),
+    close: rows.map((row) => rnd(row.close, 2)),
+    entry: rows.map((row) => row.entry),
+    target: rows.map((row) => row.target),
+    peak: rows.map((row) => rnd(row.peak, 2)),
+    score: rows.map((row) => row.score),
+    summary: usTally(rows, "flag"),
+  };
+  return doc;
+}
+
+function sameArray(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function previousSession(days, day) {
+  if (!days || !days.length) return null;
+  let low = 0;
+  let high = days.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (days[mid] < day) low = mid + 1;
+    else high = mid;
+  }
+  return low > 0 ? days[low - 1] : null;
+}
+
+function usTally(rows, flagColumn) {
+  const resolved = rows.filter((row) => row.outcome !== null && row.outcome !== undefined);
+
+  const split = (sample) => {
+    if (!sample.length) return { hit3: null, hit45: null, miss: null };
+    const three = sample.filter((row) => Number(row.hit3) === 1).length / sample.length;
+    const later = sample.filter((row) => Number(row.outcome) === 1 && row.hit3 != null && Number(row.hit3) === 0).length / sample.length;
+    return { hit3: rnd(three, 4), hit45: rnd(later, 4), miss: rnd(1 - three - later, 4) };
+  };
+
+  const flagged = resolved.filter((row) => Number(row[flagColumn] || 0));
+  const held = resolved.filter((row) => row.date >= HOLDOUT);
+  const heldFlag = held.filter((row) => Number(row[flagColumn] || 0));
+  const fSplit = split(flagged);
+  const bSplit = split(resolved);
+
+  return {
+    n: resolved.length,
+    base_rate: resolved.length ? rnd(mean(resolved.map((row) => Number(row.outcome))) , 4) : null,
+    flagged: flagged.length,
+    hit: flagged.length ? rnd(mean(flagged.map((row) => Number(row.outcome))), 4) : null,
+    holdout_n: held.length,
+    holdout_base_rate: held.length ? rnd(mean(held.map((row) => Number(row.outcome))), 4) : null,
+    holdout_flagged: heldFlag.length,
+    holdout_hit: heldFlag.length ? rnd(mean(heldFlag.map((row) => Number(row.outcome))), 4) : null,
+    hit3: fSplit.hit3,
+    hit45: fSplit.hit45,
+    miss: fSplit.miss,
+    base3: bSplit.hit3,
+    base45: bSplit.hit45,
+    holdout_from: HOLDOUT,
+  };
+}
+
+function ssecSummary(rows, ndxDoc) {
+  const n = rows.length;
+
+  const hit3At = (index) => {
+    const row = rows[index];
+    if (row.hit3 !== null && row.hit3 !== undefined) return Number(row.hit3) === 1;
+    if (index + 3 < n && row.close !== null && rows[index + 3].close !== null) {
+      return Number(rows[index + 3].close) > Number(row.close);
+    }
+    return false;
+  };
+
+  const hit5At = (index) => {
+    const row = rows[index];
+    if (row.outcome !== null && row.outcome !== undefined) return Number(row.outcome) === 1;
+    if (index + 5 < n && row.close !== null && rows[index + 5].close !== null) {
+      return Number(rows[index + 5].close) > Number(row.close);
+    }
+    return false;
+  };
+
+  const split = (indices) => {
+    if (!indices.length) return { hit3: null, hit45: null, miss: null };
+    const three = indices.filter((index) => hit3At(index)).length / indices.length;
+    const later = indices.filter((index) => !hit3At(index) && hit5At(index)).length / indices.length;
+    return { hit3: rnd(three, 4), hit45: rnd(later, 4), miss: rnd(1 - three - later, 4) };
+  };
+
+  const windowSummary = (low) => {
+    const usable = [];
+    rows.forEach((row, index) => {
+      if (row.date >= low && row.outcome !== null && row.outcome !== undefined) usable.push(index);
+    });
+    const chosen = usable.filter((index) => Number(rows[index].flag || 0));
+    const base = usable.length ? rnd(mean(usable.map((index) => Number(rows[index].outcome))), 4) : null;
+    const hit = chosen.length ? rnd(mean(chosen.map((index) => Number(rows[index].outcome))), 4) : null;
+    const cSplit = split(chosen);
+    const uSplit = split(usable);
+    return {
+      sessions: usable.length,
+      signals: chosen.length,
+      hit,
+      base_rate: base,
+      lift: hit === null || base === null ? null : rnd(hit - base, 4),
+      hit3: cSplit.hit3,
+      hit45: cSplit.hit45,
+      miss: cSplit.miss,
+      base3: uSplit.hit3,
+      base45: uSplit.hit45,
+    };
+  };
+
+  const bands = [];
+  let reference = null;
+  if (ndxDoc && ndxDoc.time && ndxDoc.time.length && ndxDoc.score) {
+    const usDays = ndxDoc.time;
+    const usScores = ndxDoc.score;
+    const scored = [];
+    let pointer = 0;
+    for (const row of rows) {
+      if (!Number(row.flag || 0) || row.outcome === null || row.outcome === undefined) continue;
+      const day = row.date;
+      while (pointer + 1 < usDays.length && usDays[pointer + 1] < day) pointer += 1;
+      if (usScores[pointer] !== null && usScores[pointer] !== undefined) {
+        scored.push([Number(usScores[pointer]), Number(row.outcome)]);
+      }
+    }
+    if (scored.length) {
+      const ordered = scored.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const size = Math.floor(ordered.length / 10);
+      if (size > 0) {
+        for (let band = 0; band < 10; band += 1) {
+          const chunk = band < 9 ? ordered.slice(band * size, (band + 1) * size) : ordered.slice(9 * size);
+          bands.push({ band: band + 1, hit: rnd(mean(chunk.map(([, hit]) => hit)), 4) });
+        }
+      }
+    }
+    const ns = ndxDoc.summary || {};
+    if (ns.hit !== null && ns.hit !== undefined && ns.base_rate !== null && ns.base_rate !== undefined) {
+      reference = {
+        instrument: "^NDX",
+        signals: ns.flagged,
+        hit: ns.hit,
+        base_rate: ns.base_rate,
+        lift: rnd(ns.hit - ns.base_rate, 4),
+        holdout_signals: ns.holdout_flagged,
+        holdout_hit: ns.holdout_hit,
+        holdout_base_rate: ns.holdout_base_rate,
+        holdout_lift:
+          ns.holdout_hit !== null && ns.holdout_hit !== undefined &&
+          ns.holdout_base_rate !== null && ns.holdout_base_rate !== undefined
+            ? rnd(ns.holdout_hit - ns.holdout_base_rate, 4)
+            : null,
+      };
+    }
+  }
+
+  return {
+    summary: {
+      all: windowSummary("1900"),
+      holdout: windowSummary(HOLDOUT),
+      holdout_from: HOLDOUT,
+    },
+    bands,
+    reference,
+    signalsSeen: rows.filter((row) => Number(row.flag || 0)).length,
+  };
+}
+
+function instrumentRow(doc) {
+  const summary = doc.summary;
+  const hit = summary.hit;
+  const base = summary.base_rate;
+  const heldHit = summary.holdout_hit;
+  const heldBase = summary.holdout_base_rate;
+  return {
+    instrument: doc.instrument,
+    signals: summary.flagged,
+    precision: hit,
+    base_rate: base,
+    lift: hit === null || base === null ? null : rnd(hit - base, 4),
+    holdout_signals: summary.holdout_flagged,
+    holdout_precision: heldHit,
+    holdout_base_rate: heldBase,
+    holdout_lift: heldHit === null || heldBase === null ? null : rnd(heldHit - heldBase, 4),
+  };
+}
+
+function comparison(primary, other) {
+  const disagreements = [];
+  for (let index = 0; index < primary.time.length; index += 1) {
+    if (!Number(primary.flag[index] || 0)) continue;
+    if (primary.outcome[index] == null || other.outcome[index] == null) continue;
+    if (Number(primary.outcome[index]) === Number(other.outcome[index])) continue;
+    disagreements.push({
+      date: primary.time[index],
+      target: primary.target[index],
+      a_return: rnd(Number(primary.peak[index]) / Number(primary.entry[index]) - 1, 6),
+      b_return: rnd(Number(other.peak[index]) / Number(other.entry[index]) - 1, 6),
+      a_hit: primary.outcome[index],
+      b_hit: other.outcome[index],
+    });
+  }
+  return {
+    a: primary.instrument,
+    b: other.instrument,
+    rows: [instrumentRow(primary), instrumentRow(other)],
+    same_days: sameArray(primary.time, other.time),
+    same_flags: sameArray(primary.flag, other.flag),
+    disagreements,
+  };
+}
+
+// ------------------------------------------------------------------ /api/agent
+
+async function loadAgentEval(env, dataset) {
+  const res = await env.DB.prepare(
+    "SELECT * FROM agent_eval WHERE dataset = ? ORDER BY as_of ASC, horizon ASC, question_id ASC",
+  )
+    .bind(dataset)
+    .all();
+  const rows = res.results ?? [];
+  if (!rows.length) return null;
+
+  const first = rows[0];
+  const generatedAt = String(first.generated_at || "");
+  const configModel = String(first.config_model || "");
+  const mergedList = String(first.models_merged || "").split(",").filter(Boolean);
+
+  const questionMeta = {};
+  const answers = {};
+  const telemetry = {};
+
+  for (const row of rows) {
+    const qid = String(row.question_id);
+    const predictor = String(row.predictor);
+    if (!(qid in questionMeta)) {
+      questionMeta[qid] = {
+        as_of: row.as_of,
+        as_of_close: row.as_of_close,
+        family: row.family,
+        horizon: Number(row.horizon),
+        outcome: Number(row.outcome),
+        resolve_session: row.resolve_session,
+        symbol: row.symbol,
+        text: row.question_text,
+        threshold: Number(row.threshold),
+      };
+    }
+    answers[predictor] = answers[predictor] || {};
+    if (!(predictor in telemetry)) telemetry[predictor] = row;
+    if (row.probability !== null && row.probability !== undefined) {
+      answers[predictor][qid] = Number(row.probability);
+    }
+  }
+
+  const bench = Object.keys(questionMeta);
+  const alive = Object.values(answers).filter((item) => Object.keys(item).length).map((item) => new Set(Object.keys(item)));
+  let shared = alive.length ? [...alive[0]].filter((qid) => alive.every((set) => set.has(qid))) : [];
+  shared.sort((a, b) => {
+    const ra = questionMeta[a].resolve_session;
+    const rb = questionMeta[b].resolve_session;
+    if (ra !== rb) return ra < rb ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+
+  const outcomes = {};
+  for (const qid of shared) outcomes[qid] = questionMeta[qid].outcome;
+
+  const predictors = {};
+  for (const name of Object.keys(answers).sort()) {
+    const ans = answers[name];
+    const tel = telemetry[name];
+    if (!Object.keys(ans).length || !shared.length) {
+      predictors[name] = {
+        brier: null,
+        log_loss: null,
+        ece: null,
+        hit_direction: null,
+        mean_probability: null,
+        observed_rate: Object.keys(outcomes).length ? rnd(mean(Object.values(outcomes)), 4) : null,
+        cost_usd_total: Number(tel.cost_usd_total || 0),
+        cost_usd_per_forecast: tel.cost_usd_per_forecast,
+        latency_p50_s: tel.latency_p50_s,
+        latency_p95_s: tel.latency_p95_s,
+        tool_calls_mean: Number(tel.tool_calls_mean || 0),
+        gate_hits: Number(tel.gate_hits || 0),
+        failures: Number(tel.failures || 0),
+        reliability: [],
+        answers: {},
+        pairs: {},
+        by_family: {},
+        n: 0,
+      };
+      continue;
+    }
+
+    const pairs = shared.map((qid) => [ans[qid], questionMeta[qid].outcome]);
+    const families = [...new Set(shared.map((qid) => questionMeta[qid].family))].sort();
+    const byFamily = {};
+    for (const family of families) {
+      const sample = shared
+        .filter((qid) => questionMeta[qid].family === family)
+        .map((qid) => [ans[qid], questionMeta[qid].outcome]);
+      if (sample.length) {
+        byFamily[family] = {
+          n: sample.length,
+          brier: rnd(brier(sample), 4),
+          observed: rnd(mean(sample.map(([, outcome]) => outcome)), 3),
+        };
+      }
+    }
+
+    const answersRounded = {};
+    for (const qid of Object.keys(ans)) answersRounded[qid] = rnd(ans[qid], 6);
+    const pairsRounded = {};
+    for (const qid of shared) pairsRounded[qid] = rnd(ans[qid], 6);
+
+    predictors[name] = {
+      brier: rnd(brier(pairs), 4),
+      log_loss: rnd(logLoss(pairs), 4),
+      ece: rnd(ece(pairs), 4),
+      hit_direction: rnd(mean(pairs.map(([p, o]) => ((p >= 0.5) === (o === 1) ? 1 : 0))), 4),
+      mean_probability: rnd(mean(pairs.map(([p]) => p)), 4),
+      observed_rate: rnd(mean(pairs.map(([, o]) => o)), 4),
+      cost_usd_total: Number(tel.cost_usd_total || 0),
+      cost_usd_per_forecast: tel.cost_usd_per_forecast,
+      latency_p50_s: tel.latency_p50_s,
+      latency_p95_s: tel.latency_p95_s,
+      tool_calls_mean: Number(tel.tool_calls_mean || 0),
+      gate_hits: Number(tel.gate_hits || 0),
+      failures: Number(tel.failures || 0),
+      reliability: reliability(pairs),
+      answers: answersRounded,
+      pairs: pairsRounded,
+      by_family: byFamily,
+      n: shared.length,
+    };
+  }
+
+  let references = {};
+  if (shared.length) {
+    const half = shared.map((qid) => [0.5, questionMeta[qid].outcome]);
+    references = {
+      "constant_0.5": { brier: rnd(brier(half), 4), log_loss: rnd(logLoss(half), 4) },
+      observed_rate: rnd(mean(shared.map((qid) => questionMeta[qid].outcome)), 4),
+    };
+  }
+
+  const modes = [...new Set(Object.values(questionMeta).map((item) => item.family))].sort();
+  return {
+    n: shared.length,
+    scored_on_shared: shared.length,
+    generated_at: generatedAt,
+    bench,
+    questions: shared,
+    outcomes,
+    question_meta: questionMeta,
+    predictors,
+    references,
+    config: {
+      symbol: String(first.symbol || "^VXN"),
+      limit: bench.length,
+      modes,
+      model: configModel,
+      models_merged: mergedList,
+    },
+  };
+}
+
+function brier(pairs) {
+  return sum(pairs.map(([p, o]) => (p - o) ** 2)) / pairs.length;
+}
+
+function logLoss(pairs) {
+  let total = 0;
+  for (const [p, o] of pairs) {
+    const clipped = Math.min(Math.max(p, 1e-6), 1 - 1e-6);
+    total += -(o * Math.log(clipped) + (1 - o) * Math.log(1 - clipped));
+  }
+  return total / pairs.length;
+}
+
+function reliability(pairs, bins = 5) {
+  const table = [];
+  for (let index = 0; index < bins; index += 1) {
+    const low = index / bins;
+    const high = (index + 1) / bins;
+    const bucket = pairs.filter(
+      ([p]) => (low <= p && p < high) || (index === bins - 1 && p === 1.0),
+    );
+    if (!bucket.length) continue;
+    table.push({
+      bin: `${low.toFixed(1)}-${high.toFixed(1)}`,
+      n: bucket.length,
+      mean_predicted: rnd(mean(bucket.map(([p]) => p)), 4),
+      observed: rnd(mean(bucket.map(([, o]) => o)), 4),
+    });
+  }
+  return table;
+}
+
+function ece(pairs, bins = 5) {
+  const table = reliability(pairs, bins);
+  if (!table.length) return null;
+  const total = sum(table.map((row) => row.n));
+  return sum(table.map((row) => (row.n / total) * Math.abs(row.mean_predicted - row.observed)));
+}
+
+// ------------------------------------------------------------------ state / chat
 
 async function getD1State(env) {
   try {
-    const [
-      marketsRes,
-      unresolvedRes,
-      mktNodeRes,
-      tlCloseRes,
-      tlRollRes,
-      tlDailyRes,
-      tlLadRes,
-      tlNodeRes,
-      agentRes,
-      agentNodeRes,
-    ] = await env.DB.batch([
-      env.DB.prepare("SELECT market, last_session, fetched_at FROM market"),
+    const [marketRes, barRes, newsRes, agentRes, chatRes] = await env.DB.batch([
       env.DB.prepare(
-        "SELECT market, COUNT(*) AS cnt, MAX(date) AS max_date, MIN(CASE WHEN outcome IS NULL THEN date END) AS first_unresolved, MIN(CASE WHEN is_closed = 0 THEN date END) AS first_unclosed, SUM(CASE WHEN is_closed = 0 THEN 1 ELSE 0 END) AS unclosed_count FROM session GROUP BY market",
+        `SELECT s.market,
+                COUNT(*) AS cnt,
+                MAX(s.date) AS max_date,
+                MIN(CASE WHEN s.outcome IS NULL THEN s.date END) AS first_unresolved,
+                MAX(s.fetched_at) AS fetched_at,
+                SUM(CASE WHEN COALESCE(b.is_closed, 1) = 0 THEN 1 ELSE 0 END) AS unclosed_count
+         FROM signals s
+         LEFT JOIN bars b ON b.symbol = CASE s.market WHEN 'ndx' THEN '^NDX' WHEN 'qqq' THEN 'QQQ' ELSE '000001.SS' END
+                          AND b.date = s.date
+         GROUP BY s.market`,
       ),
-      env.DB.prepare("SELECT market, COUNT(*) AS cnt FROM market_node GROUP BY market"),
-      env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_close GROUP BY symbol"),
-      env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_rolling GROUP BY symbol"),
-      env.DB.prepare("SELECT symbol, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_daily GROUP BY symbol"),
-      env.DB.prepare("SELECT horizon, MAX(idx) AS max_idx, COUNT(*) AS cnt FROM timeline_ladder GROUP BY horizon"),
-      env.DB.prepare("SELECT COUNT(*) AS cnt FROM timeline_node"),
-      env.DB.prepare("SELECT dataset, generated_at, n FROM agent_dataset"),
-      env.DB.prepare("SELECT dataset, COUNT(*) AS cnt FROM agent_node GROUP BY dataset"),
+      env.DB.prepare("SELECT symbol, COUNT(*) AS cnt, MAX(date) AS max_date FROM bars GROUP BY symbol"),
+      env.DB.prepare("SELECT COUNT(*) AS cnt, MAX(as_of) AS max_as_of FROM news"),
+      env.DB.prepare(
+        "SELECT dataset, COUNT(*) AS cnt, MAX(generated_at) AS generated_at FROM agent_eval GROUP BY dataset",
+      ),
+      env.DB.prepare("SELECT COUNT(*) AS cnt, MAX(created_at) AS max_created_at FROM chat_messages"),
     ]);
 
     const markets = {};
-    for (const r of marketsRes.results ?? []) {
-      markets[r.market] = {
-        last_session: r.last_session,
-        fetched_at: r.fetched_at,
-        count: 0,
-        max_date: null,
-        first_unresolved: null,
-        first_unclosed: null,
-        unclosed_count: 0,
-        node_count: 0,
+    for (const row of marketRes.results ?? []) {
+      markets[row.market] = {
+        count: row.cnt,
+        max_date: row.max_date,
+        first_unresolved: row.first_unresolved,
+        fetched_at: row.fetched_at,
+        unclosed_count: row.unclosed_count ?? 0,
       };
     }
-    for (const r of unresolvedRes.results ?? []) {
-      markets[r.market] = {
-        ...(markets[r.market] || {}),
-        count: r.cnt,
-        max_date: r.max_date,
-        first_unresolved: r.first_unresolved,
-        first_unclosed: r.first_unclosed ?? null,
-        unclosed_count: r.unclosed_count ?? 0,
-      };
-    }
-    for (const r of mktNodeRes.results ?? []) {
-      markets[r.market] = {
-        ...(markets[r.market] || {}),
-        node_count: r.cnt,
-      };
-    }
-
-    const timeline = {
-      close: Object.fromEntries((tlCloseRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
-      rolling: Object.fromEntries((tlRollRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
-      daily: Object.fromEntries((tlDailyRes.results ?? []).map((r) => [r.symbol, r.max_idx])),
-      ladder: Object.fromEntries((tlLadRes.results ?? []).map((r) => [String(r.horizon), r.max_idx])),
-      node_count: tlNodeRes.results?.[0]?.cnt ?? 0,
-    };
-
+    const bars = {};
+    for (const row of barRes.results ?? []) bars[row.symbol] = { count: row.cnt, max_date: row.max_date };
+    const news = newsRes.results?.[0] ?? { cnt: 0, max_as_of: null };
     const agents = {};
-    for (const r of agentRes.results ?? []) {
-      agents[r.dataset] = { generated_at: r.generated_at, n: r.n, node_count: 0 };
-    }
-    for (const r of agentNodeRes.results ?? []) {
-      agents[r.dataset] = {
-        ...(agents[r.dataset] || {}),
-        node_count: r.cnt,
-      };
-    }
+    for (const row of agentRes.results ?? []) agents[row.dataset] = { count: row.cnt, generated_at: row.generated_at };
+    const chat = chatRes.results?.[0] ?? { cnt: 0, max_created_at: null };
 
+    return json({ ok: true, markets, bars, news, agents, chat });
+  } catch (err) {
+    return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
+  }
+}
+
+async function chatThreads(env, url) {
+  const market = url.searchParams.get("market") || "ndx";
+  try {
+    const res = await env.DB.prepare(
+      `SELECT thread_id, market, MAX(as_of) AS as_of, MIN(created_at) AS created_at,
+              MAX(created_at) AS updated_at, COUNT(*) AS message_count
+       FROM chat_messages WHERE market = ?
+       GROUP BY thread_id, market ORDER BY updated_at DESC, thread_id DESC LIMIT 20`,
+    )
+      .bind(market)
+      .all();
+    const threads = res.results ?? [];
+    let messages = [];
+    if (threads.length) {
+      const msg = await env.DB.prepare(
+        "SELECT thread_id, seq, market, as_of, role, model, stance, content, created_at FROM chat_messages WHERE thread_id = ? ORDER BY seq ASC",
+      )
+        .bind(threads[0].thread_id)
+        .all();
+      messages = msg.results ?? [];
+    }
     return json({
       ok: true,
-      markets,
-      timeline,
-      agents,
+      market,
+      context: await chatContext(env, market),
+      threads,
+      active_thread_id: threads.length ? threads[0].thread_id : null,
+      messages,
     });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
   }
 }
+
+async function chatMessages(env, url) {
+  const threadId = url.searchParams.get("thread_id") || "";
+  if (!threadId) return json({ ok: true, thread_id: "", messages: [] });
+  const res = await env.DB.prepare(
+    "SELECT thread_id, seq, market, as_of, role, model, stance, content, created_at FROM chat_messages WHERE thread_id = ? ORDER BY seq ASC",
+  )
+    .bind(threadId)
+    .all();
+  return json({ ok: true, thread_id: threadId, messages: res.results ?? [] });
+}
+
+/** Short market snapshot for the group-chat side panel (the full Python builder is not portable). */
+function fmtPrice(value) {
+  return value === null || value === undefined ? "-" : Number(value).toFixed(2);
+}
+
+async function chatContext(env, market) {
+  const instrument = INSTRUMENT[market] || INSTRUMENT.ndx;
+  try {
+    const [barRes, sigRes] = await env.DB.batch([
+      env.DB.prepare("SELECT date, open, high, low, close, is_closed FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 2").bind(instrument),
+      env.DB.prepare("SELECT date, flag, score, threshold FROM signals WHERE market = ? ORDER BY date DESC LIMIT 1").bind(market),
+    ]);
+    const bars = barRes.results ?? [];
+    const signal = sigRes.results?.[0];
+    if (!bars.length) {
+      return { market, symbol: instrument, as_of: "", text: `标的：${instrument}\n暂无行情数据。` };
+    }
+    const latest = bars[0];
+    const prev = bars[1];
+    const change = prev && prev.close ? latest.close / prev.close - 1 : 0;
+    const pct = `${change >= 0 ? "+" : ""}${(change * 100).toFixed(2)}%`;
+    const signalLine = signal
+      ? `量化因子参考：${Number(signal.flag || 0) ? "触发买入信号 (BUY)" : "观望 / 无信号 (NO SIGNAL)"}` +
+        (signal.score !== null && signal.threshold !== null
+          ? `（合成得分 ${Number(signal.score).toFixed(3)} / 阈值 ${Number(signal.threshold).toFixed(3)}）`
+          : "")
+      : "";
+    return {
+      market,
+      symbol: instrument,
+      as_of: latest.date,
+      text: [
+        `【标的】${instrument} · 基准日 ${latest.date}（${Number(latest.is_closed) ? "已收盘" : "盘中未收盘"}）`,
+        `1. 当前盘面：收/现价 ${Number(latest.close).toFixed(2)}（当日 ${pct}），开 ${fmtPrice(latest.open)} / 高 ${fmtPrice(latest.high)} / 低 ${fmtPrice(latest.low)}`,
+        signalLine ? `2. ${signalLine}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  } catch (err) {
+    return { market, symbol: instrument, as_of: "", text: `上下文读取失败：${err.message || err}` };
+  }
+}
+
+// ------------------------------------------------------------------ ingest
+
+async function ingest(request, env) {
+  const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!env.INGEST_TOKEN) return json({ ok: false, error: "INGEST_TOKEN is not set on the Worker" }, 500);
+  if (token !== env.INGEST_TOKEN) return json({ ok: false, error: "bad token" }, 401);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: false, error: "body must be JSON" }, 400);
+  }
+
+  try {
+    if (body.op === "state") return getD1State(env);
+    if (body.op !== "sql") return json({ ok: false, error: "unknown op" }, 400);
+    if (typeof body.sql !== "string") return json({ ok: false, error: "sql must be a string" }, 400);
+    if (body.sql.length > 95_000) return json({ ok: false, error: "sql too large; send fewer rows per statement" }, 400);
+    if (
+      !/^\s*INSERT\s+(OR\s+(REPLACE|IGNORE)\s+)?INTO\s+(bars|signals|news|agent_eval|chat_messages)\b/i.test(body.sql)
+    ) {
+      return json({ ok: false, error: "INSERT only on bars/signals/news/agent_eval/chat_messages" }, 400);
+    }
+    const result = await env.DB.exec(body.sql);
+    return json({ ok: true, op: "sql", count: result.count ?? null });
+  } catch (error) {
+    return json({ ok: false, error: String(error && error.message ? error.message : error) }, 400);
+  }
+}
+
+// ------------------------------------------------------------------ /api/refresh
 
 function beijingDateStr(date = new Date()) {
   return new Intl.DateTimeFormat("en-CA", {
@@ -285,7 +978,7 @@ function isSessionClosed(sessionDate, tzName = "America/New_York", now = new Dat
     minute: "2-digit",
     hour12: false,
   }).formatToParts(now);
-  const get = (t) => parts.find((p) => p.type === t)?.value || "00";
+  const get = (type) => parts.find((part) => part.type === type)?.value || "00";
   const localDate = `${get("year")}-${get("month")}-${get("day")}`;
   if (sessionDate < localDate) return 1;
   if (sessionDate > localDate) return 0;
@@ -300,9 +993,11 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
   const payload = await res.json();
   const result = payload?.chart?.result?.[0];
   if (!result) return [];
-  const tz = result?.meta?.exchangeTimezoneName || (symbol.endsWith(".SS") || symbol.endsWith(".SZ") ? "Asia/Shanghai" : "America/New_York");
+  const tz =
+    result?.meta?.exchangeTimezoneName ||
+    (symbol.endsWith(".SS") || symbol.endsWith(".SZ") ? "Asia/Shanghai" : "America/New_York");
   const stamps = result.timestamp || [];
-  const q = result.indicators?.quote?.[0] || {};
+  const quote = result.indicators?.quote?.[0] || {};
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
@@ -312,394 +1007,163 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
   const now = new Date();
   const byDate = new Map();
   for (let i = 0; i < stamps.length; i += 1) {
-    const close = q.close?.[i];
+    const close = quote.close?.[i];
     if (close === null || close === undefined) continue;
-    const d = fmt.format(new Date(stamps[i] * 1000));
-    byDate.set(d, {
-      date: d,
-      open: q.open?.[i] != null ? Math.round(q.open[i] * 100) / 100 : null,
-      high: q.high?.[i] != null ? Math.round(q.high[i] * 100) / 100 : null,
-      low: q.low?.[i] != null ? Math.round(q.low[i] * 100) / 100 : null,
+    const day = fmt.format(new Date(stamps[i] * 1000));
+    byDate.set(day, {
+      date: day,
+      open: quote.open?.[i] != null ? Math.round(quote.open[i] * 100) / 100 : null,
+      high: quote.high?.[i] != null ? Math.round(quote.high[i] * 100) / 100 : null,
+      low: quote.low?.[i] != null ? Math.round(quote.low[i] * 100) / 100 : null,
       close: Math.round(close * 100) / 100,
-      volume: q.volume?.[i] != null ? Math.trunc(q.volume[i]) : null,
-      is_closed: isSessionClosed(d, tz, now),
+      volume: quote.volume?.[i] != null ? Math.trunc(quote.volume[i]) : null,
+      is_closed: isSessionClosed(day, tz, now),
     });
   }
-  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 async function refreshFromYahoo(env, force = false) {
   try {
-    const todayBj = beijingDateStr();
-    const metaRows = (await env.DB.prepare("SELECT market, instrument, last_session, fetched_at FROM market").all()).results ?? [];
-    if (metaRows.length === 0) {
-      return json({ ok: false, error: "D1 尚未初始化基础数据，请先运行 make cf" }, 404);
-    }
+    const symbols = (await env.DB.prepare("SELECT DISTINCT symbol FROM bars ORDER BY symbol").all()).results ?? [];
+    if (!symbols.length) return json({ ok: false, error: "D1 尚未初始化，请先运行 make cf" }, 404);
 
-    const unclosedRows = (
-      await env.DB.prepare("SELECT market, date FROM session WHERE is_closed = 0 ORDER BY market, date").all()
-    ).results ?? [];
-
-    if (!force && unclosedRows.length === 0) {
-      const allFresh = metaRows.every((m) => m.fetched_at && m.fetched_at.slice(0, 10) >= todayBj);
-      if (allFresh) {
-        const sessions = Object.fromEntries(metaRows.map((m) => [m.market, m.last_session]));
-        return json({ ok: true, cached: true, beijing_date: todayBj, sessions });
-      }
-    }
-
-    const nowSec = Math.floor(Date.now() / 1000) + 172800;
     const updated = {};
     const errors = {};
-    const insertedCounts = {};
+    const nowSec = Math.floor(Date.now() / 1000) + 172800;
 
-    for (const meta of metaRows) {
-      const mkt = meta.market;
-      const sym = meta.instrument;
+    for (const { symbol } of symbols) {
       try {
-        const tailRows = (
-          await env.DB.prepare("SELECT * FROM session WHERE market = ? ORDER BY date DESC LIMIT 25").bind(mkt).all()
+        const tail = (
+          await env.DB.prepare("SELECT date FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1")
+            .bind(symbol)
+            .all()
         ).results ?? [];
-        if (tailRows.length === 0) continue;
-        tailRows.reverse();
-        const oldestTailDate = tailRows[0].date;
-        const startUnix = Math.floor(new Date(`${oldestTailDate}T00:00:00Z`).getTime() / 1000) - 86400 * 5;
-        const bars = await fetchYahooBars(sym, startUnix, nowSec);
-        if (bars.length === 0) continue;
-
-        const byDate = new Map(tailRows.map((r) => [r.date, { ...r }]));
-        for (const b of bars) {
-          if (b.date < oldestTailDate) continue;
-          const prev = byDate.get(b.date);
-          if (prev) {
-            prev.open = b.open;
-            prev.high = b.high;
-            prev.low = b.low;
-            prev.close = b.close;
-            prev.volume = b.volume;
-            prev.is_closed = b.is_closed;
-          } else {
-            const lastRow = tailRows[tailRows.length - 1];
-            byDate.set(b.date, {
-              market: mkt,
-              date: b.date,
-              open: b.open,
-              high: b.high,
-              low: b.low,
-              close: b.close,
-              volume: b.volume,
-              entry: null,
-              entry_at: null,
-              base_close: null,
-              close3: null,
-              close5: null,
-              hit3: null,
-              flag: 0,
-              flag_price_only: 0,
-              news_veto: 0,
-              score: lastRow?.score ?? null,
-              threshold: lastRow?.threshold ?? null,
-              outcome: null,
-              target: null,
-              peak: null,
-              peak_at: null,
-              us_date: null,
-              factors_packed: 0,
-              is_closed: b.is_closed,
-            });
-          }
-        }
-
-        const merged = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
-        const H = 5;
-        for (let i = 0; i < merged.length; i += 1) {
-          const row = merged[i];
-          if (mkt === "ssec") {
-            if (i + H < merged.length && row.open != null) {
-              const win = merged.slice(i + 1, i + 1 + H);
-              if (win.every((w) => w.close != null)) {
-                let bestIdx = 0;
-                for (let k = 1; k < win.length; k += 1) {
-                  if (win[k].close > win[bestIdx].close) bestIdx = k;
-                }
-                row.peak = win[bestIdx].close;
-                row.peak_at = win[bestIdx].date;
-                row.outcome = merged[i + H].close > row.close ? 1 : 0;
-                if (row.flag) {
-                  row.base_close = row.close;
-                  row.close3 = merged[i + 3].close;
-                  row.close5 = merged[i + H].close;
-                  row.hit3 = row.close3 > row.base_close ? 1 : 0;
-                }
-              }
-            }
-          } else if (i + H + 1 < merged.length) {
-            const nextBar = merged[i + 1];
-            const win = merged.slice(i + 2, i + 2 + H);
-            if (nextBar.open != null && win.every((w) => w.close != null)) {
-              let bestIdx = 0;
-              for (let k = 1; k < win.length; k += 1) {
-                if (win[k].close > win[bestIdx].close) bestIdx = k;
-              }
-              row.entry = nextBar.open;
-              row.entry_at = nextBar.date;
-              row.base_close = row.close;
-              row.close3 = merged[i + 3].close;
-              row.close5 = merged[i + H].close;
-              row.hit3 = row.close3 > row.base_close ? 1 : 0;
-              row.outcome = row.close5 > row.base_close ? 1 : 0;
-              row.target = merged[i + H].date;
-              row.peak = win[bestIdx].close;
-              row.peak_at = win[bestIdx].date;
-            }
-          }
-        }
-
-        const toWrite = merged.slice(-12);
-        const stmts = toWrite.map((r) =>
+        if (!tail.length) continue;
+        const startUnix = Math.floor(new Date(`${tail[0].date}T00:00:00Z`).getTime() / 1000) - 86400 * 10;
+        const bars = await fetchYahooBars(symbol, startUnix, nowSec);
+        if (!bars.length) continue;
+        const statements = bars.map((bar) =>
           env.DB.prepare(
-            `INSERT OR REPLACE INTO session (
-              market, date, open, high, low, close, volume, entry, entry_at,
-              base_close, close3, close5, hit3, flag, flag_price_only, news_veto,
-              score, threshold, outcome, target, peak, peak_at, us_date, factors_packed, is_closed
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT OR REPLACE INTO bars (symbol, date, open, high, low, close, volume, is_closed, fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           ).bind(
-            mkt,
-            r.date,
-            r.open,
-            r.high,
-            r.low,
-            r.close,
-            r.volume,
-            r.entry,
-            r.entry_at,
-            r.base_close,
-            r.close3,
-            r.close5,
-            r.hit3,
-            r.flag,
-            r.flag_price_only,
-            r.news_veto,
-            r.score,
-            r.threshold,
-            r.outcome,
-            r.target,
-            r.peak,
-            r.peak_at,
-            r.us_date,
-            r.factors_packed ?? 0,
-            r.is_closed ?? 1,
+            symbol,
+            bar.date,
+            bar.open,
+            bar.high,
+            bar.low,
+            bar.close,
+            bar.volume,
+            bar.is_closed,
+            new Date().toISOString(),
           ),
         );
-        const lastBar = merged[merged.length - 1];
-        const fetchedIso = `${todayBj}T${new Date().toISOString().slice(11, 19)}+08:00`;
-        stmts.push(
-          env.DB.prepare("UPDATE market SET last_session = ?, fetched_at = ? WHERE market = ?").bind(
-            lastBar.date,
-            fetchedIso,
-            mkt,
-          ),
-        );
-        await env.DB.batch(stmts);
-        updated[sym] = lastBar.date;
-        insertedCounts[mkt] = toWrite.length;
-      } catch (e) {
-        errors[sym] = String(e && e.message ? e.message : e);
+        await env.DB.batch(statements);
+        updated[symbol] = bars[bars.length - 1].date;
+      } catch (err) {
+        errors[symbol] = String(err && err.message ? err.message : err);
       }
     }
 
-    const afterMeta = (await env.DB.prepare("SELECT market, last_session FROM market").all()).results ?? [];
-    const sessions = Object.fromEntries(afterMeta.map((m) => [m.market, m.last_session]));
+    const settled = await settleSignals(env);
+    const sessions = (await env.DB.prepare("SELECT market, MAX(date) AS last_session FROM signals GROUP BY market").all())
+      .results ?? [];
     return json({
       ok: true,
       refreshed_at: new Date().toISOString(),
-      beijing_date: todayBj,
-      sessions,
+      beijing_date: beijingDateStr(),
+      force,
+      sessions: Object.fromEntries(sessions.map((row) => [row.market, row.last_session])),
       updated,
-      upserted_rows: insertedCounts,
+      settled,
       errors,
+      note: "线上只增量抓取 bars 并结算已存在信号；新交易日的信号仍需本地 make refresh 后 publish。",
     });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
   }
 }
 
-async function loadMarket(env, market) {
-  const [metaRes, sessionRes, nodeRes, contextRes] = await env.DB.batch([
-    env.DB.prepare("SELECT * FROM market WHERE market = ?").bind(market),
-    env.DB.prepare("SELECT * FROM session WHERE market = ? ORDER BY date").bind(market),
-    env.DB.prepare("SELECT path, kind, value FROM market_node WHERE market = ?").bind(market),
-    env.DB.prepare("SELECT * FROM contexts WHERE market = ? ORDER BY position").bind(market),
-  ]);
-
-  const meta = metaRes.results?.[0];
-  const sessions = sessionRes.results ?? [];
-  if (!meta || sessions.length === 0) return null;
-
-  const doc = {};
-  if (meta.name) doc.name = meta.name;
-  doc.instrument = meta.instrument;
-  doc.question = { horizon: meta.horizon, text: meta.question, rule: meta.rule };
-  doc.fetched_at = meta.fetched_at;
-  doc.first_session = meta.first_session;
-  doc.last_session = meta.last_session;
-  doc.time = sessions.map((row) => row.date);
-
-  for (const column of ARRAY_COLUMNS) {
-    if (!(column in sessions[0])) continue;
-    const values = sessions.map((row) => row[column]);
-    if (values.some((value) => value !== null && value !== undefined)) doc[column] = values;
-  }
-
-  doc.components = {};
-  // 位序 = contexts 的顺序（factors_packed 就是这么打包的）
-  for (const { position, key } of contextRes.results ?? []) {
-    doc.components[key] = sessions.map((row) => Math.floor(row.factors_packed / 2 ** (4 * position)) % 16);
-  }
-
-  doc.contexts = (contextRes.results ?? []).map((row) => {
-    const out = { key: row.key };
-    if (row.label) out.label = row.label;
-    if (row.kind) out.kind = row.kind;
-    if (row.required) out.required = true;
-    if (row.threshold !== null) out.threshold = row.threshold;
-    if (row.group_name) {
-      out.group = row.group_name;
-      out.group_label = row.group_label;
+/** Fill close3/close5/hit3/outcome/entry/peak for existing signal rows from the bars table. */
+async function settleSignals(env) {
+  const settled = {};
+  for (const market of Object.keys(INSTRUMENT)) {
+    const instrument = INSTRUMENT[market];
+    const bars = (await env.DB.prepare("SELECT date, open, close FROM bars WHERE symbol = ? ORDER BY date ASC").bind(instrument).all())
+      .results ?? [];
+    if (!bars.length) continue;
+    const index = new Map(bars.map((bar, i) => [bar.date, i]));
+    const tail = (
+      await env.DB.prepare("SELECT * FROM signals WHERE market = ? ORDER BY date DESC LIMIT 30").bind(market).all()
+    ).results ?? [];
+    let changed = 0;
+    for (const row of tail) {
+      const i = index.get(row.date);
+      if (i === undefined) continue;
+      const baseClose = bars[i].close;
+      if (baseClose === null) continue;
+      const H = HORIZON;
+      if (market === "ssec") {
+        if (i + H >= bars.length) continue;
+        const window = bars.slice(i + 1, i + 1 + H);
+        let peak = null;
+        let peakAt = null;
+        for (const bar of window) {
+          if (bar.close === null) continue;
+          if (peak === null || bar.close > peak) {
+            peak = bar.close;
+            peakAt = bar.date;
+          }
+        }
+        const close5 = bars[i + H].close;
+        const outcome = close5 > baseClose ? 1 : 0;
+        const close3 = bars[i + 3]?.close ?? null;
+        await env.DB.prepare(
+          "UPDATE signals SET outcome = ?, peak = ?, peak_at = ?, close3 = ?, close5 = ?, hit3 = ? WHERE market = ? AND date = ?",
+        )
+          .bind(outcome, peak, peakAt, close3, close5, close3 !== null && close3 > baseClose ? 1 : 0, market, row.date)
+          .run();
+        changed += 1;
+      } else {
+        if (i + H + 1 >= bars.length) continue;
+        const next = bars[i + 1];
+        const window = bars.slice(i + 2, i + 2 + H);
+        if (next.open === null || window.some((bar) => bar.close === null)) continue;
+        let peak = null;
+        let peakAt = null;
+        for (const bar of window) {
+          if (peak === null || bar.close > peak) {
+            peak = bar.close;
+            peakAt = bar.date;
+          }
+        }
+        const close3 = bars[i + 3]?.close ?? null;
+        const close5 = bars[i + H].close;
+        await env.DB.prepare(
+          `UPDATE signals SET entry = ?, entry_at = ?, base_close = ?, close3 = ?, close5 = ?, hit3 = ?,
+                              outcome = ?, target = ?, peak = ?, peak_at = ?
+           WHERE market = ? AND date = ?`,
+        )
+          .bind(
+            next.open,
+            next.date,
+            baseClose,
+            close3,
+            close5,
+            close3 !== null && close3 > baseClose ? 1 : 0,
+            close5 > baseClose ? 1 : 0,
+            bars[i + H].date,
+            peak,
+            peakAt,
+            market,
+            row.date,
+          )
+          .run();
+        changed += 1;
+      }
     }
-    if (row.note) out.note = row.note;
-    if (row.available_from) out.available_from = row.available_from;
-    return out;
-  });
-
-  for (const { path, kind, value } of nodeRes.results ?? []) {
-    setPath(doc, path, cast(kind, value));
+    settled[market] = changed;
   }
-
-  return doc;
-}
-
-async function loadTimeline(env) {
-  const [closeRes, rollingRes, dailyRes, ladderRes, nodeRes] = await env.DB.batch([
-    env.DB.prepare("SELECT symbol, date, close FROM timeline_close ORDER BY symbol, idx"),
-    env.DB.prepare("SELECT * FROM timeline_rolling ORDER BY symbol, idx"),
-    env.DB.prepare("SELECT * FROM timeline_daily ORDER BY symbol, idx"),
-    env.DB.prepare("SELECT * FROM timeline_ladder ORDER BY horizon, idx"),
-    env.DB.prepare("SELECT path, kind, value FROM timeline_node"),
-  ]);
-
-  const closes = closeRes.results ?? [];
-  if (closes.length === 0) return null;
-
-  const doc = {
-    rolling: { vxn: {}, ndx: {} },
-    ladder: { vxn: { columns: {} } },
-    forward: {},
-    vxn: { time: [], close: [] },
-    ndx: { time: [], close: [] },
-    daily: { vxn: {}, ndx: {} },
-  };
-
-  for (const row of closes) {
-    doc[row.symbol].time.push(row.date);
-    doc[row.symbol].close.push(row.close);
-  }
-
-  const rollingRows = rollingRes.results ?? [];
-  const dailyRows = dailyRes.results ?? [];
-  for (const sym of ["vxn", "ndx"]) {
-    const r = rollingRows.filter((row) => row.symbol === sym);
-    doc.rolling[sym] = {
-      time: r.map((row) => row.time),
-      as_of: r.map((row) => row.as_of),
-      anchor: r.map((row) => row.anchor),
-      median: r.map((row) => row.median),
-      low: r.map((row) => row.low),
-      high: r.map((row) => row.high),
-      actual: r.map((row) => row.actual),
-    };
-    const d = dailyRows.filter((row) => row.symbol === sym);
-    doc.daily[sym] = {
-      time: d.map((row) => row.time),
-      median: d.map((row) => row.median),
-      low: d.map((row) => row.low),
-      high: d.map((row) => row.high),
-      actual: d.map((row) => row.actual),
-      previous: d.map((row) => row.previous),
-      risk: d.map((row) => row.risk),
-    };
-  }
-
-  const cols = doc.ladder.vxn.columns;
-  for (const row of ladderRes.results ?? []) {
-    const h = String(row.horizon);
-    if (!cols[h]) cols[h] = { median: [], low: [], high: [] };
-    cols[h].median.push(row.median);
-    cols[h].low.push(row.low);
-    cols[h].high.push(row.high);
-  }
-
-  for (const { path, kind, value } of nodeRes.results ?? []) {
-    setPath(doc, path, cast(kind, value));
-  }
-
-  return doc;
-}
-
-async function loadAgentEval(env, dataset) {
-  const [metaRes, nodeRes] = await env.DB.batch([
-    env.DB.prepare("SELECT * FROM agent_dataset WHERE dataset = ?").bind(dataset),
-    env.DB.prepare("SELECT path, kind, value FROM agent_node WHERE dataset = ?").bind(dataset),
-  ]);
-  const meta = metaRes.results?.[0];
-  if (!meta) return null;
-  const doc = {
-    n: meta.n,
-    scored_on_shared: meta.scored_on_shared,
-    generated_at: meta.generated_at,
-  };
-  for (const { path, kind, value } of nodeRes.results ?? []) {
-    setPath(doc, path, cast(kind, value));
-  }
-  return doc;
-}
-
-async function ingest(request, env) {
-  const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  if (!env.INGEST_TOKEN) return json({ ok: false, error: "INGEST_TOKEN is not set on the Worker" }, 500);
-  if (token !== env.INGEST_TOKEN) return json({ ok: false, error: "bad token" }, 401);
-
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ ok: false, error: "body must be JSON" }, 400);
-  }
-
-  try {
-    return await applyOp(env, body);
-  } catch (error) {
-    return json({ ok: false, error: String(error && error.message ? error.message : error) }, 400);
-  }
-}
-
-async function applyOp(env, body) {
-  if (body.op === "state") {
-    return getD1State(env);
-  }
-
-  if (body.op === "sql") {
-    if (typeof body.sql !== "string") return json({ ok: false, error: "sql must be a string" }, 400);
-    if (
-      !/^\s*INSERT\s+(OR\s+(REPLACE|IGNORE)\s+)?INTO\s+(session|market|market_node|contexts|timeline_close|timeline_rolling|timeline_daily|timeline_ladder|timeline_node|agent_dataset|agent_node)\b/i.test(
-        body.sql,
-      )
-    ) {
-      return json({ ok: false, error: "INSERT only on dashboard tables" }, 400);
-    }
-    const result = await env.DB.exec(body.sql);
-    return json({ ok: true, op: "sql", count: result.count ?? null });
-  }
-
-  return json({ ok: false, error: "unknown op" }, 400);
+  return settled;
 }

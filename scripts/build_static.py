@@ -2,7 +2,8 @@
 """把静态部分打包到 deploy/dist/，供 Cloudflare Workers Static Assets 使用。
 
 只搬页面和静态资源：`web/` 整个目录（含字体和图表库）。
-全部看板数据（cross、timeline、agent）都已放进 D1，不再打包任何 `artifacts/*.json`。
+数值数据都在 D1；`scripts/build_d1_payloads.py` 另外把 Worker 无法现算的派生数据
+（VXN timeline、cross 静态定义）写进 `deploy/dist/_meta/`。
 
     python3 scripts/build_static.py          # 生成 deploy/dist
     python3 scripts/build_static.py --check  # 只报体积，不写文件

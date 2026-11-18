@@ -17,7 +17,7 @@ PIP := $(VENV)/bin/pip
 FL := $(VENV)/bin/forecast-log
 
 .DEFAULT_GOAL := dev
-.PHONY: dev setup data data-refresh stop status refresh static worker deploy cf d1-schema publish test help
+.PHONY: dev setup data data-refresh stop status refresh static payloads worker deploy cf d1-schema publish seed test help
 
 dev: $(PY) data ## 起本地看板（默认 8731 端口）
 	@$(FL) serve $(PORT)
@@ -46,8 +46,15 @@ stop: ## 停掉占着端口的进程
 status: ## 看端口上是谁
 	@lsof -nP -iTCP:$(PORT) -sTCP:LISTEN || echo "端口 $(PORT) 空闲"
 
-static: $(PY) ## 打包静态站点到 deploy/dist（Cloudflare 用）
+static: $(PY) ## 打包静态站点 + 派生数据到 deploy/dist（Cloudflare 用）
 	@$(PY) scripts/build_static.py
+	@$(PY) scripts/build_d1_payloads.py
+
+payloads: $(PY) ## 只重建派生数据（cross 元数据 + timeline）
+	@$(PY) scripts/build_d1_payloads.py
+
+seed: ## 从 data/forecast.db 生成 D1 全量种子 SQL（deploy/seed/）
+	@$(PY) scripts/export_d1_seed.py
 
 worker: static ## 用 workerd 本地跑一遍 Cloudflare Worker
 	@wrangler dev --port 8787
@@ -59,9 +66,9 @@ cf: ## 一条命令部署到 Cloudflare，数据进 D1（需先 wrangler login�
 	@bash scripts/deploy_cf.sh
 
 d1-schema: ## 只在本地 D1 建表（wrangler dev 用）
-	@wrangler d1 execute forecast-log --local --file=deploy/schema.sql
+	@wrangler d1 execute forecast --local --file=deploy/schema.sql
 
-publish: ## 把 artifacts 里的信号推进本地 wrangler dev 的 D1
+publish: ## 把本地库的增量推进 D1（默认本地 wrangler dev）
 	@.venv/bin/python scripts/publish_d1.py --url http://127.0.0.1:8787
 
 refresh: $(PY) ## 强制刷新行情（服务需在跑）

@@ -16,7 +16,7 @@ make            # Creates .venv, downloads data/forecast.db, starts http://127.0
 | `make data` / `make data-refresh` | Download `data/forecast.db` if missing / force latest snapshot |
 | `make refresh` | Incrementally fetch latest Yahoo Finance bars across all 15 symbols and recompute signals |
 | `make test` | Run the offline test suite (`pytest -q`, no network or API keys needed) |
-| `make cf` / `make worker` | Deploy static assets + Worker + incremental D1 sync to Cloudflare / run local Worker on `8787` |
+| `make cf` / `make worker` | Deploy static assets + Worker + incremental D1 sync to Cloudflare / run local Worker on `8787` (`RESEED=1 make cf` reloads D1 from the local DB) |
 | `make status` / `make stop` | Check or stop the process listening on `PORT` |
 
 ## Pages & Features

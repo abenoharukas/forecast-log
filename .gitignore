@@ -19,3 +19,6 @@ deploy/dist/
 
 # SQLite 数据库不进版本历史（见 scripts/fetch_db.sh），clone 后 make data 拉最新一份
 data/forecast.db
+
+# D1 全量种子 SQL 由 make seed 生成（70MB，不进 git）
+deploy/seed/

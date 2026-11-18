@@ -1,0 +1,1479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Multi-agent policy and macro-shock simulation workbench with explicit cross-asset market-clearing equations and historical event replay.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%231c1915'/%3E%3Cpath d='M5 23 13 13l5 5 9-11' fill='none' stroke='%23e6e0d4' stroke-width='3'/%3E%3C/svg%3E">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <title>Policy &amp; Macro Shock Simulator · forecast-log</title>
+  <link rel="preload" href="/fonts/newsreader-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/ibm-plex-mono-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/ibm-plex-mono-500.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/theme.js" defer></script>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: "Newsreader", Palatino, serif;
+      overflow-y: auto;
+    }
+    main {
+      min-height: 100%;
+      max-width: 1580px;
+      margin: 0 auto;
+      padding: 14px 20px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px 16px;
+      flex-wrap: wrap;
+    }
+    .head-left {
+      display: flex;
+      align-items: baseline;
+      gap: 12px 16px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      margin: 0;
+      font-weight: 480;
+      font-size: clamp(1.32rem, 1rem + 0.95vw, 1.78rem);
+      letter-spacing: -0.03em;
+    }
+    .sub {
+      color: var(--muted);
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+    }
+    .sub a { color: var(--blue); text-decoration: none; }
+    .sub a:hover { text-decoration: underline; }
+
+    /* Control workbench */
+    .workbench {
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      padding: 10px 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+    }
+    .wb-row {
+      display: flex;
+      align-items: center;
+      gap: 8px 12px;
+      flex-wrap: wrap;
+    }
+    .wb-label {
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      font-weight: 500;
+    }
+    .preset-group {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+    .preset-pill {
+      font: inherit;
+      font-size: 11px;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      padding: 4px 9px;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .preset-pill:hover {
+      border-color: var(--ink);
+    }
+    .preset-pill.active {
+      background: var(--ink);
+      color: var(--sheet);
+      border-color: var(--ink);
+      font-weight: 500;
+    }
+    .replay-bar {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .wb-select, .wb-date, .wb-text {
+      font: inherit;
+      font-size: 11px;
+      color: var(--ink);
+      background: var(--paper);
+      border: 1px solid var(--control);
+      border-radius: 2px;
+      padding: 3px 7px;
+      min-block-size: 26px;
+    }
+    .wb-select { max-width: 295px; }
+    .wb-text { flex: 1; min-width: 200px; background: var(--sheet); }
+
+    .sliders-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(135px, 1fr));
+      gap: 8px 12px;
+      padding-top: 8px;
+      border-top: 1px solid var(--rule);
+    }
+    @media (max-width: 1180px) {
+      .sliders-grid { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+    }
+    @media (max-width: 680px) {
+      .sliders-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
+      .replay-bar { margin-left: 0; }
+    }
+    .slider-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      padding: 5px 8px 6px;
+    }
+    .slider-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 4px;
+      font-size: 10.5px;
+      color: var(--muted);
+    }
+    .slider-val {
+      font-weight: 500;
+      color: var(--ink);
+      font-variant-numeric: tabular-nums;
+    }
+    .slider-cell input[type="range"] {
+      width: 100%;
+      margin: 2px 0 0;
+      accent-color: var(--blue);
+      cursor: pointer;
+    }
+
+    .llm-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px 14px;
+      flex-wrap: wrap;
+      padding-top: 8px;
+      border-top: 1px dashed var(--rule);
+    }
+    .llm-bar[hidden] { display: none !important; }
+    .status-banner {
+      font-size: 11px;
+      color: var(--blue);
+      font-weight: 500;
+    }
+    .status-banner.err { color: var(--red); }
+
+    /* KPI Strip */
+    .kpi-strip {
+      display: grid;
+      grid-template-columns: 1.25fr 1.15fr 1.15fr 1.35fr;
+      gap: 10px;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+    }
+    @media (max-width: 1024px) {
+      .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 600px) {
+      .kpi-strip { grid-template-columns: 1fr; }
+    }
+    .kpi-card {
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .kpi-label {
+      font-size: 10.5px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .kpi-main {
+      font-size: 16px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      color: var(--ink);
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .kpi-sub {
+      font-size: 10.5px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .pos { color: var(--green-text); }
+    .neg { color: var(--red); }
+    .warn { color: var(--amber-text); }
+
+    /* Main Split Board */
+    .board {
+      display: flex;
+      gap: 12px;
+      align-items: stretch;
+      min-height: 540px;
+    }
+    @media (max-width: 1080px) {
+      .board { flex-direction: column; }
+    }
+    .pane {
+      flex: 1;
+      min-width: 0;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      display: flex;
+      flex-direction: column;
+    }
+    .pane-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px 14px;
+      flex-wrap: wrap;
+      padding: 7px 12px;
+      border-bottom: 1px solid var(--rule);
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+    }
+    .legend-inline {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .leg-swatch {
+      display: inline-block;
+      width: 16px;
+      height: 0;
+      vertical-align: middle;
+      margin-right: 5px;
+    }
+    .sw-sim { border-top: 2.5px solid var(--ochre); }
+    .sw-real { border-top: 2.5px solid var(--blue); }
+    .sw-fan {
+      height: 8px;
+      background: color-mix(in oklab, var(--ochre) 24%, transparent);
+      border: 1px solid color-mix(in oklab, var(--ochre) 48%, transparent);
+    }
+
+    .charts-stack {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    @media (max-width: 820px) {
+      .charts-stack { grid-template-columns: 1fr; }
+    }
+    .chart-box {
+      padding: 8px 10px 6px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .chart-box + .chart-box {
+      border-left: 1px solid var(--rule);
+    }
+    @media (max-width: 820px) {
+      .chart-box + .chart-box { border-left: none; border-top: 1px solid var(--rule); }
+    }
+    .chart-caption {
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .chart-caption b { color: var(--ink); font-weight: 500; }
+    canvas.sim-canvas {
+      width: 100%;
+      height: 225px;
+      display: block;
+      cursor: pointer;
+    }
+
+    /* Trajectory Ledger Table */
+    .ledger-wrap {
+      overflow-x: auto;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    th {
+      font-weight: 500;
+      font-size: 10.5px;
+      color: var(--muted);
+      text-align: right;
+      padding: 6px 9px;
+      border-bottom: 1px solid var(--rule);
+      white-space: nowrap;
+    }
+    td {
+      padding: 5px 9px;
+      text-align: right;
+      white-space: nowrap;
+      border-bottom: 1px solid color-mix(in oklab, var(--rule) 45%, transparent);
+    }
+    th:first-child, td:first-child { text-align: left; }
+    tbody tr.step-row { cursor: pointer; }
+    tbody tr.step-row:hover { background: color-mix(in oklab, var(--ink) 6%, var(--sheet)); }
+    tbody tr.step-row.active {
+      background: color-mix(in oklab, var(--ochre) 14%, var(--sheet));
+      font-weight: 500;
+    }
+
+    /* Right Aside: Actor Cards & Backtest Scoreboard */
+    aside {
+      width: 465px;
+      flex: none;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      display: flex;
+      flex-direction: column;
+      font-family: "IBM Plex Mono", ui-monospace, monospace;
+      font-size: 11.5px;
+    }
+    @media (max-width: 1080px) {
+      aside { width: auto; }
+    }
+    .aside-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 11px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .aside-body {
+      padding: 10px 12px;
+      overflow-y: auto;
+      max-height: 640px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .aside-body[hidden] { display: none !important; }
+
+    .step-pills {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .step-pill {
+      font: inherit;
+      font-size: 10.5px;
+      padding: 2px 7px;
+      background: var(--paper);
+      color: var(--muted);
+      border: 1px solid var(--rule);
+      border-radius: 2px;
+      cursor: pointer;
+    }
+    .step-pill.active {
+      background: var(--ink);
+      color: var(--sheet);
+      border-color: var(--ink);
+      font-weight: 500;
+    }
+
+    .actor-card {
+      border: 1px solid var(--rule);
+      background: var(--paper);
+      padding: 8px 10px;
+      border-radius: 2px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .actor-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .actor-name {
+      font-weight: 500;
+      color: var(--ink);
+      font-size: 11.5px;
+    }
+    .actor-badge {
+      font-size: 10px;
+      padding: 0 5px;
+      border: 1px solid var(--rule);
+      background: var(--sheet);
+      color: var(--muted);
+    }
+    .flow-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 5px 10px;
+    }
+    .flow-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .flow-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .flow-track {
+      position: relative;
+      height: 7px;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      overflow: hidden;
+    }
+    .flow-mid {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      background: var(--control);
+    }
+    .flow-fill {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+    }
+    .actor-why {
+      font-size: 10.5px;
+      color: var(--muted);
+      line-height: 1.45;
+      border-top: 1px dashed var(--rule);
+      padding-top: 4px;
+      word-break: break-word;
+    }
+
+    .bt-block + .bt-block {
+      padding-top: 10px;
+      border-top: 1px solid var(--rule);
+    }
+    .bt-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--ink);
+      margin: 0 0 5px;
+    }
+    .bt-table { font-size: 10.5px; }
+    .bt-table th, .bt-table td { padding: 3px 5px; }
+    .note {
+      font-size: 10.5px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .sample-row { cursor: pointer; }
+    .sample-row:hover { background: color-mix(in oklab, var(--blue) 12%, var(--sheet)); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="head-left">
+        <h1>Policy &amp; Macro Shock Simulator</h1>
+        <span class="sub">显式 5 维状态清算 · 异质机构角色博弈（Computed, not narrated）</span>
+        <span class="sub">
+          <a href="/">Signals →</a> ·
+          <a href="/vxn">VXN →</a> ·
+          <a href="/agent">Agent scoreboard →</a>
+        </span>
+      </div>
+      <div class="market-tabs" id="mode-tabs" role="tablist" aria-label="Simulation actor backend">
+        <button type="button" class="market-tab active" data-mode="rule" title="微观测度标定的 4 类异质机构行为函数（毫秒级实时滑块推演）">异质规则秒算 (Rule)</button>
+        <button type="button" class="market-tab" data-mode="homogeneous" title="消融实验对照：将 4 个角色退化为单一无差别交易员">同质消融对照 (Ablation)</button>
+        <button type="button" class="market-tab" data-mode="llm" title="调用真实大模型（DeepSeek × Qwen）并发扮演 4 类机构提交头寸向量">AI 多模型实盘 (LLM)</button>
+      </div>
+    </header>
+
+    <section class="workbench" aria-label="Scenario and shock controls">
+      <div class="wb-row">
+        <span class="wb-label">预设政策冲击</span>
+        <div class="preset-group" id="preset-buttons"></div>
+
+        <div class="replay-bar">
+          <span class="wb-label">历史事件回放</span>
+          <select id="replay-select" class="wb-select" aria-label="选择历史 FOMC/CPI/NFP 事件并叠加真实走势">
+            <option value="">— 最新盘面推演（无历史未来数据） —</option>
+          </select>
+          <select id="replay-anchor" class="wb-select" title="回放起点：冲击传导从事件前一日收盘起算；事后消化从事件当日收盘起算">
+            <option value="pre">冲击传导 (t-1 → t0..)</option>
+            <option value="post">事后消化 (t0 → t0+H)</option>
+          </select>
+          <input type="date" id="anchor-date" class="wb-date" title="自定义基准交易日 (As-Of Session Close)">
+        </div>
+      </div>
+
+      <div class="wb-row">
+        <span class="wb-label">情景描述</span>
+        <input type="text" id="shock-title" class="wb-text" placeholder="输入政策假设或事件描述（在 AI 实盘模式下会直接注入各机构角色 Prompt）…">
+        <span class="wb-label">推演步数</span>
+        <div class="preset-group" id="horizon-pills">
+          <button type="button" class="preset-pill" data-steps="3">3 交易日</button>
+          <button type="button" class="preset-pill active" data-steps="5">5 交易日</button>
+          <button type="button" class="preset-pill" data-steps="10">10 交易日</button>
+        </div>
+        <button type="button" class="ctxbar-btn" id="reset-btn" title="恢复当前预设默认参数">重置参数</button>
+      </div>
+
+      <div class="sliders-grid">
+        <div class="slider-cell">
+          <div class="slider-top"><span>10Y 利率冲击</span><span class="slider-val" id="val-rate">+6.0 bp</span></div>
+          <input type="range" id="sl-rate" min="-40" max="40" step="1" value="6">
+        </div>
+        <div class="slider-cell">
+          <div class="slider-top"><span>美元冲击 DXY</span><span class="slider-val" id="val-fx">+0.65%</span></div>
+          <input type="range" id="sl-fx" min="-2.0" max="2.0" step="0.05" value="0.65">
+        </div>
+        <div class="slider-cell">
+          <div class="slider-top"><span>通胀意外</span><span class="slider-val" id="val-infl">+1.35 σ</span></div>
+          <input type="range" id="sl-infl" min="-3.0" max="3.0" step="0.05" value="1.35">
+        </div>
+        <div class="slider-cell">
+          <div class="slider-top"><span>增长意外</span><span class="slider-val" id="val-grow">-0.90 σ</span></div>
+          <input type="range" id="sl-grow" min="-3.0" max="3.0" step="0.05" value="-0.90">
+        </div>
+        <div class="slider-cell">
+          <div class="slider-top"><span>新增关税税率</span><span class="slider-val" id="val-tariff">25.0%</span></div>
+          <input type="range" id="sl-tariff" min="0" max="50" step="1" value="25">
+        </div>
+        <div class="slider-cell">
+          <div class="slider-top"><span>政策不确定性</span><span class="slider-val" id="val-unc">+1.60 σ</span></div>
+          <input type="range" id="sl-unc" min="-1.5" max="3.0" step="0.05" value="1.60">
+        </div>
+      </div>
+
+      <div class="llm-bar" id="llm-bar" hidden>
+        <div class="wb-row">
+          <span class="wb-label">AI 角色模型编排</span>
+          <select id="llm-models" class="wb-select">
+            <option value="deepseek-chat,qwen3.8-flash" selected>异构混编：DeepSeek-Chat × Qwen3.8-Flash</option>
+            <option value="deepseek-chat">全角色：DeepSeek-Chat</option>
+            <option value="qwen3.8-flash">全角色：Qwen3.8-Flash</option>
+          </select>
+          <button type="button" class="ctxbar-btn primary" id="run-llm-btn">▶ 运行 AI 多主体实盘推演</button>
+          <span class="status-banner" id="llm-status">切换滑块或情景后，点击左侧按钮发起实时大模型推演</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="kpi-strip" aria-label="Simulation summary metrics">
+      <div class="kpi-card">
+        <div class="kpi-label"><span>时点快照与宏观制度 (As-Of Gate)</span><span id="kpi-mode-tag">rule</span></div>
+        <div class="kpi-main" id="kpi-asof">—</div>
+        <div class="kpi-sub" id="kpi-regime">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label"><span>Nasdaq-100 (^NDX) 终端推演</span><span id="kpi-ndx-band">—</span></div>
+        <div class="kpi-main" id="kpi-ndx">—</div>
+        <div class="kpi-sub" id="kpi-ndx-real">80% 置信扇区基于前序残差波动率标定</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label"><span>隐含波动率 (^VXN) 终端推演</span><span id="kpi-vxn-band">—</span></div>
+        <div class="kpi-main" id="kpi-vxn">—</div>
+        <div class="kpi-sub" id="kpi-vxn-real">含 OU 均值回归 + 期限结构回落 + 负 Gamma</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label"><span>校准事件概率 (Calibrated Odds)</span><span id="kpi-cost">0 tokens</span></div>
+        <div class="kpi-main" id="kpi-probs">—</div>
+        <div class="kpi-sub" id="kpi-tail">—</div>
+      </div>
+    </section>
+
+    <div class="board">
+      <div class="pane">
+        <div class="pane-head">
+          <span>状态转移路径与 10%–90% 概率扇形图（点击图上步数或下方表格行，右侧查看当日 4 类机构动作）</span>
+          <div class="legend-inline">
+            <span><i class="leg-swatch sw-sim"></i>仿真中位数路径 (Simulated)</span>
+            <span><i class="leg-swatch sw-fan"></i>10%–90% 置信扇区</span>
+            <span id="real-legend" hidden><i class="leg-swatch sw-real"></i>历史真实收盘 (Realised)</span>
+          </div>
+        </div>
+
+        <div class="charts-stack">
+          <div class="chart-box">
+            <div class="chart-caption">
+              <span><b>^NDX</b> · Nasdaq-100 指数清算路径</span>
+              <span id="cap-ndx">—</span>
+            </div>
+            <canvas id="canvas-ndx" class="sim-canvas"></canvas>
+          </div>
+          <div class="chart-box">
+            <div class="chart-caption">
+              <span><b>^VXN</b> · 隐含波动率与期限结构传导</span>
+              <span id="cap-vxn">—</span>
+            </div>
+            <canvas id="canvas-vxn" class="sim-canvas"></canvas>
+          </div>
+        </div>
+
+        <div class="ledger-wrap">
+          <table aria-label="Step-by-step market-clearing state ledger">
+            <thead>
+              <tr>
+                <th scope="col">Step</th>
+                <th scope="col">净股票流 F_eq</th>
+                <th scope="col">净保护流 F_vol</th>
+                <th scope="col">分歧度</th>
+                <th scope="col">Kyle λ</th>
+                <th scope="col">仿真 ^NDX</th>
+                <th scope="col">单步涨跌</th>
+                <th scope="col">真实 ^NDX</th>
+                <th scope="col">仿真 ^VXN</th>
+                <th scope="col">真实 ^VXN</th>
+                <th scope="col">10Y ^TNX</th>
+                <th scope="col">ln(HYG/TLT)</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <aside aria-label="Heterogeneous actor inspector and historical backtest">
+        <div class="aside-top">
+          <span style="font-weight:500;" id="aside-heading">异质机构角色博弈明细</span>
+          <div class="preset-group">
+            <button type="button" class="ctxbar-btn active" id="tab-actors-btn">角色动作 (4)</button>
+            <button type="button" class="ctxbar-btn" id="tab-bt-btn">488次历史回测</button>
+          </div>
+        </div>
+
+        <div class="aside-body" id="actors-view">
+          <div class="wb-row" style="justify-content:space-between;">
+            <span class="note">选择推演步查看当日各机构头寸向量 `[-1, +1]`：</span>
+            <div class="step-pills" id="step-pills"></div>
+          </div>
+          <div id="actor-cards" style="display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <div class="aside-body" id="bt-view" hidden>
+          <div class="wb-row" style="justify-content:space-between;">
+            <span class="note" id="bt-meta">加载 488 次 FOMC/CPI/NFP 历史回测…</span>
+            <button type="button" class="ctxbar-btn" id="bt-refresh-btn" title="重新运行全量 488 次历史事件回测">↻ 重算回测</button>
+          </div>
+          <div id="bt-content" style="display:flex;flex-direction:column;gap:10px;"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const ACTOR_NAMES = {
+        macro_fund: "宏观对冲基金 · Global Macro (30%)",
+        vol_target_cta: "波动率目标 CTA · Vol-Target (25%)",
+        corp_credit_hedger: "企业与信用套保盘 · Corp/Credit (25%)",
+        options_dealer_mm: "期权做市商 · Dealer Gamma (20%)",
+      };
+
+      let initBundle = null;
+      let presetsById = {};
+      let replayEvents = [];
+      let currentResult = null;
+      let activePreset = "tariff_25";
+      let activeMode = "rule";
+      let activeSteps = 5;
+      let inspectedStep = 1;
+      let debounceTimer = null;
+      let runningLLM = false;
+      let backtestLoaded = false;
+
+      const el = (sel) => document.querySelector(sel);
+      const escapeHtml = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const fmtSigned = (v, d = 2, suffix = "") => {
+        const n = Number(v || 0);
+        return (n >= 0 ? "+" : "−") + Math.abs(n).toFixed(d) + suffix;
+      };
+
+      function readSliders() {
+        return {
+          rate_bps: Number(el("#sl-rate").value),
+          fx_pct: Number(el("#sl-fx").value),
+          inflation_z: Number(el("#sl-infl").value),
+          growth_z: Number(el("#sl-grow").value),
+          tariff_pct: Number(el("#sl-tariff").value),
+          uncertainty_z: Number(el("#sl-unc").value),
+        };
+      }
+
+      function syncSliderLabels() {
+        const s = readSliders();
+        el("#val-rate").textContent = fmtSigned(s.rate_bps, 1, " bp");
+        el("#val-fx").textContent = fmtSigned(s.fx_pct, 2, "%");
+        el("#val-infl").textContent = fmtSigned(s.inflation_z, 2, " σ");
+        el("#val-grow").textContent = fmtSigned(s.growth_z, 2, " σ");
+        el("#val-tariff").textContent = s.tariff_pct.toFixed(1) + "%";
+        el("#val-unc").textContent = fmtSigned(s.uncertainty_z, 2, " σ");
+      }
+
+      function applyShockToControls(shock) {
+        el("#sl-rate").value = shock.rate_bps ?? 0;
+        el("#sl-fx").value = shock.fx_pct ?? 0;
+        el("#sl-infl").value = shock.inflation_z ?? 0;
+        el("#sl-grow").value = shock.growth_z ?? 0;
+        el("#sl-tariff").value = shock.tariff_pct ?? 0;
+        el("#sl-unc").value = shock.uncertainty_z ?? 0;
+        if (shock.title !== undefined) {
+          el("#shock-title").value = shock.title;
+        }
+        syncSliderLabels();
+      }
+
+      function buildRequestPayload() {
+        const s = readSliders();
+        const preset = presetsById[activePreset] || {};
+        return {
+          scenario: activePreset || "custom",
+          kind: preset.kind || "custom",
+          title: el("#shock-title").value.trim(),
+          day: el("#anchor-date").value || null,
+          steps: activeSteps,
+          mode: activeMode,
+          models: el("#llm-models").value,
+          ...s,
+        };
+      }
+
+      async function runFastSim() {
+        if (activeMode === "llm") {
+          el("#llm-status").className = "status-banner";
+          el("#llm-status").textContent = "参数已就绪，点击「▶ 运行 AI 多主体实盘推演」调用大模型角色";
+          return;
+        }
+        try {
+          const res = await fetch("/api/sim/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(buildRequestPayload()),
+          });
+          const doc = await res.json();
+          if (!res.ok || !doc.ok) throw new Error(doc.error || ("HTTP " + res.status));
+          currentResult = doc;
+          if (inspectedStep > doc.steps.length) inspectedStep = 1;
+          renderAll();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      function scheduleSim() {
+        syncSliderLabels();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(runFastSim, 45);
+      }
+
+      async function runStreamingLLMSim() {
+        if (runningLLM) return;
+        runningLLM = true;
+        const btn = el("#run-llm-btn");
+        const status = el("#llm-status");
+        btn.disabled = true;
+        btn.textContent = "推演中…";
+        status.className = "status-banner";
+        status.textContent = "正在冻结时点状态并并发唤醒 4 类 AI 机构角色…";
+
+        try {
+          const payload = buildRequestPayload();
+          payload.mode = "llm";
+          const res = await fetch("/api/sim/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok || !res.body) throw new Error("HTTP " + res.status);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          let partialSteps = [];
+          let initState = null;
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() || "";
+            for (const raw of lines) {
+              if (!raw.trim()) continue;
+              const evt = JSON.parse(raw);
+              if (evt.type === "start") {
+                initState = evt.initial_state;
+              } else if (evt.type === "thinking") {
+                status.textContent = `正在清算第 ${evt.step}/${evt.steps} 交易日 · 4 个 AI 机构并发提交订单流 (${(evt.models || []).join(" × ")})…`;
+              } else if (evt.type === "step" && evt.step_data) {
+                partialSteps.push(evt.step_data);
+                if (initState && currentResult) {
+                  inspectedStep = evt.step;
+                  currentResult = {
+                    ...currentResult,
+                    mode: "llm",
+                    initial_state: initState,
+                    steps: partialSteps.slice(),
+                    final_state: evt.step_data.state_after,
+                  };
+                  renderAll();
+                }
+              } else if (evt.type === "done" && evt.result) {
+                currentResult = evt.result;
+                inspectedStep = 1;
+                renderAll();
+                const u = evt.result.usage || {};
+                status.textContent = `✓ AI 多主体推演完成 · 耗时 ${(u.latency_s || 0).toFixed(1)}s · 成本 $${Number(u.cost_usd || 0).toFixed(5)}`;
+              } else if (evt.type === "error") {
+                throw new Error(evt.error || "LLM stream error");
+              }
+            }
+          }
+        } catch (err) {
+          status.className = "status-banner err";
+          status.textContent = "⚠ 调用失败：" + (err && err.message ? err.message : String(err));
+        } finally {
+          runningLLM = false;
+          btn.disabled = false;
+          btn.textContent = "▶ 运行 AI 多主体实盘推演";
+        }
+      }
+
+      function renderKPIs() {
+        if (!currentResult) return;
+        const init = currentResult.initial_state;
+        const fin = currentResult.final_state;
+        const dist = currentResult.distribution || {};
+        const overlay = currentResult.realized_overlay;
+        const ndxPct = currentResult.cumulative_ndx_return_pct ?? ((fin.ndx / init.ndx - 1) * 100);
+        const vxnChg = currentResult.cumulative_vxn_change ?? (fin.vxn - init.vxn);
+
+        el("#kpi-mode-tag").textContent = currentResult.mode;
+        el("#kpi-asof").textContent = `${init.as_of} (${currentResult.steps.length}d)`;
+        const regParts = (init.regime || "").split(":");
+        const regZh = regParts[0] === "inflation_discount_rate" ? "通胀折现率主导" : "增长再通胀主导";
+        const liqZh = regParts[1] === "stressed_backwardation" ? "期限倒挂承压" : "流动性平稳";
+        el("#kpi-regime").textContent = `${regZh} · ${liqZh} · 股债相关 ${fmtSigned(init.stock_yield_corr_63d, 2)} · VIX9D/3M ${Number(init.vol_term_ratio).toFixed(2)}`;
+
+        const qRet = dist.ndx_return_pct_quantiles || {};
+        el("#kpi-ndx-band").textContent = qRet.p10 !== undefined ? `80% [${fmtSigned(qRet.p10, 1, "%")}, ${fmtSigned(qRet.p90, 1, "%")}]` : "";
+        el("#kpi-ndx").innerHTML =
+          `<span>${Number(fin.ndx).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>` +
+          `<span class="${ndxPct >= 0 ? "pos" : "neg"}">${fmtSigned(ndxPct, 2, "%")}</span>`;
+        if (overlay && overlay.resolved_steps > 0) {
+          el("#kpi-ndx-real").innerHTML =
+            `历史真实 (${overlay.resolved_steps}d): <b>${Number(overlay.terminal_ndx).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b> ` +
+            `(<span class="${overlay.terminal_ndx_ret_pct >= 0 ? "pos" : "neg"}">${fmtSigned(overlay.terminal_ndx_ret_pct, 2, "%")}</span>)`;
+        } else {
+          el("#kpi-ndx-real").textContent = `起点 ${Number(init.ndx).toLocaleString("en-US", { minimumFractionDigits: 2 })} · 10Y 利率 ${init.tnx_pct.toFixed(2)}% → ${fin.tnx_pct.toFixed(2)}%`;
+        }
+
+        const qVxn = dist.vxn_terminal_quantiles || {};
+        el("#kpi-vxn-band").textContent = qVxn.p10 !== undefined ? `80% [${Number(qVxn.p10).toFixed(1)}, ${Number(qVxn.p90).toFixed(1)}]` : "";
+        el("#kpi-vxn").innerHTML =
+          `<span>${Number(fin.vxn).toFixed(2)}</span>` +
+          `<span class="${vxnChg > 0 ? "warn" : "pos"}">${fmtSigned(vxnChg, 2, " pts")}</span>`;
+        if (overlay && overlay.resolved_steps > 0) {
+          el("#kpi-vxn-real").innerHTML =
+            `历史真实 (${overlay.resolved_steps}d): <b>${Number(overlay.terminal_vxn).toFixed(2)}</b> ` +
+            `(${fmtSigned(overlay.terminal_vxn_chg, 2, " pts")})`;
+        } else {
+          el("#kpi-vxn-real").textContent = `起点 ${Number(init.vxn).toFixed(2)} · 252d 中位锚点 ${Number(init.vxn_median_252d).toFixed(2)}`;
+        }
+
+        if (dist.p_ndx_up !== undefined) {
+          el("#kpi-probs").innerHTML =
+            `<span>NDX涨 ${(dist.p_ndx_up * 100).toFixed(1)}%</span> · ` +
+            `<span>VXN升 ${(dist.p_vxn_up * 100).toFixed(1)}%</span>`;
+          el("#kpi-tail").textContent = `尾部风险 P(^NDX 累计回撤超 2%) = ${(dist.p_ndx_drawdown_gt_2pct * 100).toFixed(1)}%`;
+        }
+        const u = currentResult.usage || {};
+        el("#kpi-cost").textContent = u.prompt_tokens ? `$${Number(u.cost_usd || 0).toFixed(5)} (${u.prompt_tokens + u.completion_tokens} tok)` : "0 API cost";
+      }
+
+      function drawTrajectoryCanvas(canvas, opts) {
+        const p = fcTheme.palette();
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        const W = Math.max(260, rect.width || 420);
+        const H = Math.max(180, rect.height || 225);
+        canvas.width = Math.round(W * dpr);
+        canvas.height = Math.round(H * dpr);
+        const ctx = canvas.getContext("2d");
+        ctx.scale(dpr, dpr);
+
+        ctx.fillStyle = p.sheet;
+        ctx.fillRect(0, 0, W, H);
+
+        const padL = 56, padR = 18, padT = 14, padB = 26;
+        const plotW = W - padL - padR;
+        const plotH = H - padT - padB;
+        const N = opts.simValues.length - 1;
+        if (N < 1) return;
+
+        let allVals = [...opts.simValues, ...opts.lowBand, ...opts.highBand];
+        if (opts.realValues && opts.realValues.length) allVals.push(...opts.realValues);
+        if (opts.anchorLine != null) allVals.push(opts.anchorLine);
+        let minV = Math.min(...allVals);
+        let maxV = Math.max(...allVals);
+        const span = Math.max(maxV - minV, maxV * 0.01, 0.5);
+        minV -= span * 0.10;
+        maxV += span * 0.10;
+
+        const xOf = (step) => padL + (step / N) * plotW;
+        const yOf = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
+
+        // Grid & Y labels
+        ctx.font = '10.5px "IBM Plex Mono", monospace';
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        for (let i = 0; i <= 4; i++) {
+          const v = minV + (i / 4) * (maxV - minV);
+          const y = yOf(v);
+          ctx.strokeStyle = p.grid;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(padL, y);
+          ctx.lineTo(W - padR, y);
+          ctx.stroke();
+          ctx.fillStyle = p.muted;
+          ctx.fillText(opts.formatY(v), padL - 6, y);
+        }
+
+        // Inspected step vertical highlight
+        if (inspectedStep >= 1 && inspectedStep <= N) {
+          const sx = xOf(inspectedStep);
+          ctx.strokeStyle = p.rule;
+          ctx.setLineDash([3, 3]);
+          ctx.beginPath();
+          ctx.moveTo(sx, padT);
+          ctx.lineTo(sx, H - padB);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Optional horizontal anchor line (e.g. VXN 252d median or NDX base close)
+        if (opts.anchorLine != null) {
+          const ay = yOf(opts.anchorLine);
+          ctx.strokeStyle = p.muted;
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 4]);
+          ctx.beginPath();
+          ctx.moveTo(padL, ay);
+          ctx.lineTo(W - padR, ay);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // 10%-90% Fan Polygon
+        ctx.fillStyle = p.dark ? "rgba(217, 165, 95, 0.17)" : "rgba(138, 90, 18, 0.14)";
+        ctx.beginPath();
+        for (let i = 0; i <= N; i++) {
+          const x = xOf(i), y = yOf(opts.highBand[i]);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        for (let i = N; i >= 0; i--) {
+          ctx.lineTo(xOf(i), yOf(opts.lowBand[i]));
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Realised overlay line (solid blue)
+        if (opts.realValues && opts.realValues.length > 1) {
+          ctx.strokeStyle = p.blue;
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          opts.realValues.forEach((v, idx) => {
+            const x = xOf(idx), y = yOf(v);
+            if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+          opts.realValues.forEach((v, idx) => {
+            ctx.fillStyle = p.blue;
+            ctx.beginPath();
+            ctx.arc(xOf(idx), yOf(v), 3, 0, Math.PI * 2);
+            ctx.fill();
+          });
+        }
+
+        // Simulated median line (solid ochre)
+        ctx.strokeStyle = p.ochre;
+        ctx.lineWidth = 2.4;
+        ctx.beginPath();
+        opts.simValues.forEach((v, idx) => {
+          const x = xOf(idx), y = yOf(v);
+          if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        opts.simValues.forEach((v, idx) => {
+          const active = idx === inspectedStep;
+          ctx.fillStyle = active ? p.ink : p.ochre;
+          ctx.beginPath();
+          ctx.arc(xOf(idx), yOf(v), active ? 4.6 : 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        // X axis labels
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillStyle = p.muted;
+        for (let i = 0; i <= N; i++) {
+          if (N > 6 && i % 2 === 1 && i !== N) continue;
+          ctx.fillText(i === 0 ? "t0" : `t+${i}`, xOf(i), H - padB + 6);
+        }
+
+        canvas._stepHit = (clientX) => {
+          const b = canvas.getBoundingClientRect();
+          const relX = clientX - b.left - padL;
+          const step = Math.round((relX / plotW) * N);
+          return Math.max(1, Math.min(N, step));
+        };
+      }
+
+      function renderCharts() {
+        if (!currentResult || !currentResult.steps.length) return;
+        const init = currentResult.initial_state;
+        const steps = currentResult.steps;
+        const H = steps.length;
+        const dist = currentResult.distribution || {};
+        const overlay = currentResult.realized_overlay;
+        el("#real-legend").hidden = !(overlay && overlay.resolved_steps > 0);
+
+        const simNdx = [init.ndx, ...steps.map((s) => s.state_after.ndx)];
+        const simVxn = [init.vxn, ...steps.map((s) => s.state_after.vxn)];
+
+        // Construct smooth sqrt(s/H) fan bounds matching terminal p10 / p90 quantiles
+        const qRet = (dist.ndx_return_pct_quantiles || { p10: -3, p50: 0, p90: 3 });
+        const termLowRatio = (1 + (qRet.p10 / 100)) / Math.max(0.2, 1 + (qRet.p50 / 100));
+        const termHighRatio = (1 + (qRet.p90 / 100)) / Math.max(0.2, 1 + (qRet.p50 / 100));
+        const ndxLow = simNdx.map((v, i) => (i === 0 ? v : v * Math.pow(termLowRatio, Math.sqrt(i / H))));
+        const ndxHigh = simNdx.map((v, i) => (i === 0 ? v : v * Math.pow(termHighRatio, Math.sqrt(i / H))));
+
+        const qVxn = (dist.vxn_terminal_quantiles || { p10: init.vxn - 3, p50: simVxn[H], p90: init.vxn + 4 });
+        const vSpreadLow = (qVxn.p50 - qVxn.p10);
+        const vSpreadHigh = (qVxn.p90 - qVxn.p50);
+        const vxnLow = simVxn.map((v, i) => (i === 0 ? v : Math.max(9.0, v - vSpreadLow * Math.sqrt(i / H))));
+        const vxnHigh = simVxn.map((v, i) => (i === 0 ? v : v + vSpreadHigh * Math.sqrt(i / H)));
+
+        const realNdx = overlay && overlay.points ? overlay.points.map((pt) => pt.ndx) : null;
+        const realVxn = overlay && overlay.points ? overlay.points.map((pt) => pt.vxn) : null;
+
+        const stepObj = steps[Math.min(inspectedStep, H) - 1];
+        el("#cap-ndx").textContent = stepObj ? `选中 t+${stepObj.step}: ${Number(stepObj.state_after.ndx).toFixed(2)}` : "";
+        el("#cap-vxn").textContent = stepObj ? `选中 t+${stepObj.step}: ${Number(stepObj.state_after.vxn).toFixed(2)}` : "";
+
+        drawTrajectoryCanvas(el("#canvas-ndx"), {
+          simValues: simNdx,
+          lowBand: ndxLow,
+          highBand: ndxHigh,
+          realValues: realNdx,
+          anchorLine: init.ndx,
+          formatY: (v) => Math.round(v).toLocaleString("en-US"),
+        });
+        drawTrajectoryCanvas(el("#canvas-vxn"), {
+          simValues: simVxn,
+          lowBand: vxnLow,
+          highBand: vxnHigh,
+          realValues: realVxn,
+          anchorLine: init.vxn_median_252d,
+          formatY: (v) => v.toFixed(1),
+        });
+      }
+
+      function renderLedger() {
+        if (!currentResult) return;
+        const init = currentResult.initial_state;
+        const overlay = currentResult.realized_overlay;
+        const realByStep = {};
+        if (overlay && overlay.points) {
+          overlay.points.forEach((pt) => { realByStep[pt.step] = pt; });
+        }
+
+        const rows = [];
+        const r0 = realByStep[0];
+        rows.push(
+          `<tr class=" weak">` +
+          `<td>t0 (${escapeHtml(init.as_of.slice(5))})</td>` +
+          `<td>—</td><td>—</td><td>—</td><td>—</td>` +
+          `<td>${Number(init.ndx).toFixed(2)}</td><td>0.00%</td>` +
+          `<td>${r0 ? Number(r0.ndx).toFixed(2) : "—"}</td>` +
+          `<td>${Number(init.vxn).toFixed(2)}</td>` +
+          `<td>${r0 ? Number(r0.vxn).toFixed(2) : "—"}</td>` +
+          `<td>${Number(init.tnx_pct).toFixed(3)}%</td>` +
+          `<td>${Number(init.credit_log_hyg_tlt).toFixed(4)}</td>` +
+          `</tr>`
+        );
+
+        currentResult.steps.forEach((s) => {
+          const cl = s.clearing;
+          const st = s.state_after;
+          const dPct = (Math.exp(cl.step_equity_log_return) - 1) * 100;
+          const realPt = realByStep[s.step];
+          const isAct = s.step === inspectedStep;
+          rows.push(
+            `<tr class="step-row ${isAct ? "active" : ""}" data-step="${s.step}">` +
+            `<td>t+${s.step}${realPt ? " (" + escapeHtml(realPt.date.slice(5)) + ")" : ""}</td>` +
+            `<td class="${cl.net_equity_flow >= 0 ? "pos" : "neg"}">${fmtSigned(cl.net_equity_flow, 3)}</td>` +
+            `<td class="${cl.net_vol_hedge_flow > 0 ? "warn" : ""}">${fmtSigned(cl.net_vol_hedge_flow, 3)}</td>` +
+            `<td>${Number(cl.actor_disagreement).toFixed(3)}</td>` +
+            `<td>${Number(cl.kyle_lambda).toFixed(4)}</td>` +
+            `<td>${Number(st.ndx).toFixed(2)}</td>` +
+            `<td class="${dPct >= 0 ? "pos" : "neg"}">${fmtSigned(dPct, 2, "%")}</td>` +
+            `<td>${realPt ? Number(realPt.ndx).toFixed(2) + " (" + fmtSigned(realPt.ndx_ret_pct, 1, "%") + ")" : "—"}</td>` +
+            `<td>${Number(st.vxn).toFixed(2)}</td>` +
+            `<td>${realPt ? Number(realPt.vxn).toFixed(2) : "—"}</td>` +
+            `<td>${Number(st.tnx_pct).toFixed(3)}%</td>` +
+            `<td>${Number(st.credit_log_hyg_tlt).toFixed(4)}</td>` +
+            `</tr>`
+          );
+        });
+        el("#ledger-rows").innerHTML = rows.join("");
+      }
+
+      function flowBarHtml(label, val, invertColor = false) {
+        const v = Math.max(-1, Math.min(1, Number(val || 0)));
+        const widthPct = Math.abs(v) * 50;
+        const leftPct = v >= 0 ? 50 : 50 - widthPct;
+        const isPos = invertColor ? v <= 0 : v >= 0;
+        const color = Math.abs(v) < 0.02 ? "var(--muted)" : (isPos ? "var(--green)" : "var(--red)");
+        return (
+          `<div class="flow-item">` +
+          `<div class="flow-meta"><span>${escapeHtml(label)}</span><span style="color:var(--ink)">${fmtSigned(v, 3)}</span></div>` +
+          `<div class="flow-track"><div class="flow-mid"></div>` +
+          `<div class="flow-fill" style="left:${leftPct}%;width:${widthPct}%;background:${color};"></div></div>` +
+          `</div>`
+        );
+      }
+
+      function renderActors() {
+        if (!currentResult || !currentResult.steps.length) return;
+        const H = currentResult.steps.length;
+        const sIdx = Math.max(1, Math.min(H, inspectedStep));
+        const stepObj = currentResult.steps[sIdx - 1];
+
+        el("#step-pills").innerHTML = currentResult.steps
+          .map((s) => `<button type="button" class="step-pill ${s.step === sIdx ? "active" : ""}" data-step="${s.step}">t+${s.step}</button>`)
+          .join("");
+
+        el("#actor-cards").innerHTML = (stepObj.actions || []).map((a) => {
+          return (
+            `<div class="actor-card">` +
+            `<div class="actor-head">` +
+            `<span class="actor-name">${escapeHtml(ACTOR_NAMES[a.actor_id] || a.actor_id)}</span>` +
+            `<span class="actor-badge">${escapeHtml(a.model)}</span>` +
+            `</div>` +
+            `<div class="flow-grid">` +
+            flowBarHtml("股票流 eq", a.equity_delta, false) +
+            flowBarHtml("久期流 bond", a.bond_delta, false) +
+            flowBarHtml("信用流 cred", a.credit_delta, false) +
+            flowBarHtml("保护需求 volH", a.vol_hedge_delta, true) +
+            `</div>` +
+            `<div class="actor-why">${escapeHtml(a.rationale || "—")}</div>` +
+            `</div>`
+          );
+        }).join("");
+      }
+
+      function renderAll() {
+        renderKPIs();
+        renderCharts();
+        renderLedger();
+        renderActors();
+      }
+
+      async function loadBacktest(force = false) {
+        el("#bt-meta").textContent = force ? "正在重算 488 次历史宏观冲击回测…" : "加载回测报告…";
+        el("#bt-refresh-btn").disabled = true;
+        try {
+          const res = await fetch(`/api/sim/backtest?force=${force ? "1" : "0"}&t=${Date.now()}`);
+          const rep = await res.json();
+          if (!res.ok || !rep.ok) throw new Error(rep.error || "failed");
+          backtestLoaded = true;
+          el("#bt-meta").textContent = `${rep.n_episodes} 次真实宏观事件 (${rep.first_event} → ${rep.last_event})`;
+
+          const t1Rows = Object.entries(rep.track1_shock_transmission || {}).map(([name, obj]) => {
+            const f = obj.full_sample || {}, h = obj.holdout_2021_plus || {};
+            return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(f.brier).toFixed(4)}</td><td>${(f.hit_direction * 100).toFixed(1)}%</td><td>${f.corr != null ? fmtSigned(f.corr, 3) : "—"}</td><td>${Number(h.brier).toFixed(4)}</td><td>${h.corr != null ? fmtSigned(h.corr, 3) : "—"}</td></tr>`;
+          }).join("");
+
+          const t2Rows = Object.entries(rep.track2_ex_ante_vxn_5d || {}).map(([name, r]) => {
+            return `<tr><th scope="row">${escapeHtml(name)}</th><td>${Number(r.brier).toFixed(4)}</td><td>${Number(r.ece).toFixed(3)}</td><td>${(r.hit_direction * 100).toFixed(1)}%</td><td>${Number(r.mean_probability).toFixed(3)}</td></tr>`;
+          }).join("");
+
+          const sampleRows = (rep.samples || []).slice(0, 12).map((s) => {
+            return `<tr class="sample-row" data-evdate="${escapeHtml(s.event_date)}" title="点击在左侧回放该次历史冲击并叠加真实走势">` +
+              `<td>${escapeHtml(s.event_date)}</td>` +
+              `<td>${escapeHtml(s.kind.toUpperCase())}</td>` +
+              `<td>${fmtSigned(s.rate_bps, 1, "bp")}</td>` +
+              `<td>${fmtSigned(s.pred_r0_pct, 2, "%")}</td>` +
+              `<td>${fmtSigned(s.actual_r0_pct, 2, "%")}</td>` +
+              `</tr>`;
+          }).join("");
+
+          el("#bt-content").innerHTML =
+            `<div class="bt-block">` +
+            `<div class="bt-title">1. 冲击当期传导 (t-1 → t0, 2021+ 制度反转检验)</div>` +
+            `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>命中</th><th>相关r</th><th>21+Brier</th><th>21+相关</th></tr></thead><tbody>${t1Rows}</tbody></table>` +
+            `</div>` +
+            `<div class="bt-block">` +
+            `<div class="bt-title">2. 事前 5d 波动率传导 P(VXN_{t+5} > VXN_t)</div>` +
+            `<table class="bt-table"><thead><tr><th>模型</th><th>Brier</th><th>ECE</th><th>命中</th><th>均值P</th></tr></thead><tbody>${t2Rows}</tbody></table>` +
+            `</div>` +
+            `<div class="bt-block">` +
+            `<div class="bt-title">点击任一历史事件一键回放对比真实走势：</div>` +
+            `<table class="bt-table"><thead><tr><th>事件日</th><th>类型</th><th>利率冲击</th><th>仿真r0</th><th>真实r0</th></tr></thead><tbody>${sampleRows}</tbody></table>` +
+            `</div>` +
+            `<div class="note">诚实边界说明：无后续外生冲击时，事前 5d 股指无条件漂移 Brier 为 0.2506（与常数 0.2500 持平），说明仿真引擎的真实 Alpha 在于「条件政策冲击传导」与「波动率期限结构消化」。</div>`;
+        } catch (err) {
+          el("#bt-meta").textContent = "回测加载失败：" + err.message;
+        } finally {
+          el("#bt-refresh-btn").disabled = false;
+        }
+      }
+
+      function triggerHistoricalReplay(evItem) {
+        if (!evItem) return;
+        const anchorMode = el("#replay-anchor").value;
+        document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.remove("active"));
+        activePreset = "custom";
+        if (anchorMode === "pre") {
+          el("#anchor-date").value = evItem.pre_event_date;
+          applyShockToControls({
+            rate_bps: evItem.rate_bps,
+            fx_pct: evItem.fx_pct,
+            inflation_z: evItem.kind === "cpi" ? Math.max(-2.5, Math.min(2.5, evItem.rate_bps / 10)) : 0,
+            growth_z: evItem.kind === "nfp" ? Math.max(-2.5, Math.min(2.5, evItem.rate_bps / 10)) : 0,
+            tariff_pct: 0,
+            uncertainty_z: Math.min(2.5, Math.abs(evItem.rate_bps) / 14),
+            title: `历史 ${evItem.kind.toUpperCase()} 冲击传导回放 (${evItem.event_date}, 当日真实 NDX ${fmtSigned(evItem.actual_r0_pct, 2, "%")})`,
+          });
+        } else {
+          el("#anchor-date").value = evItem.event_date;
+          applyShockToControls({
+            rate_bps: Number((evItem.rate_bps * 0.08).toFixed(1)),
+            fx_pct: Number((evItem.fx_pct * 0.08).toFixed(2)),
+            inflation_z: evItem.kind === "cpi" ? Number((evItem.rate_bps / 12 * 0.15).toFixed(2)) : 0,
+            growth_z: 0,
+            tariff_pct: 0,
+            uncertainty_z: Number((-0.22 * Math.max(-1, Math.min(1.5, evItem.actual_dv0 / 2.5))).toFixed(2)),
+            title: `历史 ${evItem.kind.toUpperCase()} 事后 5d 波动率消化 (${evItem.event_date} 收盘冻结)`,
+          });
+        }
+        runFastSim();
+      }
+
+      // Wire interactive events
+      ["#sl-rate", "#sl-fx", "#sl-infl", "#sl-grow", "#sl-tariff", "#sl-unc"].forEach((id) => {
+        el(id).addEventListener("input", () => {
+          document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.remove("active"));
+          scheduleSim();
+        });
+      });
+
+      el("#anchor-date").addEventListener("change", () => runFastSim());
+      el("#shock-title").addEventListener("change", () => { if (activeMode !== "llm") runFastSim(); });
+
+      el("#horizon-pills").addEventListener("click", (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        activeSteps = Number(btn.dataset.steps);
+        el("#horizon-pills").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+        runFastSim();
+      });
+
+      el("#mode-tabs").addEventListener("click", (e) => {
+        const btn = e.target.closest(".market-tab");
+        if (!btn) return;
+        activeMode = btn.dataset.mode;
+        el("#mode-tabs").querySelectorAll(".market-tab").forEach((b) => b.classList.toggle("active", b === btn));
+        el("#llm-bar").hidden = activeMode !== "llm";
+        runFastSim();
+      });
+
+      el("#run-llm-btn").addEventListener("click", runStreamingLLMSim);
+
+      el("#reset-btn").addEventListener("click", () => {
+        const p = presetsById[activePreset] || presetsById.tariff_25;
+        if (p) {
+          el("#replay-select").value = "";
+          if (initBundle) el("#anchor-date").value = initBundle.latest_date;
+          applyShockToControls(p);
+          runFastSim();
+        }
+      });
+
+      el("#replay-select").addEventListener("change", () => {
+        const evDate = el("#replay-select").value;
+        if (!evDate) {
+          if (initBundle) el("#anchor-date").value = initBundle.latest_date;
+          const p = presetsById.tariff_25;
+          if (p) {
+            activePreset = "tariff_25";
+            document.querySelectorAll("#preset-buttons .preset-pill").forEach((b) => b.classList.toggle("active", b.dataset.id === "tariff_25"));
+            applyShockToControls(p);
+          }
+          runFastSim();
+          return;
+        }
+        const found = replayEvents.find((x) => x.event_date === evDate);
+        if (found) triggerHistoricalReplay(found);
+      });
+
+      el("#replay-anchor").addEventListener("change", () => {
+        const evDate = el("#replay-select").value;
+        const found = replayEvents.find((x) => x.event_date === evDate);
+        if (found) triggerHistoricalReplay(found);
+      });
+
+      el("#ledger-rows").addEventListener("click", (e) => {
+        const tr = e.target.closest(".step-row");
+        if (!tr) return;
+        inspectedStep = Number(tr.dataset.step);
+        renderCharts();
+        renderLedger();
+        renderActors();
+      });
+
+      el("#step-pills").addEventListener("click", (e) => {
+        const btn = e.target.closest(".step-pill");
+        if (!btn) return;
+        inspectedStep = Number(btn.dataset.step);
+        renderCharts();
+        renderLedger();
+        renderActors();
+      });
+
+      ["#canvas-ndx", "#canvas-vxn"].forEach((id) => {
+        const c = el(id);
+        c.addEventListener("click", (e) => {
+          if (c._stepHit) {
+            inspectedStep = c._stepHit(e.clientX);
+            renderCharts();
+            renderLedger();
+            renderActors();
+          }
+        });
+      });
+
+      el("#tab-actors-btn").addEventListener("click", () => {
+        el("#tab-actors-btn").classList.add("active");
+        el("#tab-bt-btn").classList.remove("active");
+        el("#actors-view").hidden = false;
+        el("#bt-view").hidden = true;
+        el("#aside-heading").textContent = "异质机构角色博弈明细";
+      });
+
+      el("#tab-bt-btn").addEventListener("click", () => {
+        el("#tab-bt-btn").classList.add("active");
+        el("#tab-actors-btn").classList.remove("active");
+        el("#actors-view").hidden = true;
+        el("#bt-view").hidden = false;
+        el("#aside-heading").textContent = "488次宏观事件回测记分牌";
+        if (!backtestLoaded) loadBacktest(false);
+      });
+
+      el("#bt-refresh-btn").addEventListener("click", () => loadBacktest(true));
+
+      el("#bt-content").addEventListener("click", (e) => {
+        const tr = e.target.closest(".sample-row");
+        if (!tr) return;
+        const evDate = tr.dataset.evdate;
+        let found = replayEvents.find((x) => x.event_date === evDate);
+        if (found) {
+          el("#replay-select").value = evDate;
+          triggerHistoricalReplay(found);
+        } else {
+          el("#anchor-date").value = evDate;
+          runFastSim();
+        }
+      });
+
+      window.addEventListener("resize", () => renderCharts());
+      fcTheme.subscribe(() => renderCharts());
+
+      // Bootstrap page from /api/sim/init
+      fetch("/api/sim/init?t=" + Date.now())
+        .then((res) => res.json())
+        .then((bundle) => {
+          if (!bundle.ok) throw new Error(bundle.error || "init error");
+          initBundle = bundle;
+          presetsById = Object.fromEntries((bundle.presets || []).map((p) => [p.id, p]));
+          replayEvents = bundle.historical_events || [];
+
+          el("#anchor-date").value = bundle.latest_date;
+          el("#anchor-date").max = bundle.latest_date;
+          el("#anchor-date").min = bundle.min_date;
+
+          el("#preset-buttons").innerHTML = (bundle.presets || []).map((p) =>
+            `<button type="button" class="preset-pill ${p.id === "tariff_25" ? "active" : ""}" data-id="${escapeHtml(p.id)}">${escapeHtml(p.short_label)}</button>`
+          ).join("");
+
+          el("#preset-buttons").addEventListener("click", (e) => {
+            const btn = e.target.closest(".preset-pill");
+            if (!btn) return;
+            activePreset = btn.dataset.id;
+            el("#preset-buttons").querySelectorAll(".preset-pill").forEach((b) => b.classList.toggle("active", b === btn));
+            el("#replay-select").value = "";
+            el("#anchor-date").value = bundle.latest_date;
+            applyShockToControls(presetsById[activePreset]);
+            runFastSim();
+          });
+
+          const sel = el("#replay-select");
+          replayEvents.forEach((ev) => {
+            const opt = document.createElement("option");
+            opt.value = ev.event_date;
+            opt.textContent = `${ev.event_date} · ${ev.kind.toUpperCase()} (10Y ${fmtSigned(ev.rate_bps, 1, "bp")}, 当日NDX ${fmtSigned(ev.actual_r0_pct, 2, "%")})`;
+            sel.appendChild(opt);
+          });
+
+          if (presetsById.tariff_25) applyShockToControls(presetsById.tariff_25);
+          currentResult = bundle.initial;
+          renderAll();
+        })
+        .catch((err) => {
+          el("#kpi-asof").textContent = "加载失败: " + err.message;
+        });
+    });
+  </script>
+</body>
+</html>

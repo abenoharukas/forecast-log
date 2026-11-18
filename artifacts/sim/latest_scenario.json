@@ -1,0 +1,525 @@
+{
+  "as_of": {
+    "session": "2026-11-17",
+    "at": "2026-11-17T16:15:00-05:00"
+  },
+  "mode": "rule",
+  "initial_state": {
+    "as_of": "2026-11-17",
+    "step": 0,
+    "ndx": 27001.79,
+    "vxn": 34.44,
+    "tnx_pct": 5.103,
+    "credit_log_hyg_tlt": -0.0374,
+    "dxy": 103.607,
+    "vxn_median_252d": 23.64,
+    "vxn_z": 2.891,
+    "realized_vol_21d_pct": 35.11,
+    "vol_term_ratio": 1.069,
+    "stock_yield_corr_63d": 0.208,
+    "ndx_ret_5d_pct": -2.7,
+    "ndx_ret_20d_pct": -8.82,
+    "tnx_chg_20d_bps": -1.4,
+    "credit_chg_20d_pct": 0.47,
+    "dxy_ret_20d_pct": 1.83,
+    "regime": "inflation_discount_rate:stressed_backwardation"
+  },
+  "shock": {
+    "kind": "tariff",
+    "title": "US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+    "rate_bps": 6.0,
+    "fx_pct": 0.65,
+    "inflation_z": 1.35,
+    "growth_z": -0.9,
+    "tariff_pct": 25.0,
+    "uncertainty_z": 1.6,
+    "persistence": 0.55,
+    "headlines": []
+  },
+  "steps": [
+    {
+      "step": 1,
+      "shock": {
+        "kind": "tariff",
+        "title": "US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+        "rate_bps": 6.0,
+        "fx_pct": 0.65,
+        "inflation_z": 1.35,
+        "growth_z": -0.9,
+        "tariff_pct": 25.0,
+        "uncertainty_z": 1.6,
+        "persistence": 0.55,
+        "headlines": []
+      },
+      "actions": [
+        {
+          "actor_id": "macro_fund",
+          "model": "rule",
+          "equity_delta": -1.0,
+          "bond_delta": -0.417,
+          "credit_delta": -0.7227,
+          "vol_hedge_delta": 0.7592,
+          "confidence": 0.7,
+          "rationale": "Macro(inflation-beta<0): rate=+6.0bp, fx=+0.65%, eq=-1.80"
+        },
+        {
+          "actor_id": "vol_target_cta",
+          "model": "rule",
+          "equity_delta": -0.4516,
+          "bond_delta": -0.0096,
+          "credit_delta": -0.0212,
+          "vol_hedge_delta": 0.3039,
+          "confidence": 0.75,
+          "rationale": "VolTarget(lev 0.55->0.49, vxn=34.4)"
+        },
+        {
+          "actor_id": "corp_credit_hedger",
+          "model": "rule",
+          "equity_delta": -1.0,
+          "bond_delta": 0.007,
+          "credit_delta": -1.0,
+          "vol_hedge_delta": 0.7717,
+          "confidence": 0.68,
+          "rationale": "CorpCredit(tariff=25.0%, cred20d=+0.47%)"
+        },
+        {
+          "actor_id": "options_dealer_mm",
+          "model": "rule",
+          "equity_delta": -0.612,
+          "bond_delta": -0.06,
+          "credit_delta": -0.049,
+          "vol_hedge_delta": -0.1021,
+          "confidence": 0.65,
+          "rationale": "DealerMM(short-gamma, term=1.07, vxn_z=+2.89)"
+        }
+      ],
+      "clearing": {
+        "net_equity_flow": -0.78531,
+        "net_bond_flow": -0.13774,
+        "net_credit_flow": -0.4819,
+        "net_vol_hedge_flow": 0.47626,
+        "actor_disagreement": 0.2433,
+        "kyle_lambda": 0.03359,
+        "step_equity_log_return": -0.03625,
+        "step_vxn_change": 3.76428,
+        "step_tnx_change_bps": 9.18756
+      },
+      "state_after": {
+        "as_of": "2026-11-17",
+        "step": 1,
+        "ndx": 26040.59,
+        "vxn": 38.2,
+        "tnx_pct": 5.195,
+        "credit_log_hyg_tlt": -0.0481,
+        "dxy": 105.157,
+        "vxn_median_252d": 23.64,
+        "vxn_z": 3.898,
+        "realized_vol_21d_pct": 36.49,
+        "vol_term_ratio": 1.152,
+        "stock_yield_corr_63d": 0.208,
+        "ndx_ret_5d_pct": -5.78,
+        "ndx_ret_20d_pct": -12.0,
+        "tnx_chg_20d_bps": 7.9,
+        "credit_chg_20d_pct": -0.62,
+        "dxy_ret_20d_pct": 3.22,
+        "regime": "inflation_discount_rate:stressed_backwardation"
+      }
+    },
+    {
+      "step": 2,
+      "shock": {
+        "kind": "tariff",
+        "title": "US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+        "rate_bps": 0.83,
+        "fx_pct": 0.089,
+        "inflation_z": 0.743,
+        "growth_z": -0.495,
+        "tariff_pct": 13.75,
+        "uncertainty_z": 0.88,
+        "persistence": 0.55,
+        "headlines": []
+      },
+      "actions": [
+        {
+          "actor_id": "macro_fund",
+          "model": "rule",
+          "equity_delta": -0.8208,
+          "bond_delta": -0.1427,
+          "credit_delta": -0.3529,
+          "vol_hedge_delta": 0.3842,
+          "confidence": 0.7,
+          "rationale": "Macro(inflation-beta<0): rate=+0.8bp, fx=+0.09%, eq=-0.82"
+        },
+        {
+          "actor_id": "vol_target_cta",
+          "model": "rule",
+          "equity_delta": -0.2781,
+          "bond_delta": -0.0008,
+          "credit_delta": -0.0018,
+          "vol_hedge_delta": 0.1597,
+          "confidence": 0.75,
+          "rationale": "VolTarget(lev 0.47->0.47, vxn=38.2)"
+        },
+        {
+          "actor_id": "corp_credit_hedger",
+          "model": "rule",
+          "equity_delta": -0.5807,
+          "bond_delta": 0.0038,
+          "credit_delta": -0.5968,
+          "vol_hedge_delta": 0.1674,
+          "confidence": 0.68,
+          "rationale": "CorpCredit(tariff=13.8%, cred20d=-0.62%)"
+        },
+        {
+          "actor_id": "options_dealer_mm",
+          "model": "rule",
+          "equity_delta": -0.4257,
+          "bond_delta": -0.0083,
+          "credit_delta": -0.0341,
+          "vol_hedge_delta": -0.6074,
+          "confidence": 0.65,
+          "rationale": "DealerMM(short-gamma, term=1.15, vxn_z=+3.90)"
+        }
+      ],
+      "clearing": {
+        "net_equity_flow": -0.54606,
+        "net_bond_flow": -0.04371,
+        "net_credit_flow": -0.26232,
+        "net_vol_hedge_flow": 0.07555,
+        "actor_disagreement": 0.20927,
+        "kyle_lambda": 0.03367,
+        "step_equity_log_return": -0.02231,
+        "step_vxn_change": 1.37689,
+        "step_tnx_change_bps": 2.40189
+      },
+      "state_after": {
+        "as_of": "2026-11-17",
+        "step": 2,
+        "ndx": 25466.01,
+        "vxn": 39.58,
+        "tnx_pct": 5.219,
+        "credit_log_hyg_tlt": -0.0535,
+        "dxy": 105.744,
+        "vxn_median_252d": 23.64,
+        "vxn_z": 4.267,
+        "realized_vol_21d_pct": 36.44,
+        "vol_term_ratio": 1.142,
+        "stock_yield_corr_63d": 0.208,
+        "ndx_ret_5d_pct": -6.86,
+        "ndx_ret_20d_pct": -13.63,
+        "tnx_chg_20d_bps": 9.9,
+        "credit_chg_20d_pct": -1.14,
+        "dxy_ret_20d_pct": 3.62,
+        "regime": "inflation_discount_rate:stressed_backwardation"
+      }
+    },
+    {
+      "step": 3,
+      "shock": {
+        "kind": "tariff",
+        "title": "US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+        "rate_bps": 0.45,
+        "fx_pct": 0.049,
+        "inflation_z": 0.408,
+        "growth_z": -0.272,
+        "tariff_pct": 7.56,
+        "uncertainty_z": 0.484,
+        "persistence": 0.55,
+        "headlines": []
+      },
+      "actions": [
+        {
+          "actor_id": "macro_fund",
+          "model": "rule",
+          "equity_delta": -0.5253,
+          "bond_delta": -0.0785,
+          "credit_delta": -0.1941,
+          "vol_hedge_delta": 0.2261,
+          "confidence": 0.7,
+          "rationale": "Macro(inflation-beta<0): rate=+0.5bp, fx=+0.05%, eq=-0.53"
+        },
+        {
+          "actor_id": "vol_target_cta",
+          "model": "rule",
+          "equity_delta": -0.2037,
+          "bond_delta": 0.0012,
+          "credit_delta": 0.0026,
+          "vol_hedge_delta": 0.0851,
+          "confidence": 0.75,
+          "rationale": "VolTarget(lev 0.45->0.46, vxn=39.6)"
+        },
+        {
+          "actor_id": "corp_credit_hedger",
+          "model": "rule",
+          "equity_delta": -0.3992,
+          "bond_delta": 0.0021,
+          "credit_delta": -0.408,
+          "vol_hedge_delta": -0.1056,
+          "confidence": 0.68,
+          "rationale": "CorpCredit(tariff=7.6%, cred20d=-1.14%)"
+        },
+        {
+          "actor_id": "options_dealer_mm",
+          "model": "rule",
+          "equity_delta": -0.2627,
+          "bond_delta": -0.0045,
+          "credit_delta": -0.021,
+          "vol_hedge_delta": -0.8232,
+          "confidence": 0.65,
+          "rationale": "DealerMM(short-gamma, term=1.14, vxn_z=+4.27)"
+        }
+      ],
+      "clearing": {
+        "net_equity_flow": -0.36081,
+        "net_bond_flow": -0.02363,
+        "net_credit_flow": -0.16377,
+        "net_vol_hedge_flow": -0.10193,
+        "actor_disagreement": 0.12876,
+        "kyle_lambda": 0.03276,
+        "step_equity_log_return": -0.01407,
+        "step_vxn_change": 0.12923,
+        "step_tnx_change_bps": 1.31879
+      },
+      "state_after": {
+        "as_of": "2026-11-17",
+        "step": 3,
+        "ndx": 25110.11,
+        "vxn": 39.71,
+        "tnx_pct": 5.232,
+        "credit_log_hyg_tlt": -0.0567,
+        "dxy": 106.091,
+        "vxn_median_252d": 23.64,
+        "vxn_z": 4.301,
+        "realized_vol_21d_pct": 35.89,
+        "vol_term_ratio": 1.1,
+        "stock_yield_corr_63d": 0.208,
+        "ndx_ret_5d_pct": -6.89,
+        "ndx_ret_20d_pct": -14.36,
+        "tnx_chg_20d_bps": 10.7,
+        "credit_chg_20d_pct": -1.4,
+        "dxy_ret_20d_pct": 3.76,
+        "regime": "inflation_discount_rate:stressed_backwardation"
+      }
+    },
+    {
+      "step": 4,
+      "shock": {
+        "kind": "tariff",
+        "title": "US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+        "rate_bps": 0.25,
+        "fx_pct": 0.027,
+        "inflation_z": 0.225,
+        "growth_z": -0.15,
+        "tariff_pct": 4.16,
+        "uncertainty_z": 0.266,
+        "persistence": 0.55,
+        "headlines": []
+      },
+      "actions": [
+        {
+          "actor_id": "macro_fund",
+          "model": "rule",
+          "equity_delta": -0.3599,
+          "bond_delta": -0.0432,
+          "credit_delta": -0.1068,
+          "vol_hedge_delta": 0.1385,
+          "confidence": 0.7,
+          "rationale": "Macro(inflation-beta<0): rate=+0.2bp, fx=+0.03%, eq=-0.36"
+        },
+        {
+          "actor_id": "vol_target_cta",
+          "model": "rule",
+          "equity_delta": -0.1634,
+          "bond_delta": 0.0022,
+          "credit_delta": 0.0049,
+          "vol_hedge_delta": 0.0442,
+          "confidence": 0.75,
+          "rationale": "VolTarget(lev 0.45->0.47, vxn=39.7)"
+        },
+        {
+          "actor_id": "corp_credit_hedger",
+          "model": "rule",
+          "equity_delta": -0.2966,
+          "bond_delta": 0.0012,
+          "credit_delta": -0.3014,
+          "vol_hedge_delta": -0.2295,
+          "confidence": 0.68,
+          "rationale": "CorpCredit(tariff=4.2%, cred20d=-1.40%)"
+        },
+        {
+          "actor_id": "options_dealer_mm",
+          "model": "rule",
+          "equity_delta": -0.1596,
+          "bond_delta": -0.0025,
+          "credit_delta": -0.0128,
+          "vol_hedge_delta": -0.8912,
+          "confidence": 0.65,
+          "rationale": "DealerMM(short-gamma, term=1.10, vxn_z=+4.30)"
+        }
+      ],
+      "clearing": {
+        "net_equity_flow": -0.25487,
+        "net_bond_flow": -0.01261,
+        "net_credit_flow": -0.10871,
+        "net_vol_hedge_flow": -0.18299,
+        "actor_disagreement": 0.08746,
+        "kyle_lambda": 0.03181,
+        "step_equity_log_return": -0.00944,
+        "step_vxn_change": -0.48708,
+        "step_tnx_change_bps": 0.72321
+      },
+      "state_after": {
+        "as_of": "2026-11-17",
+        "step": 4,
+        "ndx": 24874.31,
+        "vxn": 39.22,
+        "tnx_pct": 5.239,
+        "credit_log_hyg_tlt": -0.0585,
+        "dxy": 106.303,
+        "vxn_median_252d": 23.64,
+        "vxn_z": 4.171,
+        "realized_vol_21d_pct": 35.18,
+        "vol_term_ratio": 1.055,
+        "stock_yield_corr_63d": 0.208,
+        "ndx_ret_5d_pct": -6.46,
+        "ndx_ret_20d_pct": -14.58,
+        "tnx_chg_20d_bps": 10.9,
+        "credit_chg_20d_pct": -1.51,
+        "dxy_ret_20d_pct": 3.78,
+        "regime": "inflation_discount_rate:stressed_backwardation"
+      }
+    },
+    {
+      "step": 5,
+      "shock": {
+        "kind": "tariff",
+        "title": "US announces +25% tariff on semiconductor and industrial imports; retaliatory duties threatened",
+        "rate_bps": 0.14,
+        "fx_pct": 0.015,
+        "inflation_z": 0.124,
+        "growth_z": -0.082,
+        "tariff_pct": 2.29,
+        "uncertainty_z": 0.146,
+        "persistence": 0.55,
+        "headlines": []
+      },
+      "actions": [
+        {
+          "actor_id": "macro_fund",
+          "model": "rule",
+          "equity_delta": -0.2661,
+          "bond_delta": -0.0237,
+          "credit_delta": -0.0587,
+          "vol_hedge_delta": 0.0898,
+          "confidence": 0.7,
+          "rationale": "Macro(inflation-beta<0): rate=+0.1bp, fx=+0.01%, eq=-0.27"
+        },
+        {
+          "actor_id": "vol_target_cta",
+          "model": "rule",
+          "equity_delta": -0.1339,
+          "bond_delta": 0.0027,
+          "credit_delta": 0.0061,
+          "vol_hedge_delta": 0.0218,
+          "confidence": 0.75,
+          "rationale": "VolTarget(lev 0.46->0.47, vxn=39.2)"
+        },
+        {
+          "actor_id": "corp_credit_hedger",
+          "model": "rule",
+          "equity_delta": -0.2375,
+          "bond_delta": 0.0006,
+          "credit_delta": -0.2402,
+          "vol_hedge_delta": -0.2748,
+          "confidence": 0.68,
+          "rationale": "CorpCredit(tariff=2.3%, cred20d=-1.51%)"
+        },
+        {
+          "actor_id": "options_dealer_mm",
+          "model": "rule",
+          "equity_delta": 0.0381,
+          "bond_delta": -0.0014,
+          "credit_delta": 0.003,
+          "vol_hedge_delta": -0.887,
+          "confidence": 0.65,
+          "rationale": "DealerMM(short-gamma, term=1.05, vxn_z=+4.17)"
+        }
+      ],
+      "clearing": {
+        "net_equity_flow": -0.16506,
+        "net_bond_flow": -0.00656,
+        "net_credit_flow": -0.07553,
+        "net_vol_hedge_flow": -0.2137,
+        "actor_disagreement": 0.11348,
+        "kyle_lambda": 0.02998,
+        "step_equity_log_return": -0.00573,
+        "step_vxn_change": -1.03951,
+        "step_tnx_change_bps": 0.39568
+      },
+      "state_after": {
+        "as_of": "2026-11-17",
+        "step": 5,
+        "ndx": 24732.07,
+        "vxn": 38.18,
+        "tnx_pct": 5.243,
+        "credit_log_hyg_tlt": -0.0597,
+        "dxy": 106.429,
+        "vxn_median_252d": 23.64,
+        "vxn_z": 3.893,
+        "realized_vol_21d_pct": 34.39,
+        "vol_term_ratio": 1.008,
+        "stock_yield_corr_63d": 0.208,
+        "ndx_ret_5d_pct": -5.74,
+        "ndx_ret_20d_pct": -14.43,
+        "tnx_chg_20d_bps": 10.7,
+        "credit_chg_20d_pct": -1.55,
+        "dxy_ret_20d_pct": 3.71,
+        "regime": "inflation_discount_rate:stressed_backwardation"
+      }
+    }
+  ],
+  "final_state": {
+    "as_of": "2026-11-17",
+    "step": 5,
+    "ndx": 24732.07,
+    "vxn": 38.18,
+    "tnx_pct": 5.243,
+    "credit_log_hyg_tlt": -0.0597,
+    "dxy": 106.429,
+    "vxn_median_252d": 23.64,
+    "vxn_z": 3.893,
+    "realized_vol_21d_pct": 34.39,
+    "vol_term_ratio": 1.008,
+    "stock_yield_corr_63d": 0.208,
+    "ndx_ret_5d_pct": -5.74,
+    "ndx_ret_20d_pct": -14.43,
+    "tnx_chg_20d_bps": 10.7,
+    "credit_chg_20d_pct": -1.55,
+    "dxy_ret_20d_pct": 3.71,
+    "regime": "inflation_discount_rate:stressed_backwardation"
+  },
+  "cumulative_ndx_return_pct": -8.406,
+  "cumulative_vxn_change": 3.744,
+  "distribution": {
+    "p_ndx_up": 0.2839,
+    "p_vxn_up": 0.5702,
+    "p_ndx_drawdown_gt_2pct": 0.5638,
+    "ndx_return_pct_quantiles": {
+      "p10": -14.0,
+      "p50": -8.41,
+      "p90": -2.45
+    },
+    "vxn_terminal_quantiles": {
+      "p10": 29.51,
+      "p50": 38.18,
+      "p90": 46.86
+    }
+  },
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "cached_tokens": 0,
+    "cost_usd": 0.0,
+    "latency_s": 0.0
+  }
+}

@@ -36,6 +36,7 @@ PAGES = {
     "/ssec": "web/points.html",
     "/vxn": "web/index.html",
     "/agent": "web/agent.html",
+    "/sim": "web/sim.html",
 }
 
 # 路径本身携带市场，前端据此选中标签页
@@ -68,6 +69,9 @@ LEGACY = {
     "/web/agent.html": "/agent",
     "/agent.html": "/agent",
     "/web/agent": "/agent",
+    "/web/sim.html": "/sim",
+    "/sim.html": "/sim",
+    "/web/sim": "/sim",
 }
 
 # 顶层静态资源：/theme.css → /web/theme.css
@@ -384,6 +388,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
             return
 
+        if path.rstrip("/") == "/api/sim/init":
+            from forecast_log.sim import sim_init_payload
+
+            try:
+                self._send_json(sim_init_payload(ROOT), "sim init unavailable")
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, str(exc))
+            return
+
+        if path.rstrip("/") == "/api/sim/backtest":
+            from urllib.parse import parse_qs
+            from forecast_log.sim import load_or_run_backtest
+
+            qs = parse_qs(query)
+            force = (qs.get("force") or ["0"])[0] == "1"
+            kinds = (qs.get("kinds") or ["fomc,cpi,nfp"])[0]
+            horizon = int((qs.get("horizon") or ["5"])[0] or 5)
+            try:
+                self._send_json(load_or_run_backtest(ROOT, force=force, kinds=kinds, horizon=horizon), "backtest unavailable")
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, str(exc))
+            return
+
         clean = path.rstrip("/") or "/"
 
         # 旧 /web/points.html?market=qqq 也要落到 /qqq
@@ -456,6 +483,63 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
+    def _handle_sim_run(self) -> None:
+        from forecast_log.sim import run_sim_payload
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+            body = json.loads(raw or "{}")
+            payload = run_sim_payload(ROOT, body)
+            status = 200
+        except Exception as exc:
+            payload = {"ok": False, "error": str(exc)}
+            status = 400
+        out = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def _handle_sim_stream(self) -> None:
+        from forecast_log.sim import run_sim_stream
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+            body = json.loads(raw or "{}")
+        except Exception as exc:
+            self.send_response(400)
+            err_bytes = json.dumps({"ok": False, "error": f"invalid JSON: {exc}"}, ensure_ascii=False).encode("utf-8")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(err_bytes)))
+            self.end_headers()
+            self.wfile.write(err_bytes)
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.close_connection = True
+
+        try:
+            for event in run_sim_stream(ROOT, body):
+                line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+                self.wfile.write(line)
+                self.wfile.flush()
+        except BrokenPipeError:
+            return
+        except Exception as exc:
+            try:
+                err_line = (json.dumps({"type": "error", "error": str(exc)}, ensure_ascii=False) + "\n").encode("utf-8")
+                self.wfile.write(err_line)
+                self.wfile.flush()
+            except Exception:
+                pass
+
     def do_POST(self) -> None:
         path, _, query = self.path.partition("?")
         if path in ("/api/refresh", "/api/fetch"):
@@ -463,6 +547,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path.rstrip("/") == "/api/chat/run":
             self._handle_chat_run()
+            return
+        if path.rstrip("/") == "/api/sim/run":
+            self._handle_sim_run()
+            return
+        if path.rstrip("/") == "/api/sim/stream":
+            self._handle_sim_stream()
             return
         self.send_error(405, "Method Not Allowed")
 
@@ -484,7 +574,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"或者换端口：forecast-log serve {args.port + 1}", file=sys.stderr)
         raise SystemExit(1) from exc
 
-    print(f"看板已启动： http://127.0.0.1:{args.port}/  （信号页 /ndx · /qqq · /a-shares；VXN /vxn；评测 /agent）", flush=True)
+    print(f"看板已启动： http://127.0.0.1:{args.port}/  （信号页 /ndx · /qqq · /a-shares；VXN /vxn；政策仿真 /sim；评测 /agent）", flush=True)
     print("（Ctrl+C 停止）", flush=True)
     try:
         server.serve_forever()

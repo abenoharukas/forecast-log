@@ -22,6 +22,7 @@ const PAGES = {
   "/ssec": "/web/points.html",
   "/vxn": "/web/index.html",
   "/agent": "/web/agent.html",
+  "/sim": "/web/sim.html",
 };
 
 const LEGACY_MARKET = { ndx: "/ndx", qqq: "/qqq", ssec: "/a-shares" };
@@ -43,6 +44,9 @@ const LEGACY = {
   "/web/agent.html": "/agent",
   "/web/agent": "/agent",
   "/agent.html": "/agent",
+  "/web/sim.html": "/sim",
+  "/web/sim": "/sim",
+  "/sim.html": "/sim",
 };
 
 const ASSET_FILES = new Set(["/theme.css", "/theme.js", "/ctxbar.js"]);

@@ -7,7 +7,7 @@
 #   make data-publish          # 或 bash scripts/publish_db.sh
 set -euo pipefail
 
-REPO=${REPO:-lumixraku/forecast-log}
+REPO=${REPO:-abenoharukas/forecast-log}
 TAG=${TAG:-data-latest}
 ASSET=${ASSET:-forecast.db}
 

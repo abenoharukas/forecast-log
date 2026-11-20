@@ -8,7 +8,7 @@ Point-in-time market forecasting, cross-asset signal validation, gated LLM agent
 make            # Creates .venv, downloads data/forecast.db, starts http://127.0.0.1:8731/
 ```
 
-`data/forecast.db` is published as an overwritten release asset on [`data-latest`](https://github.com/lumixraku/forecast-log/releases/tag/data-latest) (never committed to git history) and ships pre-populated with 15 market series, 3 signal markets, historical news, and multi-model evaluation runs.
+`data/forecast.db` is published as an overwritten release asset on [`data-latest`](https://github.com/abenoharukas/forecast-log/releases/tag/data-latest) (never committed to git history) and ships pre-populated with 15 market series, 3 signal markets, historical news, and multi-model evaluation runs.
 
 | Command | Description |
 |---|---|
@@ -94,4 +94,4 @@ cp .env.example .env    # Configure DEEPSEEK_API_KEY and optional QWEN_API_KEY
 | `forecast-log agent-forecast` / `agent-eval` | Produce pooled shadow forecasts or run shared-intersection historical benchmarks (`agent-report` to format) |
 | `forecast-log sim` / `sim-backtest` | Run single policy shock scenarios (`rule` / `homogeneous` / `llm`) or multi-event historical shock backtests |
 
-Detailed notes: [`SUBMISSION.md`](SUBMISSION.md) (executive benchmark brief) · [`docs/agent.md`](docs/agent.md) (agent & anti-leakage design) · [`docs/sim.md`](docs/sim.md) (policy simulator math & backtests) · [`docs/news_ab.md`](docs/news_ab.md) (multi-model news A/B) · [`deploy/README.md`](deploy/README.md) (Cloudflare Workers + D1).
+Detailed notes: [`SUBMISSION.md`](SUBMISSION.md) (executive benchmark brief) · [`docs/agent.md`](docs/agent.md) (agent & anti-leakage design) · [`docs/sim.md`](docs/sim.md) (policy simulator math & backtests) · [`docs/news_ab.md`](docs/news_ab.md) (multi-model news A/B) · [`arch.md`](arch.md) (Cloudflare D1 architecture & commands) · [`deploy/README.md`](deploy/README.md) (Cloudflare Workers + D1).

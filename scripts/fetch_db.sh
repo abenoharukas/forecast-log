@@ -10,7 +10,7 @@
 #   FORCE=1 bash scripts/fetch_db.sh      # 强制重新下载最新
 set -euo pipefail
 
-REPO=${REPO:-lumixraku/forecast-log}
+REPO=${REPO:-abenoharukas/forecast-log}
 TAG=${TAG:-data-latest}
 ASSET=${ASSET:-forecast.db}
 DEST=${DEST:-data/forecast.db}

@@ -158,6 +158,50 @@
     };
   }
 
+  function summariseActual() {
+    let totalUp = 0, up3 = 0, up45 = 0, up5 = 0, heldUp = 0, heldUp5 = 0;
+    let totalDown = 0, down3 = 0, down45 = 0, down5 = 0, heldDown = 0, heldDown5 = 0;
+    const holdout = (data.summary && data.summary.holdout_from) || "2015-01-01";
+    data.time.forEach((day, index) => {
+      const outcome = data.outcome[index];
+      if (outcome !== null && outcome !== undefined) {
+        totalUp += 1;
+        up5 += outcome;
+        if (data.hit3 && data.hit3[index] === 1) up3 += 1;
+        else if (outcome === 1) up45 += 1;
+        if (day >= holdout) { heldUp += 1; heldUp5 += outcome; }
+      }
+      const base = data.base_close ? data.base_close[index] : null;
+      const c5 = data.close5 ? data.close5[index] : null;
+      const c3 = data.close3 ? data.close3[index] : null;
+      if (base !== null && base !== undefined && c5 !== null && c5 !== undefined) {
+        const d5 = c5 < base ? 1 : 0;
+        const d3 = c3 !== null && c3 !== undefined && c3 < base ? 1 : 0;
+        totalDown += 1;
+        down5 += d5;
+        if (d3) down3 += 1;
+        else if (d5) down45 += 1;
+        if (day >= holdout) { heldDown += 1; heldDown5 += d5; }
+      }
+    });
+    return {
+      up: {
+        total: totalUp,
+        precision: totalUp ? up5 / totalUp : null,
+        precision3: totalUp ? up3 / totalUp : null,
+        precision45: totalUp ? up45 / totalUp : null,
+        holdoutPrecision: heldUp ? heldUp5 / heldUp : null,
+      },
+      down: {
+        total: totalDown,
+        precision: totalDown ? down5 / totalDown : null,
+        precision3: totalDown ? down3 / totalDown : null,
+        precision45: totalDown ? down45 / totalDown : null,
+        holdoutPrecision: heldDown ? heldDown5 / heldDown : null,
+      },
+    };
+  }
+
   function row(table, values, header) {
     const tr = document.createElement("tr");
     values.forEach((value, index) => {
@@ -202,27 +246,26 @@
     onFlags(flags, sellFlags);
     const now = summarise(flags);
     const sellNow = summariseSell(sellFlags);
-    const baseline = summarise(applyContexts(new Set(["composite"]), { triggerMode: "any", vetoMode: "any" }));
+    const actual = summariseActual();
     const latestIdx = data.time.length - 1;
     const latestFlag = flags[latestIdx];
     const latestSellFlag = sellFlags[latestIdx];
-    const baseCompositeLatest = data.components.composite ? data.components.composite[latestIdx] : 0;
 
     const table = document.querySelector("#ctx-table");
     if (table) {
       table.textContent = "";
-      row(table, ["", "BUY (selected)", "BUY (base)", "SELL (≤10%)"], true);
-      row(table, ["Signals", String(now.signals), String(baseline.signals), String(sellNow.signals)]);
-      row(table, ["Hit within 3 sessions", pct(now.precision3), pct(baseline.precision3), pct(sellNow.precision3)]);
-      row(table, ["Hit only on day 4-5", pct(now.precision45), pct(baseline.precision45), pct(sellNow.precision45)]);
-      row(table, ["Precision (5 sessions)", pct(now.precision), pct(baseline.precision), pct(sellNow.precision)]);
-      row(table, ["Out-of-sample signals", String(now.holdoutSignals), String(baseline.holdoutSignals), String(sellNow.holdoutSignals)]);
-      row(table, ["Out-of-sample precision", pct(now.holdoutPrecision), pct(baseline.holdoutPrecision), pct(sellNow.holdoutPrecision)]);
+      row(table, ["", "预测上涨 (BUY)", "真实上涨 (基率)", "预测下跌 (SELL)", "真实下跌 (基率)"], true);
+      row(table, ["样本 / 信号数", String(now.signals), String(actual.up.total), String(sellNow.signals), String(actual.down.total)]);
+      row(table, ["1–3d 命中率", pct(now.precision3), pct(actual.up.precision3), pct(sellNow.precision3), pct(actual.down.precision3)]);
+      row(table, ["4–5d 命中率", pct(now.precision45), pct(actual.up.precision45), pct(sellNow.precision45), pct(actual.down.precision45)]);
+      row(table, ["5d 收盘命中率", pct(now.precision), pct(actual.up.precision), pct(sellNow.precision), pct(actual.down.precision)]);
+      row(table, ["2015+ 样本外", pct(now.holdoutPrecision) + " (" + now.holdoutSignals + ")", pct(actual.up.holdoutPrecision), pct(sellNow.holdoutPrecision) + " (" + sellNow.holdoutSignals + ")", pct(actual.down.holdoutPrecision)]);
       row(table, [
-        "Latest session",
-        latestFlag ? "BUY" : "no signal",
-        baseCompositeLatest ? "BUY" : "no signal",
-        latestSellFlag ? "SELL" : "no signal",
+        "最新交易日",
+        latestFlag ? "BUY" : "—",
+        "—",
+        latestSellFlag ? "SELL" : "—",
+        "—",
       ]);
     }
 
@@ -236,8 +279,22 @@
 
     const rule = document.querySelector("#rule");
     if (rule) {
-      rule.textContent = "BUY " + now.signals + " (" + pct(now.precision) + ") · SELL " + sellNow.signals +
-        " (" + pct(sellNow.precision) + ") · " + active.length + "/" + data.contexts.length + " factors (" + ruleLabel + ")";
+      rule.textContent = "";
+      const buyLine = document.createElement("span");
+      buyLine.className = "rule-line";
+      buyLine.textContent =
+        "▲ 预测上涨 " + now.signals +
+        " · 1-3d " + pct(now.precision3) + " vs 真实 " + pct(actual.up.precision3) +
+        " · 4-5d " + pct(now.precision45) + " vs 真实 " + pct(actual.up.precision45);
+      const sellLine = document.createElement("span");
+      sellLine.className = "rule-line";
+      sellLine.textContent =
+        "▼ 预测下跌 " + sellNow.signals +
+        " · 1-3d " + pct(sellNow.precision3) + " vs 真实 " + pct(actual.down.precision3) +
+        " · 4-5d " + pct(sellNow.precision45) + " vs 真实 " + pct(actual.down.precision45) +
+        " · " + active.length + "/" + data.contexts.length + " factors (" + ruleLabel + ")";
+      rule.appendChild(buyLine);
+      rule.appendChild(sellLine);
     }
 
     const statusElem = document.querySelector("#ctx-status");

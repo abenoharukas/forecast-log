@@ -41,6 +41,13 @@
     .pane-head .toggle:hover { background: var(--paper); }
     aside.hidden { display: none; }
     .chart { flex: 1; min-height: 0; }
+    #rule {
+      flex-basis: 100%; display: flex; flex-direction: column; gap: 2px;
+      cursor: pointer; border-bottom: none; line-height: 1.4;
+    }
+    #rule .rule-line {
+      width: fit-content; border-bottom: 1px dotted var(--control);
+    }
     #readout {
       flex: 1 1 240px; min-width: 0; min-height: 15px; color: var(--ink);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -203,7 +210,7 @@
           <span class="name" id="pane-name">Cross-asset composite → 5-day BUY &amp; SELL signals</span>
           <span class="sub" id="live-call" style="font-weight:500;">—</span>
           <span class="sub" id="rule" title="Click to configure context factors">—</span>
-          <span class="sub">BUY (below): <b style="color:#00c853">▲ green</b> d3↑ · <b style="color:#ff9100">● amber</b> d5↑ · <b style="color:#64748b">■ grey</b> miss · <b style="color:#0091ea">▲ blue</b> pending | SELL (above): <b style="color:#e53935">▼ red</b> d3↓ · <b style="color:#9c27b0">● violet</b> d5↓ · <b style="color:#64748b">■ grey</b> miss · <b style="color:#d500f9">▼ pink</b> pending</span>
+          <span class="sub">BUY (below): <b style="color:#00c853">▲ green</b> d3↑ · <b style="color:#ff9100">▲ amber</b> d4-5↑ · <b style="color:#64748b">▲ grey</b> miss · <b style="color:#0091ea">▲ blue</b> pending | SELL (above): <b style="color:#e53935">▼ red</b> d3↓ · <b style="color:#9c27b0">▼ violet</b> d4-5↓ · <b style="color:#64748b">▼ grey</b> miss · <b style="color:#d500f9">▼ pink</b> pending</span>
           <span class="sub" id="readout">hover a candle: open / high / low / close, plus day-3 and day-5 outcomes</span>
           <div class="pane-toggles">
             <span class="group" id="sig-filter" role="group" aria-label="Signal direction" style="display:inline-flex;gap:4px;">
@@ -434,8 +441,8 @@
             markers.push({
               time: when,
               position: "belowBar",
-              shape: fast ? "arrowUp" : hit ? "circle" : "square",
-              size: !hit ? 1.0 : fast ? 1.4 : 1.2,
+              shape: "arrowUp",
+              size: !hit ? 1.1 : fast ? 1.4 : 1.2,
               color: !hit ? mp.miss : fast ? mp.fast : mp.hit,
             });
           });
@@ -467,8 +474,8 @@
             markers.push({
               time: when,
               position: "aboveBar",
-              shape: fast ? "arrowDown" : hit ? "circle" : "square",
-              size: !hit ? 1.0 : fast ? 1.4 : 1.2,
+              shape: "arrowDown",
+              size: !hit ? 1.1 : fast ? 1.4 : 1.2,
               color: !hit ? mp.miss : fast ? mp.sellFast : mp.sellHit,
             });
           });
@@ -652,7 +659,9 @@
         b2.appendChild(makeTable([
           ["Observations", String(s.n), String(s.holdout_n)],
           ["Signals", String(s.flagged), String(s.holdout_flagged)],
-          ["Precision", percentInt(s.hit), percentInt(s.holdout_hit)],
+          ["1-3d hit vs actual", percent(s.hit3) + " / " + percent(s.base3), "—"],
+          ["4-5d hit vs actual", percent(s.hit45) + " / " + percent(s.base45), "—"],
+          ["5d Precision", percentInt(s.hit), percentInt(s.holdout_hit)],
           ["Any random day", percentInt(s.base_rate), percentInt(s.holdout_base_rate)],
           ["Lift vs base", ((s.hit - s.base_rate) * 100).toFixed(1) + " pp", ((s.holdout_hit - s.holdout_base_rate) * 100).toFixed(1) + " pp"],
         ], ["", "Full sample", "Out-of-sample 2015+"]));
@@ -663,7 +672,9 @@
           bsell.appendChild(makeTable([
             ["Observations", String(ss.n), String(ss.holdout_n)],
             ["Signals", String(ss.flagged), String(ss.holdout_flagged)],
-            ["Precision (5d down)", percentInt(ss.hit), percentInt(ss.holdout_hit)],
+            ["1-3d hit vs actual", percent(ss.hit3) + " / " + percent(ss.base3), "—"],
+            ["4-5d hit vs actual", percent(ss.hit45) + " / " + percent(ss.base45), "—"],
+            ["5d Precision (down)", percentInt(ss.hit), percentInt(ss.holdout_hit)],
             ["Any random day (down)", percentInt(ss.base_rate), percentInt(ss.holdout_base_rate)],
             [
               "Lift vs base",
@@ -776,6 +787,8 @@
           const bsell = addBlock(aside, "SELL signal performance (≤ 10th pct, 5d down)");
           bsell.appendChild(makeTable([
             ["Signals", String(ss.flagged), String(ss.holdout_flagged)],
+            ["1-3d hit vs actual", percent(ss.hit3) + " / " + percent(ss.base3), "—"],
+            ["4-5d hit vs actual", percent(ss.hit45) + " / " + percent(ss.base45), "—"],
             ["Precision (5d down)", percent(ss.hit), percent(ss.holdout_hit)],
             ["Any random day (down)", percent(ss.base_rate), percent(ss.holdout_base_rate)],
             [
@@ -830,6 +843,8 @@
           const bsell = addBlock(aside, "SELL signal (≤ 10th pct, 5d down)");
           bsell.appendChild(makeTable([
             ["Signals", String(sa.signals), String(sh.signals)],
+            ["1-3d hit vs actual", percent(sa.hit3) + " / " + percent(sa.base3), percent(sh.hit3) + " / " + percent(sh.base3)],
+            ["4-5d hit vs actual", percent(sa.hit45) + " / " + percent(sa.base45), percent(sh.hit45) + " / " + percent(sh.base45)],
             ["Precision (5d down)", percent(sa.hit), percent(sh.hit)],
             ["Any random day (down)", percent(sa.base_rate), percent(sh.base_rate)],
             ["Lift vs base", points(sa.lift), points(sh.lift)],

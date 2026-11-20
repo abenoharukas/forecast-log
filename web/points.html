@@ -155,6 +155,27 @@
       border: 1px solid var(--control); border-radius: 2px; padding: 2px 6px; min-block-size: 25px;
     }
     .chat-btns { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    .board-loading {
+      position: absolute; inset: 0; z-index: 30;
+      display: flex; align-items: center; justify-content: center;
+      background: color-mix(in oklab, var(--paper) 72%, transparent);
+      backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+      opacity: 1; transition: opacity 140ms ease;
+    }
+    .board-loading[hidden] { display: none !important; }
+    .board-loading-card {
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 10px 16px; border: 1px solid var(--control); border-radius: 3px;
+      background: var(--sheet); color: var(--ink);
+      font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
+      box-shadow: 0 4px 18px color-mix(in oklab, var(--ink) 12%, transparent);
+    }
+    .board-spinner {
+      width: 14px; height: 14px; border-radius: 50%; flex: none;
+      border: 2px solid var(--rule); border-top-color: var(--ink);
+      animation: fc-spin 700ms linear infinite;
+    }
+    @keyframes fc-spin { to { transform: rotate(360deg); } }
     @media (max-width: 900px) {
       body { overflow: auto; } main { height: auto; }
       .board { flex-direction: column; } .pane { min-height: 340px; } aside { width: auto; height: 520px; }
@@ -205,6 +226,12 @@
     </section>
 
     <div class="board">
+      <div class="board-loading" id="board-loading" role="status" aria-live="polite" hidden>
+        <div class="board-loading-card">
+          <span class="board-spinner" aria-hidden="true"></span>
+          <span id="board-loading-text">正在加载行情与买卖信号…</span>
+        </div>
+      </div>
       <div class="pane">
         <div class="pane-head">
           <span class="name" id="pane-name">Cross-asset composite → 5-day BUY &amp; SELL signals</span>
@@ -344,6 +371,14 @@
       let signalFilter = "both";
       let autoRefreshed = false;
       let refreshing = false;
+      let loadSeq = 0;
+
+      function setBoardLoading(visible, message) {
+        const overlay = document.querySelector("#board-loading");
+        const textEl = document.querySelector("#board-loading-text");
+        if (textEl && message) textEl.textContent = message;
+        if (overlay) overlay.hidden = !visible;
+      }
       let shown = { flags: [], sellFlags: [], data: null, market: "ndx" };
       let entryOf = {};
       let sellEntryOf = {};
@@ -1201,6 +1236,9 @@
         refreshing = true;
         const btn = document.querySelector("#refresh-btn");
         let spinTimer = null;
+        if (force) {
+          setBoardLoading(true, "正在拉取最新行情并重算买卖信号…");
+        }
         if (btn) {
           if (force) {
             btn.disabled = true;
@@ -1231,6 +1269,7 @@
         } finally {
           if (spinTimer) clearTimeout(spinTimer);
           refreshing = false;
+          if (force) setBoardLoading(false);
           if (btn) {
             btn.disabled = false;
             if (force && didUpdate) {
@@ -1247,6 +1286,7 @@
 
       async function loadMarket(marketKey) {
         const cfg = MARKETS[marketKey] || MARKETS.ndx;
+        const seq = ++loadSeq;
         activeMarket = cfg.key;
 
         document.querySelectorAll("#market-tabs .market-tab").forEach((btn) => {
@@ -1264,54 +1304,63 @@
         document.querySelector("#ctxbar-title").textContent = cfg.panelTitle;
         document.querySelector("#readout").textContent = IDLE_READOUT;
 
+        const activeTab = document.querySelector('#market-tabs .market-tab[data-market="' + cfg.key + '"]');
+        const marketLabel = activeTab ? activeTab.textContent.trim() : cfg.title;
         let data = cache.get(cfg.key);
-        if (!data) {
-          document.querySelector("#question").textContent = "Loading " + cfg.file + "…";
-          try {
+        setBoardLoading(true, "正在加载 " + marketLabel + " 行情与买卖信号…");
+        try {
+          if (!data) {
+            document.querySelector("#question").textContent = "Loading " + cfg.file + "…";
             const response = await fetch(cfg.file + "?t=" + Date.now());
             if (!response.ok) throw new Error(String(response.status));
             data = await response.json();
             cache.set(cfg.key, data);
-          } catch (err) {
-            document.querySelector("#question").textContent = cfg.file + " not available";
-            return;
           }
-        }
+          if (seq !== loadSeq) return;
 
-        currentData = data;
-        indexOf = {};
-        data.time.forEach((day, idx) => { indexOf[day] = idx; });
+          currentData = data;
+          indexOf = {};
+          data.time.forEach((day, idx) => { indexOf[day] = idx; });
 
-        document.querySelector("#question").textContent = data.question.text;
-        candles.applyOptions(candleOptions(fcTheme.palette(), cfg.key));
-        const ohlc = [];
-        data.time.forEach((time, idx) => {
-          const close = data.close[idx];
-          if (close == null) return;
-          const open = data.open && data.open[idx] != null ? data.open[idx] : close;
-          const high = data.high && data.high[idx] != null ? data.high[idx] : Math.max(open, close);
-          const low = data.low && data.low[idx] != null ? data.low[idx] : Math.min(open, close);
-          ohlc.push({ time, open, high, low, close });
-        });
-        candles.setData(ohlc);
-        requestAnimationFrame(applySpan);
+          document.querySelector("#question").textContent = data.question.text;
+          candles.applyOptions(candleOptions(fcTheme.palette(), cfg.key));
+          const ohlc = [];
+          data.time.forEach((time, idx) => {
+            const close = data.close[idx];
+            if (close == null) return;
+            const open = data.open && data.open[idx] != null ? data.open[idx] : close;
+            const high = data.high && data.high[idx] != null ? data.high[idx] : Math.max(open, close);
+            const low = data.low && data.low[idx] != null ? data.low[idx] : Math.min(open, close);
+            ohlc.push({ time, open, high, low, close });
+          });
+          candles.setData(ohlc);
+          requestAnimationFrame(applySpan);
 
-        renderAside(cfg.key, data);
-        loadMarketChat(cfg.key);
-        initCtxbar(
-          data,
-          (flags, sellFlags) => {
-            applyMarkers(flags, sellFlags, data, cfg.key);
-            updateLiveCall(flags, sellFlags, data, cfg.key);
-          },
-          { marketKey: cfg.key }
-        );
+          renderAside(cfg.key, data);
+          loadMarketChat(cfg.key);
+          initCtxbar(
+            data,
+            (flags, sellFlags) => {
+              applyMarkers(flags, sellFlags, data, cfg.key);
+              updateLiveCall(flags, sellFlags, data, cfg.key);
+            },
+            { marketKey: cfg.key }
+          );
 
-        // 页面首次打开时向后端发起一次非强制检查：
-        // 后端会统一判断全库是否有已过收盘的残缺行或超过 5 分钟冷却的盘中行，无需刷新时毫秒级返回 cached: true
-        if (!autoRefreshed) {
-          autoRefreshed = true;
-          triggerRefresh(false);
+          // 页面首次打开时向后端发起一次非强制检查：
+          // 后端会统一判断全库是否有已过收盘的残缺行或超过 5 分钟冷却的盘中行，无需刷新时毫秒级返回 cached: true
+          if (!autoRefreshed) {
+            autoRefreshed = true;
+            triggerRefresh(false);
+          }
+        } catch (err) {
+          if (seq === loadSeq) {
+            document.querySelector("#question").textContent = cfg.file + " not available";
+          }
+        } finally {
+          if (seq === loadSeq && !refreshing) {
+            setBoardLoading(false);
+          }
         }
       }
 

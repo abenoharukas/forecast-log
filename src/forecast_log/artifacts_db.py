@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 import statistics
 from datetime import datetime, timezone
 from pathlib import Path
@@ -706,8 +707,8 @@ def load_cross_market(root: Path, market: str, _include_cross_ref: bool = True) 
             ssec_sell_comp: list[int] = []
             for idx, day in enumerate(dates):
                 prev_day = dates[idx - 1] if idx > 0 else None
-                high = int(np.searchsorted(us_days, day, side="left"))
-                low = max(0, high - 1) if prev_day is None else int(np.searchsorted(us_days, prev_day, side="left"))
+                high = bisect_left(us_days, day)
+                low = max(0, high - 1) if prev_day is None else bisect_left(us_days, prev_day)
                 hit = 0
                 for j in range(high - 1, low - 1, -1):
                     if us_sell_comp[j]:

@@ -407,5 +407,56 @@ def test_four_core_tables_schema_and_orthogonal_signals_join(tmp_path):
     assert loaded["latest"]["is_closed"] is True
 
 
+def test_sell_signals_round_trip_and_summary(tmp_path):
+    from forecast_log.artifacts_db import load_cross_market, save_cross_market
+    from forecast_log.db import upsert_series
+
+    upsert_series(
+        tmp_path,
+        Series(
+            "^NDX",
+            "America/New_York",
+            "2026-11-18T17:00:00-05:00",
+            (
+                Bar(date(2026, 11, 10), 20000.0, open=19950.0, high=20050.0, low=19900.0, volume=100, is_closed=True),
+                Bar(date(2026, 11, 11), 20100.0, open=20000.0, high=20150.0, low=19980.0, volume=110, is_closed=True),
+                Bar(date(2026, 11, 12), 19800.0, open=20050.0, high=20080.0, low=19750.0, volume=120, is_closed=True),
+            ),
+        ),
+    )
+    save_cross_market(
+        tmp_path,
+        "ndx",
+        {
+            "instrument": "^NDX",
+            "fetched_at": "2026-11-18T17:00:00-05:00",
+            "time": ["2026-11-10", "2026-11-11", "2026-11-12"],
+            "base_close": [20000.0, 20100.0, None],
+            "close3": [19700.0, 20200.0, None],
+            "close5": [19600.0, 20300.0, None],
+            "hit3": [0, 1, None],
+            "outcome": [0, 1, None],
+            "flag": [0, 1, 0],
+            "flag_price_only": [0, 1, 0],
+            "sell_flag": [1, 0, 1],
+            "score": [-1.2, 1.3, -1.5],
+            "threshold": [0.9, 0.9, 0.9],
+            "sell_threshold": [-0.8, -0.8, -0.8],
+            "components": {"composite": [0, 1, 0]},
+        },
+    )
+    loaded = load_cross_market(tmp_path, "ndx")
+    assert loaded is not None
+    assert loaded["sell_flag"] == [1, 0, 1]
+    assert loaded["sell_threshold"] == [-0.8, -0.8, -0.8]
+    assert loaded["components"]["sell_composite"] == [1, 0, 1]
+    assert loaded["summary_sell"]["flagged"] == 1
+    assert loaded["summary_sell"]["hit"] == 1.0
+    assert loaded["summary_sell"]["hit3"] == 1.0
+    assert loaded["latest"]["sell_flag"] == 1
+    assert loaded["latest"]["sell_threshold"] == -0.8
+
+
+
 
 

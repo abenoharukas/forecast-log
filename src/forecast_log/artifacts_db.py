@@ -275,6 +275,98 @@ def _compute_us_tally(rows: list[Any], flag_col: str, holdout: str = HOLDOUT_DEF
     }
 
 
+def _compute_us_sell_tally(rows: list[Any], holdout: str = HOLDOUT_DEFAULT) -> dict[str, Any]:
+    usable = [r for r in rows if r["base_close"] is not None and r["close5"] is not None]
+
+    def _down5(r: Any) -> int:
+        return 1 if float(r["close5"]) < float(r["base_close"]) else 0
+
+    def _down3(r: Any) -> int:
+        return 1 if (r["close3"] is not None and float(r["close3"]) < float(r["base_close"])) else 0
+
+    def _split(sample: list[Any]) -> dict[str, float | None]:
+        if not sample:
+            return {"hit3": None, "hit45": None, "miss": None}
+        three = sum(_down3(r) for r in sample) / len(sample)
+        later = sum(1 for r in sample if _down5(r) == 1 and _down3(r) == 0) / len(sample)
+        return {"hit3": round(three, 4), "hit45": round(later, 4), "miss": round(1.0 - three - later, 4)}
+
+    flagged = [r for r in usable if r["sell_flag"]]
+    held = [r for r in usable if r["date"] >= holdout]
+    held_flag = [r for r in held if r["sell_flag"]]
+    f_split = _split(flagged)
+    b_split = _split(usable)
+    return {
+        "n": len(usable),
+        "base_rate": round(sum(_down5(r) for r in usable) / len(usable), 4) if usable else None,
+        "flagged": len(flagged),
+        "hit": round(sum(_down5(r) for r in flagged) / len(flagged), 4) if flagged else None,
+        "holdout_n": len(held),
+        "holdout_base_rate": round(sum(_down5(r) for r in held) / len(held), 4) if held else None,
+        "holdout_flagged": len(held_flag),
+        "holdout_hit": round(sum(_down5(r) for r in held_flag) / len(held_flag), 4) if held_flag else None,
+        "hit3": f_split["hit3"],
+        "hit45": f_split["hit45"],
+        "miss": f_split["miss"],
+        "base3": b_split["hit3"],
+        "base45": b_split["hit45"],
+        "holdout_from": holdout,
+    }
+
+
+def _compute_ssec_sell_summary(rows: list[Any], holdout: str = HOLDOUT_DEFAULT) -> dict[str, Any]:
+    n = len(rows)
+
+    def _pair(idx: int) -> tuple[float, float, float] | None:
+        r = rows[idx]
+        base = r["base_close"] if r["base_close"] is not None else r["close"]
+        c3 = r["close3"] if r["close3"] is not None else (rows[idx + 3]["close"] if idx + 3 < n else None)
+        c5 = r["close5"] if r["close5"] is not None else (rows[idx + 5]["close"] if idx + 5 < n else None)
+        if base is None or c5 is None:
+            return None
+        return float(base), (float(c3) if c3 is not None else float(base)), float(c5)
+
+    def _split(indices: list[int]) -> dict[str, float | None]:
+        if not indices:
+            return {"hit3": None, "hit45": None, "miss": None}
+        three = 0
+        later = 0
+        for idx in indices:
+            p = _pair(idx)
+            if p is None:
+                continue
+            base, c3, c5 = p
+            if c3 < base:
+                three += 1
+            elif c5 < base:
+                later += 1
+        t_rate = three / len(indices)
+        l_rate = later / len(indices)
+        return {"hit3": round(t_rate, 4), "hit45": round(l_rate, 4), "miss": round(1.0 - t_rate - l_rate, 4)}
+
+    def _window(low: str) -> dict[str, Any]:
+        usable = [i for i, r in enumerate(rows) if r["date"] >= low and r["outcome"] is not None and _pair(i) is not None]
+        chosen = [i for i in usable if rows[i]["sell_flag"]]
+        base = round(sum(1 for i in usable if _pair(i)[2] < _pair(i)[0]) / len(usable), 4) if usable else None
+        hit = round(sum(1 for i in chosen if _pair(i)[2] < _pair(i)[0]) / len(chosen), 4) if chosen else None
+        cs = _split(chosen)
+        us = _split(usable)
+        return {
+            "sessions": len(usable),
+            "signals": len(chosen),
+            "hit": hit,
+            "base_rate": base,
+            "lift": None if hit is None or base is None else round(hit - base, 4),
+            "hit3": cs["hit3"],
+            "hit45": cs["hit45"],
+            "miss": cs["miss"],
+            "base3": us["hit3"],
+            "base45": us["hit45"],
+        }
+
+    return {"all": _window("1900"), "holdout": _window(holdout), "holdout_from": holdout}
+
+
 def _compute_ssec_summary_and_bands(rows: list[Any], ndx_doc: dict | None, holdout: str = HOLDOUT_DEFAULT) -> tuple[dict, list, dict | None, int]:
     n = len(rows)
 
@@ -474,7 +566,7 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
             row["date"]: row
             for row in conn.execute(
                 """
-                SELECT s.date, s.flag, s.score, s.outcome, s.factors_packed, s.fetched_at,
+                SELECT s.date, s.flag, s.sell_flag, s.sell_threshold, s.score, s.outcome, s.factors_packed, s.fetched_at,
                        COALESCE(b.is_closed, 1) AS is_closed
                 FROM signals s
                 LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
@@ -492,6 +584,8 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
                 or prev["is_closed"] == 0
                 or not s.get("is_closed", 1)
                 or (prev["outcome"] is None and s.get("outcome") is not None)
+                or (prev["sell_flag"] is None and s.get("sell_flag") is not None)
+                or (prev["sell_threshold"] is None and s.get("sell_threshold") is not None)
             ):
                 for back in range(max(0, idx - 7), idx + 1):
                     dirty_indices.add(back)
@@ -502,6 +596,8 @@ def save_cross_market(root: Path, market: str, doc: dict) -> int:
             if (
                 prev is None
                 or prev["flag"] != s.get("flag")
+                or prev["sell_flag"] != s.get("sell_flag")
+                or prev["sell_threshold"] != s.get("sell_threshold")
                 or prev["score"] != s.get("score")
                 or prev["outcome"] != s.get("outcome")
                 or prev["factors_packed"] != s.get("factors_packed")
@@ -603,12 +699,36 @@ def load_cross_market(root: Path, market: str, _include_cross_ref: bool = True) 
         ctx["key"]: [(int(r["factors_packed"]) >> (4 * pos)) & 0xF for r in rows]
         for pos, ctx in enumerate(contexts)
     }
+    if market == "ssec":
+        if ndx_doc and ndx_doc.get("time") and (ndx_doc.get("components") or {}).get("sell_composite"):
+            us_days = ndx_doc["time"]
+            us_sell_comp = ndx_doc["components"]["sell_composite"]
+            ssec_sell_comp: list[int] = []
+            for idx, day in enumerate(dates):
+                prev_day = dates[idx - 1] if idx > 0 else None
+                high = int(np.searchsorted(us_days, day, side="left"))
+                low = max(0, high - 1) if prev_day is None else int(np.searchsorted(us_days, prev_day, side="left"))
+                hit = 0
+                for j in range(high - 1, low - 1, -1):
+                    if us_sell_comp[j]:
+                        hit = 1
+                        break
+                ssec_sell_comp.append(hit)
+            doc["components"]["sell_composite"] = ssec_sell_comp
+        else:
+            doc["components"]["sell_composite"] = [int(r["sell_flag"] or 0) for r in rows]
+    else:
+        doc["components"]["sell_composite"] = [
+            1 if (r["score"] is not None and r["sell_threshold"] is not None and float(r["score"]) <= float(r["sell_threshold"])) else 0
+            for r in rows
+        ]
     doc["contexts"] = contexts
 
     last = rows[-1]
     if market == "ssec":
         summary, bands, reference, signals_seen = _compute_ssec_summary_and_bands(rows, ndx_doc)
         doc["summary"] = summary
+        doc["summary_sell"] = _compute_ssec_sell_summary(rows)
         doc["bands"] = bands
         if reference is not None:
             doc["reference"] = reference
@@ -627,6 +747,7 @@ def load_cross_market(root: Path, market: str, _include_cross_ref: bool = True) 
                 else None
             ),
             "flag": int(last["flag"] or 0),
+            "sell_flag": int(last["sell_flag"] or 0),
             "is_closed": bool(last["is_closed"]),
         }
     else:
@@ -634,6 +755,7 @@ def load_cross_market(root: Path, market: str, _include_cross_ref: bool = True) 
 
         doc["summary"] = _compute_us_tally(rows, "flag")
         doc["summary_price_only"] = _compute_us_tally(rows, "flag_price_only")
+        doc["summary_sell"] = _compute_us_sell_tally(rows)
         cal_prov = _calendar_provenance(root)
         if cal_prov is not None:
             doc["calendar"] = cal_prov
@@ -656,7 +778,9 @@ def load_cross_market(root: Path, market: str, _include_cross_ref: bool = True) 
             "volume": last["volume"],
             "score": round(float(last["score"]), 4) if last["score"] is not None else None,
             "threshold": round(float(last["threshold"]), 4) if last["threshold"] is not None else None,
+            "sell_threshold": round(float(last["sell_threshold"]), 4) if last["sell_threshold"] is not None else None,
             "flag": int(last["flag"] or 0) if last["flag"] is not None else 0,
+            "sell_flag": int(last["sell_flag"] or 0) if last["sell_flag"] is not None else 0,
             "flag_price_only": int(last["flag_price_only"] or 0) if last["flag_price_only"] is not None else 0,
             "news_veto": bool(last["news_veto"]),
             "is_closed": bool(last["is_closed"]),

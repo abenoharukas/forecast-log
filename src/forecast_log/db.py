@@ -34,6 +34,8 @@ SIGNAL_COLUMNS = (
     "hit3",
     "flag",
     "flag_price_only",
+    "sell_flag",
+    "sell_threshold",
     "news_veto",
     "score",
     "threshold",
@@ -112,6 +114,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             hit3            INTEGER,
             flag            INTEGER,
             flag_price_only INTEGER,
+            sell_flag       INTEGER,
+            sell_threshold  REAL,
             news_veto       INTEGER,
             score           REAL,
             threshold       REAL,
@@ -191,6 +195,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         """
     )
     _migrate_to_four_tables(conn)
+    _ensure_signal_sell_columns(conn)
+
+
+def _ensure_signal_sell_columns(conn: sqlite3.Connection) -> None:
+    """为存量数据库自动补充卖出信号列（sell_flag / sell_threshold），无损兼容。"""
+    sig_cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
+    with conn:
+        if "sell_flag" not in sig_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN sell_flag INTEGER")
+        if "sell_threshold" not in sig_cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN sell_threshold REAL")
 
 
 def _cast_legacy_node(kind: str, value: str | None) -> Any:

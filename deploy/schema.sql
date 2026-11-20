@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS signals (
     hit3            INTEGER,
     flag            INTEGER,
     flag_price_only INTEGER,
+    sell_flag       INTEGER,
+    sell_threshold  REAL,
     news_veto       INTEGER,
     score           REAL,
     threshold       REAL,

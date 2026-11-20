@@ -51,6 +51,7 @@ from forecast_log.stats import expanding_z
 
 HORIZON = 5
 QUANTILE = 0.90
+SELL_QUANTILE = 0.10
 MIN_HISTORY = 252
 
 # fetch 用：这四个因子背后的行情，以及备用（广度、黄金）
@@ -199,6 +200,10 @@ class Call:
     # 价格侧（四个因子 + 日历）自己的结论。`flag` 是再叠加新闻否决之后的结果。
     price_only: int = 0
     news_veto: int = 0
+    # 对称卖出信号：复合分数 ≤ 历史 10 分位（非 FOMC 决议日、无强利多意外）
+    sell_threshold: float = 0.0
+    sell_flag: int = 0
+    sell_composite: int = 0
     # 逐列的信息源标签：页面上的勾选框直接对应这些列，任意组合都能在前端重算。
     composite: int = 0     # 复合分数 ≥ 90 分位
     cal_cpi: int = 0       # CPI 前 3 天且分数 ≥ 中位
@@ -433,6 +438,7 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
         if history.size < MIN_HISTORY:
             continue
         threshold = float(np.quantile(history, QUANTILE))
+        sell_threshold = float(np.quantile(history, SELL_QUANTILE))
         middle = float(np.quantile(history, 0.50))
         flag = int(scores[i] >= threshold)
         if calendar is not None:
@@ -460,10 +466,13 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
             cal_nfp = int(above_middle and low <= calendar["nfp"][i] <= high)
             fomc_day = int(calendar["fomc"][i] == 0)
         composite_flag = int(scores[i] >= threshold)
+        sell_composite_flag = int(scores[i] <= sell_threshold)
 
         price_only = flag
-        # 默认组合 = 复合分数 + 日历触发 − FOMC 当天 − 强利空意外
+        # 默认买入组合 = 复合分数(≥90%) + 日历触发 − FOMC 当天 − 强利空意外
         flag = int(bool(composite_flag or cal_cpi or cal_nfp) and not fomc_day and not bearish)
+        # 默认卖出组合 = 复合分数(≤10%) − FOMC 当天 − 强利多意外
+        sell_flag = int(bool(sell_composite_flag) and not fomc_day and not bullish)
         resolved = np.isfinite(peak[i]) and np.isfinite(entry[i])
         outcome = int(close5[i] > base_close[i]) if resolved else None
         out.append(
@@ -489,6 +498,9 @@ def calls(root: Path, series: Series, target: Series | None = None) -> list[Call
                 peak_at=peak_at[i],
                 price_only=price_only,
                 news_veto=int(price_only and not flag),
+                sell_threshold=sell_threshold,
+                sell_flag=sell_flag,
+                sell_composite=sell_composite_flag,
                 composite=composite_flag,
                 cal_cpi=cal_cpi,
                 cal_nfp=cal_nfp,
@@ -593,9 +605,43 @@ def document(
             "base45": split(selected)["hit45"],
         }
 
+    def tally_sell(selected: list[Call]) -> dict:
+        usable = [r for r in selected if r.base_close is not None and r.close5 is not None]
+        def _down5(r: Call) -> int:
+            return int(r.close5 < r.base_close)
+        def _down3(r: Call) -> int:
+            return int(r.close3 is not None and r.close3 < r.base_close)
+        def _sell_split(sample: list[Call]) -> dict:
+            if not sample:
+                return {"hit3": None, "hit45": None, "miss": None}
+            three = float(np.mean([_down3(r) for r in sample]))
+            later = float(np.mean([1 if (_down5(r) == 1 and _down3(r) == 0) else 0 for r in sample]))
+            return {"hit3": round(three, 4), "hit45": round(later, 4), "miss": round(1 - three - later, 4)}
+        flagged = [r for r in usable if r.sell_flag]
+        held = [r for r in usable if r.date >= holdout]
+        held_flag = [r for r in held if r.sell_flag]
+        fs = _sell_split(flagged)
+        bs = _sell_split(usable)
+        return {
+            "n": len(usable),
+            "base_rate": round(float(np.mean([_down5(r) for r in usable])), 4) if usable else None,
+            "flagged": len(flagged),
+            "hit": round(float(np.mean([_down5(r) for r in flagged])), 4) if flagged else None,
+            "holdout_n": len(held),
+            "holdout_base_rate": round(float(np.mean([_down5(r) for r in held])), 4) if held else None,
+            "holdout_flagged": len(held_flag),
+            "holdout_hit": round(float(np.mean([_down5(r) for r in held_flag])), 4) if held_flag else None,
+            "hit3": fs["hit3"],
+            "hit45": fs["hit45"],
+            "miss": fs["miss"],
+            "base3": bs["hit3"],
+            "base45": bs["hit45"],
+        }
+
     price_rows = [Call(**{**row.__dict__, "flag": row.price_only}) for row in resolved]
     with_news = tally(resolved)
     price_only = tally(price_rows)
+    sell_summary = tally_sell(resolved)
     _, news_provenance = _news_labels(root)
     news_provenance["vetoed_signals"] = sum(row.news_veto for row in resolved)
     news_columns, news_contexts = _news_providers(root, [row.date for row in rows])
@@ -682,10 +728,13 @@ def document(
         "hit3": [row.hit3 for row in rows],
         "score": [round(row.score, 4) for row in rows],
         "threshold": [round(row.threshold, 4) for row in rows],
+        "sell_threshold": [round(row.sell_threshold, 4) for row in rows],
         "flag": [row.flag for row in rows],
+        "sell_flag": [row.sell_flag for row in rows],
         "flag_price_only": [row.price_only for row in rows],
         "components": {
             "composite": [row.composite for row in rows],
+            "sell_composite": [row.sell_composite for row in rows],
             "cal_cpi": [row.cal_cpi for row in rows],
             "cal_nfp": [row.cal_nfp for row in rows],
             "fomc_day": [row.fomc_day for row in rows],
@@ -711,6 +760,7 @@ def document(
         "is_closed": [row.is_closed for row in rows],
         "summary": {**with_news, "holdout_from": holdout},
         "summary_price_only": {**price_only, "holdout_from": holdout},
+        "summary_sell": {**sell_summary, "holdout_from": holdout},
         "context": _runtime_context(root),
         "latest": {
             "date": rows[-1].date,
@@ -721,7 +771,9 @@ def document(
             "volume": rows[-1].volume,
             "score": round(rows[-1].score, 4),
             "threshold": round(rows[-1].threshold, 4),
+            "sell_threshold": round(rows[-1].sell_threshold, 4),
             "flag": rows[-1].flag,
+            "sell_flag": rows[-1].sell_flag,
             "flag_price_only": rows[-1].price_only,
             "news_veto": bool(rows[-1].news_veto),
             "is_closed": bool(rows[-1].is_closed),

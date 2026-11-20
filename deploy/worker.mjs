@@ -76,6 +76,8 @@ const ARRAY_COLUMNS = [
   "hit3",
   "flag",
   "flag_price_only",
+  "sell_flag",
+  "sell_threshold",
   "news_veto",
   "score",
   "threshold",
@@ -300,12 +302,20 @@ async function loadMarket(env, url, market) {
       Math.floor(Number(row.factors_packed || 0) / 2 ** (4 * position)) % 16,
     );
   }
+  if (market === "ssec") {
+    doc.components.sell_composite = rows.map((row) => Number(row.sell_flag || 0));
+  } else {
+    doc.components.sell_composite = rows.map((row) =>
+      row.score !== null && row.score !== undefined && row.sell_threshold !== null && row.sell_threshold !== undefined && Number(row.score) <= Number(row.sell_threshold) ? 1 : 0,
+    );
+  }
   doc.contexts = contexts;
 
   const last = rows[rows.length - 1];
   if (market === "ssec") {
     const ssec = ssecSummary(rows, ndxDoc);
     doc.summary = ssec.summary;
+    doc.summary_sell = ssecSellSummary(rows);
     doc.bands = ssec.bands;
     if (ssec.reference) doc.reference = ssec.reference;
     doc.signals_seen = ssec.signalsSeen;
@@ -318,11 +328,13 @@ async function loadMarket(env, url, market) {
       volume: last.volume,
       us_date: last.us_date || previousSession(ndxDoc?.time, last.date),
       flag: Number(last.flag || 0),
+      sell_flag: Number(last.sell_flag || 0),
       is_closed: Boolean(last.is_closed),
     };
   } else {
     doc.summary = usTally(rows, "flag");
     doc.summary_price_only = usTally(rows, "flag_price_only");
+    doc.summary_sell = usSellTally(rows);
     if (meta.calendar) doc.calendar = meta.calendar;
     if (meta.news) {
       doc.news = {
@@ -343,7 +355,9 @@ async function loadMarket(env, url, market) {
       volume: last.volume,
       score: rnd(last.score, 4),
       threshold: rnd(last.threshold, 4),
+      sell_threshold: rnd(last.sell_threshold, 4),
       flag: last.flag === null ? 0 : Number(last.flag || 0),
+      sell_flag: last.sell_flag === null ? 0 : Number(last.sell_flag || 0),
       flag_price_only: last.flag_price_only === null ? 0 : Number(last.flag_price_only || 0),
       news_veto: Boolean(last.news_veto),
       is_closed: Boolean(last.is_closed),
@@ -435,6 +449,89 @@ function usTally(rows, flagColumn) {
     base45: bSplit.hit45,
     holdout_from: HOLDOUT,
   };
+}
+
+function usSellTally(rows) {
+  const usable = rows.filter((row) => row.base_close != null && row.close5 != null);
+  const down5 = (row) => (Number(row.close5) < Number(row.base_close) ? 1 : 0);
+  const down3 = (row) => (row.close3 != null && Number(row.close3) < Number(row.base_close) ? 1 : 0);
+  const split = (sample) => {
+    if (!sample.length) return { hit3: null, hit45: null, miss: null };
+    const three = sample.filter((row) => down3(row) === 1).length / sample.length;
+    const later = sample.filter((row) => down5(row) === 1 && down3(row) === 0).length / sample.length;
+    return { hit3: rnd(three, 4), hit45: rnd(later, 4), miss: rnd(1 - three - later, 4) };
+  };
+  const flagged = usable.filter((row) => Number(row.sell_flag || 0));
+  const held = usable.filter((row) => row.date >= HOLDOUT);
+  const heldFlag = held.filter((row) => Number(row.sell_flag || 0));
+  const fSplit = split(flagged);
+  const bSplit = split(usable);
+  return {
+    n: usable.length,
+    base_rate: usable.length ? rnd(mean(usable.map(down5)), 4) : null,
+    flagged: flagged.length,
+    hit: flagged.length ? rnd(mean(flagged.map(down5)), 4) : null,
+    holdout_n: held.length,
+    holdout_base_rate: held.length ? rnd(mean(held.map(down5)), 4) : null,
+    holdout_flagged: heldFlag.length,
+    holdout_hit: heldFlag.length ? rnd(mean(heldFlag.map(down5)), 4) : null,
+    hit3: fSplit.hit3,
+    hit45: fSplit.hit45,
+    miss: fSplit.miss,
+    base3: bSplit.hit3,
+    base45: bSplit.hit45,
+    holdout_from: HOLDOUT,
+  };
+}
+
+function ssecSellSummary(rows) {
+  const n = rows.length;
+  const pair = (i) => {
+    const r = rows[i];
+    const base = r.base_close != null ? Number(r.base_close) : (r.close != null ? Number(r.close) : null);
+    const c3 = r.close3 != null ? Number(r.close3) : (i + 3 < n && rows[i + 3].close != null ? Number(rows[i + 3].close) : null);
+    const c5 = r.close5 != null ? Number(r.close5) : (i + 5 < n && rows[i + 5].close != null ? Number(rows[i + 5].close) : null);
+    if (base == null || c5 == null) return null;
+    return [base, c3 != null ? c3 : base, c5];
+  };
+  const split = (indices) => {
+    if (!indices.length) return { hit3: null, hit45: null, miss: null };
+    let three = 0;
+    let later = 0;
+    for (const i of indices) {
+      const p = pair(i);
+      if (!p) continue;
+      if (p[1] < p[0]) three += 1;
+      else if (p[2] < p[0]) later += 1;
+    }
+    const t = three / indices.length;
+    const l = later / indices.length;
+    return { hit3: rnd(t, 4), hit45: rnd(l, 4), miss: rnd(1 - t - l, 4) };
+  };
+  const win = (low) => {
+    const usable = [];
+    rows.forEach((r, i) => {
+      if (r.date >= low && r.outcome != null && pair(i) != null) usable.push(i);
+    });
+    const chosen = usable.filter((i) => Number(rows[i].sell_flag || 0));
+    const base = usable.length ? rnd(mean(usable.map((i) => (pair(i)[2] < pair(i)[0] ? 1 : 0))), 4) : null;
+    const hit = chosen.length ? rnd(mean(chosen.map((i) => (pair(i)[2] < pair(i)[0] ? 1 : 0))), 4) : null;
+    const cs = split(chosen);
+    const us = split(usable);
+    return {
+      sessions: usable.length,
+      signals: chosen.length,
+      hit,
+      base_rate: base,
+      lift: hit == null || base == null ? null : rnd(hit - base, 4),
+      hit3: cs.hit3,
+      hit45: cs.hit45,
+      miss: cs.miss,
+      base3: us.hit3,
+      base45: us.hit45,
+    };
+  };
+  return { all: win("1900"), holdout: win(HOLDOUT), holdout_from: HOLDOUT };
 }
 
 function ssecSummary(rows, ndxDoc) {
@@ -1012,10 +1109,12 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
     const day = fmt.format(new Date(stamps[i] * 1000));
     byDate.set(day, {
       date: day,
-      open: quote.open?.[i] != null ? Math.round(quote.open[i] * 100) / 100 : null,
-      high: quote.high?.[i] != null ? Math.round(quote.high[i] * 100) / 100 : null,
-      low: quote.low?.[i] != null ? Math.round(quote.low[i] * 100) / 100 : null,
-      close: Math.round(close * 100) / 100,
+      // Same precision as forecast_log.yahoo: bars store 4 decimals; the API
+      // rounds to 2 when it builds the chart series.
+      open: quote.open?.[i] != null ? rnd(quote.open[i], 4) : null,
+      high: quote.high?.[i] != null ? rnd(quote.high[i], 4) : null,
+      low: quote.low?.[i] != null ? rnd(quote.low[i], 4) : null,
+      close: rnd(close, 4),
       volume: quote.volume?.[i] != null ? Math.trunc(quote.volume[i]) : null,
       is_closed: isSessionClosed(day, tz, now),
     });
@@ -1025,8 +1124,28 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
 
 async function refreshFromYahoo(env, force = false) {
   try {
+    const todayBj = beijingDateStr();
     const symbols = (await env.DB.prepare("SELECT DISTINCT symbol FROM bars ORDER BY symbol").all()).results ?? [];
     if (!symbols.length) return json({ ok: false, error: "D1 尚未初始化，请先运行 make cf" }, 404);
+
+    // 盘中 5 分钟冷却：页面每次加载都会 non-force 调一次，不能每次都打 Yahoo。
+    if (!force) {
+      const freshCut = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const unclosed = (await env.DB.prepare("SELECT symbol, date, fetched_at FROM bars WHERE is_closed = 0").all())
+        .results ?? [];
+      const stale = unclosed.filter((row) => !row.fetched_at || row.fetched_at < freshCut);
+      const markets = (await env.DB.prepare("SELECT market, MAX(date) AS last_session, MAX(fetched_at) AS fetched_at FROM signals GROUP BY market").all())
+        .results ?? [];
+      const allFresh = markets.length > 0 && markets.every((row) => (row.fetched_at || "").slice(0, 10) >= todayBj);
+      if (stale.length === 0 && allFresh) {
+        return json({
+          ok: true,
+          cached: true,
+          beijing_date: todayBj,
+          sessions: Object.fromEntries(markets.map((row) => [row.market, row.last_session])),
+        });
+      }
+    }
 
     const updated = {};
     const errors = {};
@@ -1095,7 +1214,9 @@ async function settleSignals(env) {
     if (!bars.length) continue;
     const index = new Map(bars.map((bar, i) => [bar.date, i]));
     const tail = (
-      await env.DB.prepare("SELECT * FROM signals WHERE market = ? ORDER BY date DESC LIMIT 30").bind(market).all()
+      await env.DB.prepare("SELECT * FROM signals WHERE market = ? AND outcome IS NULL ORDER BY date DESC LIMIT 60")
+        .bind(market)
+        .all()
     ).results ?? [];
     let changed = 0;
     for (const row of tail) {
@@ -1119,10 +1240,30 @@ async function settleSignals(env) {
         const close5 = bars[i + H].close;
         const outcome = close5 > baseClose ? 1 : 0;
         const close3 = bars[i + 3]?.close ?? null;
+        const flagged = Number(row.flag || 0) ? 1 : 0;
         await env.DB.prepare(
-          "UPDATE signals SET outcome = ?, peak = ?, peak_at = ?, close3 = ?, close5 = ?, hit3 = ? WHERE market = ? AND date = ?",
+          `UPDATE signals SET outcome = ?, peak = ?, peak_at = ?,
+                              base_close = CASE WHEN ? THEN ? ELSE base_close END,
+                              close3 = CASE WHEN ? THEN ? ELSE close3 END,
+                              close5 = CASE WHEN ? THEN ? ELSE close5 END,
+                              hit3 = CASE WHEN ? THEN ? ELSE hit3 END
+           WHERE market = ? AND date = ?`,
         )
-          .bind(outcome, peak, peakAt, close3, close5, close3 !== null && close3 > baseClose ? 1 : 0, market, row.date)
+          .bind(
+            outcome,
+            rnd(peak, 2),
+            peakAt,
+            flagged,
+            rnd(baseClose, 2),
+            flagged,
+            rnd(close3, 2),
+            flagged,
+            rnd(close5, 2),
+            flagged,
+            close3 !== null && close3 > baseClose ? 1 : 0,
+            market,
+            row.date,
+          )
           .run();
         changed += 1;
       } else {
@@ -1146,15 +1287,15 @@ async function settleSignals(env) {
            WHERE market = ? AND date = ?`,
         )
           .bind(
-            next.open,
+            rnd(next.open, 2),
             next.date,
-            baseClose,
-            close3,
-            close5,
+            rnd(baseClose, 2),
+            rnd(close3, 2),
+            rnd(close5, 2),
             close3 !== null && close3 > baseClose ? 1 : 0,
             close5 > baseClose ? 1 : 0,
             bars[i + H].date,
-            peak,
+            rnd(peak, 2),
             peakAt,
             market,
             row.date,

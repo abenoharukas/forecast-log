@@ -108,11 +108,18 @@ def build_market_context(root: Path, market: str) -> dict:
     cross = load_cross_market(root, mkt, _include_cross_ref=False)
     if cross and cross.get("latest"):
         lat_sig = cross["latest"]
-        flag_str = "触发买入信号 (BUY)" if lat_sig.get("flag") else "观望 / 无信号 (NO SIGNAL)"
+        if lat_sig.get("flag"):
+            flag_str = "触发买入信号 (BUY)"
+        elif lat_sig.get("sell_flag"):
+            flag_str = "触发卖出信号 (SELL)"
+        else:
+            flag_str = "观望 / 无信号 (NO SIGNAL)"
         score = lat_sig.get("score")
         thresh = lat_sig.get("threshold")
+        sell_thresh = lat_sig.get("sell_threshold")
         if score is not None and thresh is not None:
-            sig_line = f"量化因子参考：{flag_str}（合成得分 {score:.3f} / 阈值 {thresh:.3f}）"
+            sell_part = f" / 卖出阈值 {sell_thresh:.3f}" if sell_thresh is not None else ""
+            sig_line = f"量化因子参考：{flag_str}（合成得分 {score:.3f} / 买入阈值 {thresh:.3f}{sell_part}）"
         else:
             sig_line = f"量化因子参考：{flag_str}"
 

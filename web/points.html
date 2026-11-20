@@ -200,12 +200,17 @@
     <div class="board">
       <div class="pane">
         <div class="pane-head">
-          <span class="name" id="pane-name">Risk-on composite → day-5 close above the signal-day close</span>
+          <span class="name" id="pane-name">Cross-asset composite → 5-day BUY &amp; SELL signals</span>
           <span class="sub" id="live-call" style="font-weight:500;">—</span>
           <span class="sub" id="rule" title="Click to configure context factors">—</span>
-          <span class="sub">marker = entry session · basis = signal close · <b style="color:#00c853">▲ green</b> = day-3 above · <b style="color:#ff9100">● amber</b> = day-3 below, day-5 above · <b style="color:#64748b">■ grey</b> = day-5 below · <b style="color:#0091ea">▲ blue</b> = pending BUY · hover for numbers</span>
+          <span class="sub">BUY (below): <b style="color:#00c853">▲ green</b> d3↑ · <b style="color:#ff9100">● amber</b> d5↑ · <b style="color:#64748b">■ grey</b> miss · <b style="color:#0091ea">▲ blue</b> pending | SELL (above): <b style="color:#e53935">▼ red</b> d3↓ · <b style="color:#9c27b0">● violet</b> d5↓ · <b style="color:#64748b">■ grey</b> miss · <b style="color:#d500f9">▼ pink</b> pending</span>
           <span class="sub" id="readout">hover a candle: open / high / low / close, plus day-3 and day-5 outcomes</span>
           <div class="pane-toggles">
+            <span class="group" id="sig-filter" role="group" aria-label="Signal direction" style="display:inline-flex;gap:4px;">
+              <button class="toggle active" type="button" data-dir="both" aria-pressed="true">Buy+Sell</button>
+              <button class="toggle" type="button" data-dir="buy" aria-pressed="false">Buy</button>
+              <button class="toggle" type="button" data-dir="sell" aria-pressed="false">Sell</button>
+            </span>
             <span class="group" id="ranges" role="group" aria-label="Time range" style="display:inline-flex;gap:4px;">
               <button class="toggle" type="button" data-span="90" aria-pressed="false">3M</button>
               <button class="toggle active" type="button" data-span="365" aria-pressed="true">1Y</button>
@@ -260,9 +265,9 @@
           key: "ndx",
           path: "/ndx",
           file: "/api/cross/ndx",
-          title: "Nasdaq-100 — 5-day risk-on signals",
-          docTitle: "Nasdaq-100 — 5-day risk-on signals",
-          paneName: "Risk-on composite → day-5 NDX close above the signal-day close",
+          title: "Nasdaq-100 — 5-day buy & sell signals",
+          docTitle: "Nasdaq-100 — 5-day buy & sell signals",
+          paneName: "Cross-asset composite → 5-day NDX BUY (≥90%) & SELL (≤10%) signals",
           panelTitle: "Nasdaq-100 (^NDX) — Factors & Decision Rule",
           markerOnEntryAt: true,
         },
@@ -270,9 +275,9 @@
           key: "qqq",
           path: "/qqq",
           file: "/api/cross/qqq",
-          title: "QQQ — same signals, a tradable instrument",
-          docTitle: "QQQ — same risk-on signals, a tradable instrument",
-          paneName: "Risk-on composite → day-5 QQQ close above the signal-day close",
+          title: "QQQ — buy & sell signals, tradable ETF",
+          docTitle: "QQQ — buy & sell signals, tradable ETF",
+          paneName: "Cross-asset composite → 5-day QQQ BUY (≥90%) & SELL (≤10%) signals",
           panelTitle: "QQQ (ETF) — Factors & Decision Rule",
           markerOnEntryAt: true,
         },
@@ -280,9 +285,9 @@
           key: "ssec",
           path: "/a-shares",
           file: "/api/cross/ssec",
-          title: "Shanghai composite — A股跨市场信号检验",
-          docTitle: "Shanghai composite — A-shares risk-on signals",
-          paneName: "Same signal → day-5 A-share close above the basis close",
+          title: "Shanghai composite — A股跨市场买卖信号检验",
+          docTitle: "Shanghai composite — A-shares buy & sell signals",
+          paneName: "Same US composite → 5-day A-share BUY & SELL signals",
           panelTitle: "A股 · 上证综指 (000001.SS) — Factors & Decision Rule",
           markerOnEntryAt: false,
         },
@@ -329,10 +334,12 @@
       let activeMarket = "ndx";
       let currentData = null;
       let span = 365;
+      let signalFilter = "both";
       let autoRefreshed = false;
       let refreshing = false;
-      let shown = { flags: [], data: null, market: "ndx" };
+      let shown = { flags: [], sellFlags: [], data: null, market: "ndx" };
       let entryOf = {};
+      let sellEntryOf = {};
       let indexOf = {};
 
       const percent = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
@@ -375,45 +382,101 @@
 
       function markerPalette(p) {
         return p.dark
-          ? { fast: "#00e676", hit: "#ffab00", miss: "#94a3b8", pending: "#40c4ff" }
-          : { fast: "#00c853", hit: "#ff9100", miss: "#64748b", pending: "#0091ea" };
+          ? {
+              fast: "#00e676",
+              hit: "#ffab00",
+              miss: "#94a3b8",
+              pending: "#40c4ff",
+              sellFast: "#ff5252",
+              sellHit: "#ce93d8",
+              sellPending: "#ff4081",
+            }
+          : {
+              fast: "#00c853",
+              hit: "#ff9100",
+              miss: "#64748b",
+              pending: "#0091ea",
+              sellFast: "#e53935",
+              sellHit: "#9c27b0",
+              sellPending: "#d500f9",
+            };
       }
 
-      function applyMarkers(flags, data, marketKey) {
+      function applyMarkers(flags, sellFlags, data, marketKey) {
         const cfg = MARKETS[marketKey];
         const mp = markerPalette(fcTheme.palette());
         const markers = [];
         entryOf = {};
-        flags.forEach((flag, index) => {
-          if (!flag) return;
-          const resolved = data.outcome[index] !== null && data.outcome[index] !== undefined;
-          const when = cfg.markerOnEntryAt ? (data.entry_at[index] || data.time[index]) : data.time[index];
-          if (!when) return;
-          if (!resolved) {
+        sellEntryOf = {};
+        const showBuy = signalFilter === "both" || signalFilter === "buy";
+        const showSell = signalFilter === "both" || signalFilter === "sell";
+
+        if (showBuy && Array.isArray(flags)) {
+          flags.forEach((flag, index) => {
+            if (!flag) return;
+            const resolved = data.outcome[index] !== null && data.outcome[index] !== undefined;
+            const when = cfg.markerOnEntryAt ? (data.entry_at[index] || data.time[index]) : data.time[index];
+            if (!when) return;
+            if (!resolved) {
+              markers.push({
+                time: when,
+                position: "belowBar",
+                shape: "arrowUp",
+                size: 1.5,
+                color: mp.pending,
+                text: "BUY",
+              });
+              return;
+            }
+            entryOf[when] = index;
+            const hit = data.outcome[index] === 1;
+            const fast = hit && data.hit3[index] === 1;
             markers.push({
               time: when,
               position: "belowBar",
-              shape: "arrowUp",
-              size: 1.5,
-              color: mp.pending,
-              text: "BUY",
+              shape: fast ? "arrowUp" : hit ? "circle" : "square",
+              size: !hit ? 1.0 : fast ? 1.4 : 1.2,
+              color: !hit ? mp.miss : fast ? mp.fast : mp.hit,
             });
-            return;
-          }
-          entryOf[when] = index;
-          const hit = data.outcome[index] === 1;
-          const fast = hit && data.hit3[index] === 1;
-          markers.push({
-            time: when,
-            position: "belowBar",
-            shape: fast ? "arrowUp" : hit ? "circle" : "square",
-            size: !hit ? 1.0 : fast ? 1.4 : 1.2,
-            color: !hit ? mp.miss : fast ? mp.fast : mp.hit,
           });
-        });
+        }
+
+        if (showSell && Array.isArray(sellFlags)) {
+          sellFlags.forEach((flag, index) => {
+            if (!flag) return;
+            const base = data.base_close ? data.base_close[index] : null;
+            const c3 = data.close3 ? data.close3[index] : null;
+            const c5 = data.close5 ? data.close5[index] : null;
+            const resolved = base !== null && base !== undefined && c5 !== null && c5 !== undefined;
+            const when = cfg.markerOnEntryAt ? (data.entry_at[index] || data.time[index]) : data.time[index];
+            if (!when) return;
+            if (!resolved) {
+              markers.push({
+                time: when,
+                position: "aboveBar",
+                shape: "arrowDown",
+                size: 1.5,
+                color: mp.sellPending,
+                text: "SELL",
+              });
+              return;
+            }
+            sellEntryOf[when] = index;
+            const hit = c5 < base;
+            const fast = hit && c3 !== null && c3 !== undefined && c3 < base;
+            markers.push({
+              time: when,
+              position: "aboveBar",
+              shape: fast ? "arrowDown" : hit ? "circle" : "square",
+              size: !hit ? 1.0 : fast ? 1.4 : 1.2,
+              color: !hit ? mp.miss : fast ? mp.sellFast : mp.sellHit,
+            });
+          });
+        }
+
         markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
         candles.setMarkers(markers);
-        shown = { flags, data, market: marketKey };
+        shown = { flags, sellFlags: sellFlags || [], data, market: marketKey };
       }
 
       function candleOptions(p, marketKey) {
@@ -432,7 +495,7 @@
       fcTheme.subscribe((p) => {
         chart.applyOptions(fcTheme.chartOptions(p));
         candles.applyOptions(candleOptions(p, activeMarket));
-        if (shown.data) applyMarkers(shown.flags, shown.data, shown.market);
+        if (shown.data) applyMarkers(shown.flags, shown.sellFlags, shown.data, shown.market);
       });
 
       function dayOf(time) {
@@ -478,7 +541,7 @@
           const c3 = data.close3 ? data.close3[sig] : null;
           const c5 = data.close5 ? data.close5[sig] : null;
           const srcDate = shown.market === "ssec" ? data.us_date[sig] : data.time[sig];
-          ohlcParts.push("basis " + base.toFixed(2) + " (sig " + srcDate + ")");
+          ohlcParts.push("BUY basis " + base.toFixed(2) + " (sig " + srcDate + ")");
           if (c3 !== null && c3 !== undefined && c5 !== null && c5 !== undefined) {
             const m = (val) => (val / base - 1 >= 0 ? "+" : "−") + Math.abs((val / base - 1) * 100).toFixed(2) + "%";
             ohlcParts.push(
@@ -491,9 +554,34 @@
           }
           return ohlcParts.join(" · ");
         }
+        const sellSig = sellEntryOf[day];
+        if (sellSig !== undefined) {
+          const base = data.base_close[sellSig];
+          const c3 = data.close3 ? data.close3[sellSig] : null;
+          const c5 = data.close5 ? data.close5[sellSig] : null;
+          const srcDate = shown.market === "ssec" ? data.us_date[sellSig] : data.time[sellSig];
+          ohlcParts.push("SELL basis " + base.toFixed(2) + " (sig " + srcDate + ")");
+          if (c3 !== null && c3 !== undefined && c5 !== null && c5 !== undefined) {
+            const m = (val) => (val / base - 1 >= 0 ? "+" : "−") + Math.abs((val / base - 1) * 100).toFixed(2) + "%";
+            ohlcParts.push(
+              "d3 " + c3.toFixed(2) + " (" + m(c3) + ")",
+              "d5 " + c5.toFixed(2) + " (" + m(c5) + ")" +
+                (c3 < base ? " → red" : c5 < base ? " → violet" : " → grey")
+            );
+          } else {
+            ohlcParts.push("check pending");
+          }
+          return ohlcParts.join(" · ");
+        }
         if (shown.flags[index] === 1 && MARKETS[shown.market].markerOnEntryAt) {
           const next = data.entry[index];
-          ohlcParts.push("SIGNAL at close" +
+          ohlcParts.push("BUY SIGNAL at close" +
+            (next != null ? " → next open " + next.toFixed(2) + " (" + data.entry_at[index] + ")" : ""));
+          return ohlcParts.join(" · ");
+        }
+        if (shown.sellFlags && shown.sellFlags[index] === 1 && MARKETS[shown.market].markerOnEntryAt) {
+          const next = data.entry[index];
+          ohlcParts.push("SELL SIGNAL at close" +
             (next != null ? " → next open " + next.toFixed(2) + " (" + data.entry_at[index] + ")" : ""));
           return ohlcParts.join(" · ");
         }
@@ -560,7 +648,7 @@
         intro.appendChild(ul);
         b1.appendChild(intro);
 
-        const b2 = addBlock(aside, "Out-of-sample performance");
+        const b2 = addBlock(aside, "BUY signal performance (≥ 90th pct, 5d up)");
         b2.appendChild(makeTable([
           ["Observations", String(s.n), String(s.holdout_n)],
           ["Signals", String(s.flagged), String(s.holdout_flagged)],
@@ -568,6 +656,22 @@
           ["Any random day", percentInt(s.base_rate), percentInt(s.holdout_base_rate)],
           ["Lift vs base", ((s.hit - s.base_rate) * 100).toFixed(1) + " pp", ((s.holdout_hit - s.holdout_base_rate) * 100).toFixed(1) + " pp"],
         ], ["", "Full sample", "Out-of-sample 2015+"]));
+
+        if (data.summary_sell && data.summary_sell.flagged != null) {
+          const ss = data.summary_sell;
+          const bsell = addBlock(aside, "SELL signal performance (≤ 10th pct, 5d down)");
+          bsell.appendChild(makeTable([
+            ["Observations", String(ss.n), String(ss.holdout_n)],
+            ["Signals", String(ss.flagged), String(ss.holdout_flagged)],
+            ["Precision (5d down)", percentInt(ss.hit), percentInt(ss.holdout_hit)],
+            ["Any random day (down)", percentInt(ss.base_rate), percentInt(ss.holdout_base_rate)],
+            [
+              "Lift vs base",
+              ss.hit != null && ss.base_rate != null ? ((ss.hit - ss.base_rate) * 100).toFixed(1) + " pp" : "—",
+              ss.holdout_hit != null && ss.holdout_base_rate != null ? ((ss.holdout_hit - ss.holdout_base_rate) * 100).toFixed(1) + " pp" : "—",
+            ],
+          ], ["", "Full sample", "Out-of-sample 2015+"]));
+        }
 
         const b3 = addBlock(aside, "News factor: with vs without");
         const priceOnly = data.summary_price_only;
@@ -588,10 +692,12 @@
         const b4 = addBlock(aside, "Latest observation");
         const latestDiv = document.createElement("div");
         latestDiv.className = "note";
+        const sellThStr = data.latest.sell_threshold != null ? ", sell ≤ " + data.latest.sell_threshold.toFixed(3) : "";
+        const callLabel = data.latest.flag ? "BUY (risk-on)" : data.latest.sell_flag ? "SELL (risk-off)" : "no signal";
         latestDiv.textContent =
           data.latest.date + " · composite " + data.latest.score.toFixed(3) +
-          ", trigger " + data.latest.threshold.toFixed(3) +
-          " → " + (data.latest.flag ? "signal (risk-on)" : "no signal");
+          ", buy ≥ " + data.latest.threshold.toFixed(3) + sellThStr +
+          " → " + callLabel;
         b4.appendChild(latestDiv);
 
         const agentDiv = document.createElement("div");
@@ -665,6 +771,21 @@
           : "No disagreement: both instruments resolved every signal the same way.";
         b2.appendChild(n2);
 
+        if (data.summary_sell && data.summary_sell.flagged != null) {
+          const ss = data.summary_sell;
+          const bsell = addBlock(aside, "SELL signal performance (≤ 10th pct, 5d down)");
+          bsell.appendChild(makeTable([
+            ["Signals", String(ss.flagged), String(ss.holdout_flagged)],
+            ["Precision (5d down)", percent(ss.hit), percent(ss.holdout_hit)],
+            ["Any random day (down)", percent(ss.base_rate), percent(ss.holdout_base_rate)],
+            [
+              "Lift vs base",
+              ss.hit != null && ss.base_rate != null ? points(ss.hit - ss.base_rate) : "—",
+              ss.holdout_hit != null && ss.holdout_base_rate != null ? points(ss.holdout_hit - ss.holdout_base_rate) : "—",
+            ],
+          ], ["", "Full sample", "Out-of-sample 2015+"]));
+        }
+
         const b3 = addBlock(aside, "");
         const n3 = document.createElement("div");
         n3.className = "note";
@@ -688,7 +809,7 @@
         b1.appendChild(v);
         b1.appendChild(vn);
 
-        const b2 = addBlock(aside, "One signal, two markets");
+        const b2 = addBlock(aside, "BUY signal: one signal, two markets");
         b2.appendChild(makeTable([
           ["Signals", String(a.signals), String(r.signals)],
           ["Precision", percent(a.hit), percent(r.hit)],
@@ -703,6 +824,17 @@
         n2.className = "note";
         n2.textContent = "Same flag on the same US session in both columns; only the market the bet settles in changes.";
         b2.appendChild(n2);
+
+        if (d.summary_sell && d.summary_sell.all && d.summary_sell.all.signals != null) {
+          const sa = d.summary_sell.all, sh = d.summary_sell.holdout;
+          const bsell = addBlock(aside, "SELL signal (≤ 10th pct, 5d down)");
+          bsell.appendChild(makeTable([
+            ["Signals", String(sa.signals), String(sh.signals)],
+            ["Precision (5d down)", percent(sa.hit), percent(sh.hit)],
+            ["Any random day (down)", percent(sa.base_rate), percent(sh.base_rate)],
+            ["Lift vs base", points(sa.lift), points(sh.lift)],
+          ], ["", "Full sample", "Since " + d.summary_sell.holdout_from]));
+        }
 
         const b3 = addBlock(aside, "Bands of the composite (low → high)");
         const bandsTable = makeTable(
@@ -1011,12 +1143,13 @@
         return { iso, isWeekday };
       }
 
-      function updateLiveCall(flags, data, marketKey) {
+      function updateLiveCall(flags, sellFlags, data, marketKey) {
         const el = document.querySelector("#live-call");
         if (!el || !data || !data.time.length) return;
         const idx = data.time.length - 1;
         const day = data.time[idx];
-        const sig = flags[idx] === 1;
+        const buySig = flags && flags[idx] === 1;
+        const sellSig = !buySig && sellFlags && sellFlags[idx] === 1;
         const isClosed = Array.isArray(data.is_closed)
           ? Boolean(data.is_closed[idx])
           : (data.latest && data.latest.is_closed !== undefined ? Boolean(data.latest.is_closed) : true);
@@ -1024,8 +1157,16 @@
         const usRef = marketKey === "ssec" && data.latest && data.latest.us_date
           ? " (依据美股 " + data.latest.us_date + ")"
           : "";
-        el.style.color = sig ? "var(--green-text)" : "var(--muted)";
-        el.textContent = day + statusTag + usRef + " → " + (sig ? "▲ 今日信号: 买入 (BUY)" : "今日信号: 观望 (NO SIGNAL)");
+        if (buySig) {
+          el.style.color = "var(--green-text)";
+          el.textContent = day + statusTag + usRef + " → ▲ 今日信号: 买入 (BUY)";
+        } else if (sellSig) {
+          el.style.color = "var(--red)";
+          el.textContent = day + statusTag + usRef + " → ▼ 今日信号: 卖出 (SELL)";
+        } else {
+          el.style.color = "var(--muted)";
+          el.textContent = day + statusTag + usRef + " → 今日信号: 观望 (NO SIGNAL)";
+        }
       }
 
       function beijingDateOf(isoTimestamp) {
@@ -1144,9 +1285,9 @@
         loadMarketChat(cfg.key);
         initCtxbar(
           data,
-          (flags) => {
-            applyMarkers(flags, data, cfg.key);
-            updateLiveCall(flags, data, cfg.key);
+          (flags, sellFlags) => {
+            applyMarkers(flags, sellFlags, data, cfg.key);
+            updateLiveCall(flags, sellFlags, data, cfg.key);
           },
           { marketKey: cfg.key }
         );
@@ -1201,6 +1342,21 @@
             e.preventDefault();
             startGroupChat({ forceNew: false, requireInput: Boolean(chatInputEl.value.trim()) });
           }
+        });
+      }
+
+      const sigFilterEl = document.querySelector("#sig-filter");
+      if (sigFilterEl) {
+        sigFilterEl.addEventListener("click", (e) => {
+          const btn = e.target.closest("button");
+          if (!btn || !btn.dataset.dir) return;
+          signalFilter = btn.dataset.dir;
+          sigFilterEl.querySelectorAll("button").forEach((b) => {
+            const isActive = b === btn;
+            b.classList.toggle("active", isActive);
+            b.setAttribute("aria-pressed", String(isActive));
+          });
+          if (shown.data) applyMarkers(shown.flags, shown.sellFlags, shown.data, shown.market);
         });
       }
 

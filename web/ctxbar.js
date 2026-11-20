@@ -87,6 +87,28 @@
     return flags;
   }
 
+  function applySellContexts(picked, buyFlags) {
+    const c = data.components || {};
+    const baseSell = Array.isArray(c.sell_composite)
+      ? c.sell_composite
+      : (Array.isArray(data.sell_flag) ? data.sell_flag : null);
+    const sellFlags = new Array(data.time.length).fill(0);
+    if (!baseSell) return sellFlags;
+
+    const active = new Set(picked);
+    const useFomc = active.has("fomc_day") && Array.isArray(c.fomc_day);
+    const useBullVeto = active.has("news_bullish") && Array.isArray(c.news_bullish);
+
+    for (let i = 0; i < data.time.length; i += 1) {
+      if (buyFlags && buyFlags[i]) continue;
+      let flag = baseSell[i] ? 1 : 0;
+      if (flag && useFomc && c.fomc_day[i]) flag = 0;
+      if (flag && useBullVeto && c.news_bullish[i]) flag = 0;
+      sellFlags[i] = flag;
+    }
+    return sellFlags;
+  }
+
   function summarise(flags) {
     let signals = 0, hits = 0, hit3 = 0, hit45 = 0, held = 0, heldHits = 0;
     const holdout = (data.summary && data.summary.holdout_from) || "2015-01-01";
@@ -98,6 +120,33 @@
       if (data.hit3 && data.hit3[index] === 1) hit3 += 1;
       else if (outcome === 1) hit45 += 1;
       if (day >= holdout) { held += 1; heldHits += outcome; }
+    });
+    return {
+      signals,
+      precision: signals ? hits / signals : null,
+      precision3: signals ? hit3 / signals : null,
+      precision45: signals ? hit45 / signals : null,
+      holdoutSignals: held,
+      holdoutPrecision: held ? heldHits / held : null,
+    };
+  }
+
+  function summariseSell(sellFlags) {
+    let signals = 0, hits = 0, hit3 = 0, hit45 = 0, held = 0, heldHits = 0;
+    const holdout = (data.summary && data.summary.holdout_from) || "2015-01-01";
+    data.time.forEach((day, index) => {
+      if (!sellFlags[index]) return;
+      const base = data.base_close ? data.base_close[index] : null;
+      const c5 = data.close5 ? data.close5[index] : null;
+      const c3 = data.close3 ? data.close3[index] : null;
+      if (base === null || base === undefined || c5 === null || c5 === undefined) return;
+      const down5 = c5 < base ? 1 : 0;
+      const down3 = c3 !== null && c3 !== undefined && c3 < base ? 1 : 0;
+      signals += 1;
+      hits += down5;
+      if (down3) hit3 += 1;
+      else if (down5) hit45 += 1;
+      if (day >= holdout) { held += 1; heldHits += down5; }
     });
     return {
       signals,
@@ -149,24 +198,32 @@
     if (!data) return;
     saveMarketState();
     const flags = applyContexts(selected, ruleConfig);
-    onFlags(flags);
+    const sellFlags = applySellContexts(selected, flags);
+    onFlags(flags, sellFlags);
     const now = summarise(flags);
+    const sellNow = summariseSell(sellFlags);
     const baseline = summarise(applyContexts(new Set(["composite"]), { triggerMode: "any", vetoMode: "any" }));
     const latestIdx = data.time.length - 1;
     const latestFlag = flags[latestIdx];
+    const latestSellFlag = sellFlags[latestIdx];
     const baseCompositeLatest = data.components.composite ? data.components.composite[latestIdx] : 0;
 
     const table = document.querySelector("#ctx-table");
     if (table) {
       table.textContent = "";
-      row(table, ["", "This selection", "Composite only"], true);
-      row(table, ["Signals", String(now.signals), String(baseline.signals)]);
-      row(table, ["Hit within 3 sessions", pct(now.precision3), pct(baseline.precision3)]);
-      row(table, ["Hit only on day 4-5", pct(now.precision45), pct(baseline.precision45)]);
-      row(table, ["Precision (5 sessions)", pct(now.precision), pct(baseline.precision)]);
-      row(table, ["Out-of-sample signals", String(now.holdoutSignals), String(baseline.holdoutSignals)]);
-      row(table, ["Out-of-sample precision", pct(now.holdoutPrecision), pct(baseline.holdoutPrecision)]);
-      row(table, ["Latest session", latestFlag ? "signal" : "no signal", baseCompositeLatest ? "signal" : "no signal"]);
+      row(table, ["", "BUY (selected)", "BUY (base)", "SELL (≤10%)"], true);
+      row(table, ["Signals", String(now.signals), String(baseline.signals), String(sellNow.signals)]);
+      row(table, ["Hit within 3 sessions", pct(now.precision3), pct(baseline.precision3), pct(sellNow.precision3)]);
+      row(table, ["Hit only on day 4-5", pct(now.precision45), pct(baseline.precision45), pct(sellNow.precision45)]);
+      row(table, ["Precision (5 sessions)", pct(now.precision), pct(baseline.precision), pct(sellNow.precision)]);
+      row(table, ["Out-of-sample signals", String(now.holdoutSignals), String(baseline.holdoutSignals), String(sellNow.holdoutSignals)]);
+      row(table, ["Out-of-sample precision", pct(now.holdoutPrecision), pct(baseline.holdoutPrecision), pct(sellNow.holdoutPrecision)]);
+      row(table, [
+        "Latest session",
+        latestFlag ? "BUY" : "no signal",
+        baseCompositeLatest ? "BUY" : "no signal",
+        latestSellFlag ? "SELL" : "no signal",
+      ]);
     }
 
     const active = data.contexts.filter((item) => selected.has(item.key) || item.required);
@@ -179,15 +236,14 @@
 
     const rule = document.querySelector("#rule");
     if (rule) {
-      rule.textContent = now.signals + " signals · 1-3d " + pct(now.precision3) +
-        " · 4-5d " + pct(now.precision45) +
-        " · " + active.length + "/" + data.contexts.length + " factors (" + ruleLabel + ")";
+      rule.textContent = "BUY " + now.signals + " (" + pct(now.precision) + ") · SELL " + sellNow.signals +
+        " (" + pct(sellNow.precision) + ") · " + active.length + "/" + data.contexts.length + " factors (" + ruleLabel + ")";
     }
 
     const statusElem = document.querySelector("#ctx-status");
     if (statusElem) {
-      statusElem.textContent = active.length + "/" + data.contexts.length + " contexts · " +
-        now.signals + " signals · from " + effectiveFrom;
+      statusElem.textContent = active.length + "/" + data.contexts.length + " contexts · BUY " +
+        now.signals + " / SELL " + sellNow.signals + " · from " + effectiveFrom;
     }
 
     const baseRate = data.summary.base_rate ?? (data.summary.all || {}).base_rate;

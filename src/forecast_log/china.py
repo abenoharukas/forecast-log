@@ -69,13 +69,16 @@ def _sessions(
     return dates, opens, highs, lows, closes, volumes
 
 
-def entries(root: Path) -> list[Entry]:
-    """信号来自数据库里的 NDX 信号（美股日历），只把入场日和窗口换成 A 股的。"""
+def _mapped_entries(root: Path, flag_key: str) -> list[Entry]:
+    """将数据库里的 NDX 信号（买入 flag 或卖出 sell_flag）映射到次日 A 股交易日。"""
     from forecast_log.artifacts_db import load_cross_market
 
     signal_doc = load_cross_market(root, "ndx")
     if signal_doc is None:
         raise FileNotFoundError("数据库中缺少 ndx 信号，请先运行 forecast-log cross")
+    flags = signal_doc.get(flag_key) or []
+    if not flags:
+        return []
     series = load_series(root, TARGET)
     dates, opens, _highs, _lows, closes, _volumes = _sessions(series)
     n = len(dates)
@@ -97,10 +100,9 @@ def entries(root: Path) -> list[Entry]:
             close3[i] = closes[i + 3]
             close5[i] = closes[i + 5]
 
-    position = {day: index for index, day in enumerate(dates)}
     out: list[Entry] = []
     last_entry = -1
-    for us_day, flag in zip(signal_doc["time"], signal_doc["flag"]):
+    for us_day, flag in zip(signal_doc["time"], flags):
         if not flag:
             continue
         # 第一个「严格晚于美股信号日」的 A 股交易日：那天开盘前，这个信号已经成立。
@@ -128,6 +130,16 @@ def entries(root: Path) -> list[Entry]:
     return out
 
 
+def entries(root: Path) -> list[Entry]:
+    """信号来自数据库里的 NDX 买入信号（美股日历），只把入场日和窗口换成 A 股的。"""
+    return _mapped_entries(root, "flag")
+
+
+def sell_entries(root: Path) -> list[Entry]:
+    """信号来自数据库里的 NDX 卖出信号（美股日历），只把入场日和窗口换成 A 股的。"""
+    return _mapped_entries(root, "sell_flag")
+
+
 def _component_row(signal_doc: dict, dates: list[str], kept: list[int], i: int) -> dict:
     """这一根 A 股 K 线对应的那几列标签。
 
@@ -148,6 +160,9 @@ def _component_row(signal_doc: dict, dates: list[str], kept: list[int], i: int) 
         if components["composite"][j] or components["cal_cpi"][j] or components["cal_nfp"][j]:
             chosen = j
             break
+        if "sell_composite" in components and components["sell_composite"][j]:
+            chosen = j
+            break
     return {key: int(components[key][chosen]) for key in components}
 
 
@@ -162,6 +177,7 @@ def document(root: Path) -> dict:
     dates, opens, highs, lows, closes, volumes = _sessions(series)
     n = len(dates)
     rows = entries(root)
+    sell_rows = sell_entries(root)
 
     peak = np.full(n, np.nan)
     peak_at: list[str | None] = [None] * n
@@ -181,7 +197,10 @@ def document(root: Path) -> dict:
     position = {day: index for index, day in enumerate(dates)}
     flagged = {position[row.date] for row in rows if row.outcome is not None}
     all_flagged = {position[row.date] for row in rows}
-    signal_of = {position[row.date]: row.us_date for row in rows}
+    sell_flagged = {position[row.date] for row in sell_rows if row.outcome is not None}
+    all_sell_flagged = {position[row.date] for row in sell_rows}
+    signal_of = {position[row.date]: row.us_date for row in sell_rows}
+    signal_of.update({position[row.date]: row.us_date for row in rows})
     # 只从美股信号文档覆盖的第一天开始画：那之前这条规则对 A 股没有任何发言权。
     first = int(np.searchsorted(np.array(dates), signal_doc["time"][0], side="left"))
     kept = list(range(first, n))
@@ -190,32 +209,41 @@ def document(root: Path) -> dict:
         pairs = list(pairs)
         return round(float(np.mean([hit for _, hit in pairs])), 4) if pairs else None
 
-    def split(indexes) -> dict:
+    def split(indexes, sell: bool = False) -> dict:
         """命中按天拆开：三天内 / 只有第 4–5 天 / 五天都没做到。互斥，加起来是 1。"""
         indexes = [i for i in indexes if np.isfinite(peak[i])]
         if not indexes:
             return {"hit3": None, "hit45": None, "miss": None}
-        three = sum(1 for i in indexes if close3[i] > base_close[i]) / len(indexes)
-        later = sum(1 for i in indexes if close3[i] <= base_close[i] and close5[i] > base_close[i]) / len(indexes)
+        if sell:
+            three = sum(1 for i in indexes if close3[i] < base_close[i]) / len(indexes)
+            later = sum(1 for i in indexes if close3[i] >= base_close[i] and close5[i] < base_close[i]) / len(indexes)
+        else:
+            three = sum(1 for i in indexes if close3[i] > base_close[i]) / len(indexes)
+            later = sum(1 for i in indexes if close3[i] <= base_close[i] and close5[i] > base_close[i]) / len(indexes)
         return {"hit3": round(three, 4), "hit45": round(later, 4), "miss": round(1 - three - later, 4)}
 
-    def summary(low: str, high: str, picks) -> dict:
+    def summary(low: str, high: str, picks, sell: bool = False) -> dict:
         window = [i for i in kept if low <= dates[i] < high]
         usable = [i for i in window if np.isfinite(peak[i])]
-        base = rate((dates[i], int(close5[i] > base_close[i])) for i in usable)
-        chosen = [i for i in window if i in picks and np.isfinite(peak[i])]
-        hit = rate((dates[i], int(close5[i] > base_close[i])) for i in chosen)
+        if sell:
+            base = rate((dates[i], int(close5[i] < base_close[i])) for i in usable)
+            chosen = [i for i in window if i in picks and np.isfinite(peak[i])]
+            hit = rate((dates[i], int(close5[i] < base_close[i])) for i in chosen)
+        else:
+            base = rate((dates[i], int(close5[i] > base_close[i])) for i in usable)
+            chosen = [i for i in window if i in picks and np.isfinite(peak[i])]
+            hit = rate((dates[i], int(close5[i] > base_close[i])) for i in chosen)
         return {
             "sessions": len(usable),
             "signals": len(chosen),
             "hit": hit,
             "base_rate": base,
             "lift": None if hit is None or base is None else round(hit - base, 4),
-            "hit3": split(chosen)["hit3"],
-            "hit45": split(chosen)["hit45"],
-            "miss": split(chosen)["miss"],
-            "base3": split(usable)["hit3"],
-            "base45": split(usable)["hit45"],
+            "hit3": split(chosen, sell=sell)["hit3"],
+            "hit45": split(chosen, sell=sell)["hit45"],
+            "miss": split(chosen, sell=sell)["miss"],
+            "base3": split(usable, sell=sell)["hit3"],
+            "base45": split(usable, sell=sell)["hit45"],
         }
 
     # 分档：复合分数照旧是美股那一份，看它在 A 股上有没有单调性
@@ -242,20 +270,20 @@ def document(root: Path) -> dict:
         "question": {
             "horizon": HORIZON,
             "text": (
-                f"Same cross-asset risk appetite long → is the {TARGET_NAME} close {HORIZON} A-share sessions "
-                "later above the basis close?"
+                f"Same cross-asset buy/sell composite → 5-session {TARGET_NAME} close vs basis close"
             ),
             "factors": [
-                "The signal is untouched: four US cross-asset factors, 90th percentile of expanding history",
-                "Add: within 3 days before CPI, or 3-7 days before NFP, with the score at or above the median",
-                "Remove: no point on the FOMC decision day, and no point on days with a strong bearish surprise",
+                "BUY signal: four US cross-asset factors ≥ 90th percentile of expanding history",
+                "SELL signal: four US cross-asset factors ≤ 10th percentile of expanding history",
+                "Add (BUY): within 3 days before CPI, or 3-7 days before NFP, with the score at or above the median",
+                "Remove: no point on the FOMC decision day; bearish news vetoes BUY, bullish news vetoes SELL",
             ],
             "rule": (
                 "Nothing in the signal changes. A US signal dated D is known at 04:00 Beijing the next morning, "
                 "so the first A-share session after D is the one that settles it. That session's close is the "
-                f"basis of the call; the call is a hit if the close {HORIZON} A-share sessions later is above it. "
-                "The open of that session is recorded as `entry` — the price you could actually pay — but it "
-                "does not decide the call."
+                f"basis of the call; a BUY hits if the close {HORIZON} A-share sessions later is above it, and a SELL "
+                "hits if below it. The open of that session is recorded as `entry` — the price you could actually pay — "
+                "but it does not decide the call."
             ),
         },
         "fetched_at": series.fetched_at,
@@ -267,12 +295,13 @@ def document(root: Path) -> dict:
         "low": [round(float(lows[i]), 2) if np.isfinite(lows[i]) else None for i in kept],
         "close": [round(float(closes[i]), 2) for i in kept],
         "volume": [volumes[i] for i in kept],
-        "entry": [round(float(opens[i]), 2) if i in all_flagged else None for i in kept],
-        "base_close": [round(float(base_close[i]), 2) if i in flagged else None for i in kept],
-        "close3": [round(float(close3[i]), 2) if i in flagged else None for i in kept],
-        "close5": [round(float(close5[i]), 2) if i in flagged else None for i in kept],
-        "hit3": [int(close3[i] > base_close[i]) if i in flagged else None for i in kept],
+        "entry": [round(float(opens[i]), 2) if (i in all_flagged or i in all_sell_flagged) else None for i in kept],
+        "base_close": [round(float(base_close[i]), 2) if np.isfinite(base_close[i]) else None for i in kept],
+        "close3": [round(float(close3[i]), 2) if np.isfinite(close3[i]) else None for i in kept],
+        "close5": [round(float(close5[i]), 2) if np.isfinite(close5[i]) else None for i in kept],
+        "hit3": [int(close3[i] > base_close[i]) if np.isfinite(close3[i]) and np.isfinite(base_close[i]) else None for i in kept],
         "flag": [1 if i in all_flagged else 0 for i in kept],
+        "sell_flag": [1 if i in all_sell_flagged else 0 for i in kept],
         "us_date": [signal_of.get(i) for i in kept],
         "outcome": [int(close5[i] > base_close[i]) if np.isfinite(peak[i]) else None for i in kept],
         "peak": [round(float(peak[i]), 2) if np.isfinite(peak[i]) else None for i in kept],
@@ -281,6 +310,11 @@ def document(root: Path) -> dict:
         "summary": {
             "all": summary("1900", "2100", flagged),
             "holdout": summary(HOLDOUT, "2100", flagged),
+            "holdout_from": HOLDOUT,
+        },
+        "summary_sell": {
+            "all": summary("1900", "2100", sell_flagged, sell=True),
+            "holdout": summary(HOLDOUT, "2100", sell_flagged, sell=True),
             "holdout_from": HOLDOUT,
         },
         # 上下文勾选框要用的列。对齐规则：这一根 A 股 K 线所对应的美股收盘，
@@ -366,6 +400,7 @@ def document(root: Path) -> dict:
             if signal_doc["time"] and int(np.searchsorted(signal_doc["time"], dates[-1], side="left")) > 0
             else None,
             "flag": int(kept[-1] in all_flagged) if kept else 0,
+            "sell_flag": int(kept[-1] in all_sell_flagged) if kept else 0,
             "is_closed": bool(series.bars[kept[-1]].is_closed) if kept else True,
         },
         "signals_seen": len(rows),

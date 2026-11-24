@@ -121,16 +121,28 @@ def literal(value) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
+def values_of(columns: tuple[str, ...], row: sqlite3.Row) -> str:
+    return "(" + ",".join(literal(row[column]) for column in columns) + ")"
+
+
 def sql_for(table: str, columns: tuple[str, ...], rows: list[sqlite3.Row]) -> str:
-    values = ",".join(
-        "(" + ",".join(literal(row[column]) for column in columns) + ")" for row in rows
-    )
+    values = ",".join(values_of(columns, row) for row in rows)
     return f"INSERT OR REPLACE INTO {table} ({','.join(columns)}) VALUES {values}"
 
 
-def chunks(seq, size):
-    for index in range(0, len(seq), size):
-        yield seq[index : index + size]
+def sized_chunks(columns: tuple[str, ...], rows: list[sqlite3.Row], max_rows: int, max_bytes: int = 60_000):
+    """按行数和 SQL 字节长度双重切分：news 正文很长，固定行数仍会超过 Worker 的 95k 上限。"""
+    part: list[sqlite3.Row] = []
+    size = 0
+    for row in rows:
+        chunk = values_of(columns, row)
+        if part and (len(part) >= max_rows or size + len(chunk) > max_bytes):
+            yield part
+            part, size = [], 0
+        part.append(row)
+        size += len(chunk) + 1
+    if part:
+        yield part
 
 
 def post(url: str, token: str, payload: dict, retries: int = 5) -> dict:
@@ -196,7 +208,7 @@ def push(conn: sqlite3.Connection, url: str, token: str, table: str, columns: tu
     if not rows:
         return 0
     done = 0
-    for part in chunks(rows, batch):
+    for part in sized_chunks(columns, rows, batch):
         post(url, token, {"op": "sql", "sql": sql_for(table, columns, part)})
         done += len(part)
         print(f"\r  {table}: {done}/{len(rows)}", end="", flush=True)

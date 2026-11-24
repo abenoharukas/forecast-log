@@ -322,6 +322,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _handle_news_refresh(self, force: bool = False, query: str = "") -> None:
+        from urllib.parse import parse_qs
+        from forecast_log.news_feed import refresh_news
+
+        qs = parse_qs(query)
+        market = (qs.get("market") or ["ndx"])[0]
+        try:
+            limit = max(10, min(int((qs.get("limit") or ["50"])[0] or 50), 120))
+        except ValueError:
+            limit = 50
+        try:
+            payload = refresh_news(ROOT, force=force, market=market, limit=limit)
+            status = 200
+        except Exception as exc:
+            payload = {"ok": False, "error": str(exc)}
+            status = 500
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_redirect(self, location: str) -> None:
         self.send_response(301)
         self.send_header("Location", location)
@@ -348,6 +371,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         if path in ("/api/refresh", "/api/fetch"):
             self._handle_refresh(force="force=1" in query)
+            return
+
+        if path.rstrip("/") == "/api/news":
+            from urllib.parse import parse_qs
+            from forecast_log.news_feed import load_news_bundle
+
+            qs = parse_qs(query)
+            market = (qs.get("market") or ["ndx"])[0]
+            try:
+                limit = max(10, min(int((qs.get("limit") or ["50"])[0] or 50), 120))
+            except ValueError:
+                limit = 50
+            self._send_json(load_news_bundle(ROOT, market=market, limit=limit, cached=True), "news unavailable")
+            return
+
+        if path.rstrip("/") == "/api/news/refresh":
+            self._handle_news_refresh(force="force=1" in query, query=query)
             return
 
         api = re.fullmatch(r"/api/cross/([a-z-]+)", path.rstrip("/"))
@@ -573,6 +613,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path, _, query = self.path.partition("?")
         if path in ("/api/refresh", "/api/fetch"):
             self._handle_refresh(force="force=1" in query)
+            return
+        if path.rstrip("/") == "/api/news/refresh":
+            self._handle_news_refresh(force="force=1" in query, query=query)
             return
         if path.rstrip("/") == "/api/chat/run":
             self._handle_chat_run()

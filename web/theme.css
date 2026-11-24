@@ -535,3 +535,44 @@ th[scope="row"] { font-weight: 400; }
   color: var(--muted);
   margin-left: 4px;
 }
+
+.header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.news-freshness-btn {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  min-block-size: 24px;
+  padding: 2px 8px;
+  color: var(--muted);
+  background: var(--sheet);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.news-freshness-btn:hover {
+  color: var(--ink);
+  border-color: var(--control);
+  background: var(--paper);
+}
+
+.news-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--grey);
+  flex: none;
+}
+
+.news-dot.fresh { background: var(--green); }
+.news-dot.warn { background: var(--amber); }
+.news-dot.alert { background: var(--red); }

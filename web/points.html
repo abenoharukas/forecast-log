@@ -75,10 +75,29 @@
     li { margin: 1px 0; }
     .aside-top {
       display: flex; align-items: center; justify-content: space-between; gap: 6px;
-      padding: 7px 10px; border-bottom: 1px solid var(--rule); background: var(--sheet); flex: none;
+      padding: 6px 10px 0; border-bottom: 1px solid var(--rule); background: var(--sheet); flex: none;
     }
-    .aside-title { font-size: 12px; font-weight: 500; color: var(--ink); white-space: nowrap; }
-    .aside-actions { display: flex; align-items: center; gap: 4px; min-width: 0; }
+    .aside-title { font-size: 12px; font-weight: 500; color: var(--ink); white-space: nowrap; padding-bottom: 6px; overflow: hidden; text-overflow: ellipsis; }
+    .aside-tabs {
+      display: flex; align-items: stretch; gap: 2px; flex: none;
+      overflow-x: auto; scrollbar-width: none;
+    }
+    .aside-tabs::-webkit-scrollbar { display: none; }
+    .aside-tab {
+      position: relative; flex: none;
+      font: inherit; font-size: 11px; line-height: 1.2;
+      color: var(--muted); background: transparent; border: 0;
+      padding: 4px 8px 8px; min-block-size: 26px; cursor: pointer;
+      white-space: nowrap;
+    }
+    .aside-tab:hover { color: var(--ink); }
+    .aside-tab[aria-selected="true"] {
+      color: var(--ink);
+    }
+    .aside-tab[aria-selected="true"]::after {
+      content: ""; position: absolute; inset: auto 2px 0;
+      border-block-end: 2px solid var(--blue);
+    }
     .aside-subbar {
       display: flex; align-items: center; gap: 6px; padding: 5px 10px;
       border-bottom: 1px solid var(--rule); background: var(--paper); flex: none;
@@ -87,10 +106,104 @@
       flex: 1; min-width: 0; font: inherit; font-size: 11px; color: var(--ink);
       background: var(--sheet); border: 1px solid var(--control); border-radius: 2px; padding: 2px 6px;
     }
-    .chat-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .stats-view { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; display: none; }
-    .stats-view.active { display: block; }
-    .chat-view.hidden { display: none; }
+    /* Tab panels keep zero padding/border/margin/background so hidden="until-found" renders no empty strip,
+       and only apply display:flex when :not([hidden]) so Safari's UA [hidden]{display:none} fallback works cleanly. */
+    .tab-panel:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .tab-panel[hidden="until-found"] { flex: 0 0 auto; }
+    .chat-view-inner { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .stats-view-inner, .news-view-inner {
+      flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .news-summary-bar {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-wrap: wrap;
+      padding: 6px 8px; border: 1px solid var(--rule); border-radius: 3px; background: var(--paper);
+      font-size: 10.5px; color: var(--muted);
+    }
+    .news-section { display: flex; flex-direction: column; gap: 6px; }
+    .news-section + .news-section { padding-top: 8px; border-top: 1px solid var(--rule); }
+    .news-section h2 { margin: 0; font-size: 11px; font-weight: 500; color: var(--muted); letter-spacing: 0.02em; }
+    .cal-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .cal-card {
+      border: 1px solid var(--rule); border-radius: 3px; padding: 6px 7px;
+      background: var(--paper); display: flex; flex-direction: column; gap: 2px;
+    }
+    .cal-card.in-window {
+      border-color: var(--amber);
+      background: color-mix(in oklab, var(--amber) 10%, var(--sheet));
+    }
+    .cal-card.veto-window {
+      border-color: var(--red);
+      background: color-mix(in oklab, var(--red) 10%, var(--sheet));
+    }
+    .cal-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; }
+    .cal-name { font-weight: 500; color: var(--ink); font-size: 11px; }
+    .cal-days { font-weight: 500; font-size: 11px; color: var(--blue); font-variant-numeric: tabular-nums; }
+    .cal-date { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .cal-status { font-size: 10px; color: var(--muted); line-height: 1.3; }
+    .cal-card.in-window .cal-status { color: var(--amber-text); }
+    .cal-card.veto-window .cal-status { color: var(--red); }
+    .ref-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+    .ref-table caption { text-align: left; font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+    .ref-table th, .ref-table td { padding: 2px 4px; border-bottom: 1px solid var(--grid); }
+    .ref-table td.up { color: var(--green-text); }
+    .ref-table td.down { color: var(--red); }
+    .kw-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .kw-pill {
+      display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 10px;
+      border: 1px solid var(--rule); background: var(--paper); color: var(--muted);
+    }
+    .kw-pill.risk-off { color: var(--red); border-color: var(--red); background: color-mix(in oklab, var(--red) 10%, var(--sheet)); }
+    .kw-pill.risk-on { color: var(--green-text); border-color: var(--green); background: color-mix(in oklab, var(--green) 10%, var(--sheet)); }
+    .kw-pill.watch { color: var(--amber-text); border-color: var(--amber); background: color-mix(in oklab, var(--amber) 14%, var(--sheet)); font-weight: 500; }
+    .llm-ind-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+    .llm-ind-card {
+      border: 1px solid var(--rule); border-radius: 3px; padding: 6px 8px;
+      background: var(--paper); display: flex; flex-direction: column; gap: 3px;
+    }
+    .llm-ind-card.deepseek { border-left: 3px solid var(--blue); }
+    .llm-ind-card.qwen { border-left: 3px solid var(--ochre); }
+    .llm-ind-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px; font-size: 10.5px; }
+    .llm-ind-name { font-weight: 500; color: var(--ink); }
+    .llm-ind-date { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .llm-ind-val { font-size: 11px; color: var(--ink); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .llm-ind-note { font-size: 10px; color: var(--muted); line-height: 1.4; word-break: break-word; }
+    .llm-running-banner {
+      padding: 5px 8px; border: 1px dashed var(--blue); border-radius: 3px;
+      background: color-mix(in oklab, var(--blue) 8%, var(--sheet));
+      color: var(--blue); font-size: 10.5px; line-height: 1.4;
+    }
+    .news-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+    .news-filter-btn {
+      font: inherit; font-size: 10px; line-height: 1.2; min-block-size: 24px;
+      padding: 2px 7px; border: 1px solid var(--rule); border-radius: 2px;
+      background: var(--sheet); color: var(--muted); cursor: pointer;
+    }
+    .news-filter-btn:hover { color: var(--ink); border-color: var(--control); }
+    .news-filter-btn[aria-pressed="true"] { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+    .news-feed-list {
+      list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+    }
+    .news-item {
+      border: 1px solid var(--rule); border-radius: 3px; padding: 6px 8px;
+      background: var(--paper); display: flex; flex-direction: column; gap: 3px;
+    }
+    .news-item.risk-off { border-left: 3px solid var(--red); }
+    .news-item.risk-on { border-left: 3px solid var(--green); }
+    .news-item-meta {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      font-size: 10px; color: var(--muted);
+    }
+    .news-item-title {
+      color: var(--ink); text-decoration: none; font-size: 11.5px; line-height: 1.45;
+      word-break: break-word;
+    }
+    .news-item-title:hover { color: var(--blue); text-decoration: underline; }
+    .news-item-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 1px; }
+    .news-empty {
+      padding: 12px 10px; border: 1px dashed var(--rule); border-radius: 3px;
+      color: var(--muted); font-size: 11px; line-height: 1.5; background: var(--paper);
+    }
     .chat-list {
       flex: 1; min-height: 0; overflow-y: auto; padding: 10px; display: flex;
       flex-direction: column; gap: 8px;
@@ -192,8 +305,16 @@
           <button type="button" class="market-tab" role="tab" data-market="qqq" aria-selected="false">QQQ (ETF)</button>
           <button type="button" class="market-tab" role="tab" data-market="ssec" aria-selected="false">A股 · 上证综指 (000001.SS)</button>
         </div>
-        <button type="button" class="ctxbar-btn" id="refresh-btn" title="拉取最新行情（含北京时间当日 A 股）并重算信号">↻ 刷新行情</button>
+        <div class="header-actions">
+          <button type="button" class="ctxbar-btn" id="refresh-btn" title="拉取最新行情（含北京时间当日 A 股）并重算信号">↻ 刷新行情</button>
+          <button type="button" class="ctxbar-btn" id="refresh-news-btn" title="立即获取最新财经新闻、宏观日历与跨资产参考资料">↻ 获取新闻</button>
+          <button type="button" class="news-freshness-btn" id="news-freshness-btn" title="点击打开新闻与 5 日参考资料面板">
+            <span class="news-dot" id="news-dot" aria-hidden="true"></span>
+            <span id="news-badge-text">新闻同步中…</span>
+          </button>
+        </div>
         <span class="sub" id="question">—</span>
+        <span id="status-announcer" class="visually-hidden" aria-live="polite" aria-atomic="true"></span>
       </div>
       <span class="sub" id="build">r5 · reads D1 · <a href="/sim">Policy sim →</a> · <a href="/vxn">VXN →</a> · <a href="/agent">Agent scoreboard →</a></span>
     </header>
@@ -259,35 +380,45 @@
       </div>
       <aside id="side-panel">
         <div class="aside-top">
-          <span class="aside-title">AI 群聊研判 · DeepSeek × Qwen</span>
-          <div class="aside-actions">
-            <button type="button" class="ctxbar-btn active" id="tab-chat-btn" title="双 AI 轮流群聊研判">群聊</button>
-            <button type="button" class="ctxbar-btn" id="tab-stats-btn" title="查看历史回测统计表">统计</button>
+          <span class="aside-title" id="aside-title">AI 群聊研判 · DeepSeek × Qwen</span>
+          <div class="aside-tabs" id="aside-tablist" role="tablist" focusgroup="tablist nomemory" aria-label="侧边栏视图">
+            <button type="button" class="aside-tab" role="tab" id="tab-chat-btn" data-tab="chat" aria-selected="true" focusgroupstart>群聊</button>
+            <button type="button" class="aside-tab" role="tab" id="tab-news-btn" data-tab="news" aria-selected="false" tabindex="-1">新闻参考</button>
+            <button type="button" class="aside-tab" role="tab" id="tab-stats-btn" data-tab="stats" aria-selected="false" tabindex="-1">统计</button>
           </div>
         </div>
-        <div class="chat-view" id="chat-view">
-          <div class="aside-subbar">
-            <select id="chat-thread-select" aria-label="选择历史对话"></select>
-            <button type="button" class="ctxbar-btn" id="chat-new-btn" title="基于当前盘面开启新群聊">+ 新对话</button>
-          </div>
-          <div class="chat-list" id="chat-list" role="log" aria-live="polite"></div>
-          <div class="chat-thinking" id="chat-thinking" hidden></div>
-          <div class="chat-footer">
-            <textarea id="chat-input" rows="2" placeholder="输入补充信息、仓位背景或追问（可选，Cmd/Ctrl+Enter 发送）…"></textarea>
-            <div class="chat-controls">
-              <select id="chat-rounds" title="每位 AI 轮流发言轮数">
-                <option value="3" selected>3 轮/人 (6条)</option>
-                <option value="2">2 轮/人 (4条)</option>
-                <option value="1">1 轮/人 (2条)</option>
-              </select>
-              <div class="chat-btns">
-                <button type="button" class="ctxbar-btn" id="chat-send-btn" title="发送补充信息并继续群聊">发送补充</button>
-                <button type="button" class="ctxbar-btn primary" id="chat-analyze-btn" title="发送盘面上下文，让 DeepSeek 与 Qwen 轮流分析今日买卖">▶ 开始分析</button>
+        <div class="tab-panel" id="chat-view" role="tabpanel" aria-labelledby="tab-chat-btn">
+          <div class="chat-view-inner">
+            <div class="aside-subbar">
+              <select id="chat-thread-select" aria-label="选择历史对话"></select>
+              <button type="button" class="ctxbar-btn" id="chat-new-btn" title="基于当前盘面开启新群聊">+ 新对话</button>
+            </div>
+            <div class="chat-list" id="chat-list" role="log" aria-live="polite"></div>
+            <div class="chat-thinking" id="chat-thinking" hidden></div>
+            <div class="chat-footer">
+              <textarea id="chat-input" rows="2" aria-label="输入补充信息、仓位背景或追问" placeholder="输入补充信息、仓位背景或追问（可选，Cmd/Ctrl+Enter 发送）…"></textarea>
+              <div class="chat-controls">
+                <select id="chat-rounds" aria-label="每位 AI 轮流发言轮数" title="每位 AI 轮流发言轮数">
+                  <option value="3" selected>3 轮/人 (6条)</option>
+                  <option value="2">2 轮/人 (4条)</option>
+                  <option value="1">1 轮/人 (2条)</option>
+                </select>
+                <div class="chat-btns">
+                  <button type="button" class="ctxbar-btn" id="chat-send-btn" title="发送补充信息并继续群聊">发送补充</button>
+                  <button type="button" class="ctxbar-btn primary" id="chat-analyze-btn" title="发送盘面上下文，让 DeepSeek 与 Qwen 轮流分析今日买卖">▶ 开始分析</button>
+                </div>
               </div>
             </div>
           </div>
         </div>
-        <div class="stats-view" id="stats-view"></div>
+        <div class="tab-panel" id="news-view" role="tabpanel" aria-labelledby="tab-news-btn" hidden="until-found">
+          <div class="news-view-inner" id="news-view-inner">
+            <div class="news-empty">正在获取最新财经新闻、宏观事件日历与跨资产参考资料…</div>
+          </div>
+        </div>
+        <div class="tab-panel" id="stats-view" role="tabpanel" aria-labelledby="tab-stats-btn" hidden="until-found">
+          <div class="stats-view-inner" id="stats-view-inner"></div>
+        </div>
       </aside>
     </div>
   </main>
@@ -909,13 +1040,635 @@
       }
 
       function renderAside(marketKey, data) {
-        const statsBox = document.querySelector("#stats-view");
+        const statsBox = document.querySelector("#stats-view-inner");
         if (!statsBox) return;
         statsBox.textContent = "";
         if (marketKey === "ndx") renderNdxAside(statsBox, data);
         else if (marketKey === "qqq") renderQqqAside(statsBox, data);
         else renderSsecAside(statsBox, data);
         statsBox.scrollTop = 0;
+      }
+
+      // ---------------- 新闻与 5 日预测参考资料 ----------------
+      let newsBundle = null;
+      let newsCategoryFilter = "all";
+      let newsRefreshing = false;
+      let autoNewsRefreshed = false;
+      let llmPollTimer = null;
+      let llmWasRunning = false;
+
+      function scheduleLlmPoll(bundle) {
+        if (llmPollTimer) {
+          clearTimeout(llmPollTimer);
+          llmPollTimer = null;
+        }
+        const ind = bundle && bundle.llm_indicators;
+        if (ind && ind.running) {
+          llmWasRunning = true;
+          llmPollTimer = setTimeout(async () => {
+            try {
+              const res = await fetch("/api/news?market=" + encodeURIComponent(activeMarket) + "&t=" + Date.now());
+              if (!res.ok) return;
+              const next = await res.json();
+              if (next && next.ok) {
+                newsBundle = next;
+                updateNewsHeaderBadge(next);
+                renderNewsPanel(next);
+                if (next.llm_indicators && next.llm_indicators.running) {
+                  scheduleLlmPoll(next);
+                } else if (llmWasRunning) {
+                  llmWasRunning = false;
+                  announceStatus("DeepSeek 与 Qwen 新闻指标解读完成，正在同步信号。");
+                  cache.clear();
+                  await loadMarket(activeMarket);
+                }
+              }
+            } catch (_) {}
+          }, 4000);
+        } else {
+          llmWasRunning = false;
+        }
+      }
+
+      function announceStatus(message) {
+        const announcer = document.querySelector("#status-announcer");
+        if (!announcer || !message) return;
+        announcer.textContent = "";
+        requestAnimationFrame(() => {
+          announcer.textContent = message;
+        });
+      }
+
+      function updateNewsHeaderBadge(bundle) {
+        const dot = document.querySelector("#news-dot");
+        const textEl = document.querySelector("#news-badge-text");
+        if (!dot || !textEl) return;
+        if (!bundle || !bundle.news) {
+          dot.className = "news-dot";
+          textEl.textContent = "新闻暂不可用";
+          return;
+        }
+        const n = bundle.news;
+        const latestDate = n.latest_as_of || "无";
+        const count = (n.items || []).length;
+        const today = bundle.beijing_date || "";
+        const kw = bundle.keywords || {};
+        if (kw.veto_watch) {
+          dot.className = "news-dot alert";
+          textEl.textContent = "新闻 " + latestDate + " · 风险词预警(" + (kw.risk_off_hits || []).length + ")";
+        } else if (today && latestDate >= today) {
+          dot.className = "news-dot fresh";
+          textEl.textContent = "新闻 " + latestDate + " · " + count + "条";
+        } else {
+          dot.className = "news-dot warn";
+          textEl.textContent = "新闻 " + latestDate + " · " + count + "条";
+        }
+      }
+
+      function fmtAssetDelta(val, unit) {
+        if (val === null || val === undefined || !Number.isFinite(Number(val))) return "—";
+        const num = Number(val);
+        const sign = num >= 0 ? "+" : "−";
+        if (unit === "diff") return sign + Math.abs(num).toFixed(2);
+        return sign + Math.abs(num).toFixed(2) + "%";
+      }
+
+      function renderNewsPanel(bundle) {
+        const container = document.querySelector("#news-view-inner");
+        if (!container) return;
+        container.textContent = "";
+
+        if (!bundle || !bundle.ok || !bundle.news) {
+          const empty = document.createElement("div");
+          empty.className = "news-empty";
+          empty.textContent = "暂未获取到新闻与参考资料，请点击顶部「↻ 获取新闻」重试。";
+          container.appendChild(empty);
+          return;
+        }
+
+        const n = bundle.news;
+        const kw = bundle.keywords || {};
+        const cal = bundle.macro_calendar || {};
+        const assets = bundle.cross_assets || [];
+
+        // 1. 顶部更新状态栏
+        const bar = document.createElement("div");
+        bar.className = "news-summary-bar";
+        const metaText = document.createElement("span");
+        const stamp = formatMsgTime(n.fetched_at || bundle.refreshed_at);
+        const backfillStr = n.backfilled_days && n.backfilled_days.length
+          ? " · 补齐 " + n.backfilled_days.length + " 天"
+          : "";
+        metaText.textContent =
+          "最新 " + (n.latest_as_of || "—") +
+          (stamp ? " · 更新于 " + stamp : "") +
+          " · 库内 " + Number(n.total_rows || 0).toLocaleString() + " 条" + backfillStr;
+        const inlineBtn = document.createElement("button");
+        inlineBtn.type = "button";
+        inlineBtn.className = "ctxbar-btn";
+        inlineBtn.textContent = newsRefreshing ? "获取中…" : "↻ 立即获取";
+        inlineBtn.disabled = newsRefreshing;
+        inlineBtn.addEventListener("click", () => triggerNewsRefresh(true, { openTab: true }));
+        bar.appendChild(metaText);
+        bar.appendChild(inlineBtn);
+        container.appendChild(bar);
+
+        // 2. DeepSeek × Qwen 新闻指标（直接进入量化信号与风控）
+        const llmInd = bundle.llm_indicators || {};
+        const secLlm = document.createElement("section");
+        secLlm.className = "news-section";
+        const h2Llm = document.createElement("h2");
+        h2Llm.textContent = "AI 新闻指标（DeepSeek × Qwen → 接入信号因子）";
+        secLlm.appendChild(h2Llm);
+
+        if (llmInd.running) {
+          const banner = document.createElement("div");
+          banner.className = "llm-running-banner";
+          banner.textContent =
+            "DeepSeek 与 Qwen 正在后台解读近期新闻（待标 DS:" + (llmInd.pending_deepseek || 0) +
+            "天 / Qwen:" + (llmInd.pending_qwen || 0) + "天），完成后将自动重算买卖信号…";
+          secLlm.appendChild(banner);
+        }
+
+        const indGrid = document.createElement("div");
+        indGrid.className = "llm-ind-grid";
+
+        const dsCard = document.createElement("div");
+        dsCard.className = "llm-ind-card deepseek";
+        const ds = llmInd.deepseek;
+        const dsHead = document.createElement("div");
+        dsHead.className = "llm-ind-head";
+        const dsName = document.createElement("span");
+        dsName.className = "llm-ind-name";
+        dsName.textContent = "DeepSeek · 意外度";
+        const dsDate = document.createElement("span");
+        dsDate.className = "llm-ind-date";
+        dsDate.textContent = ds ? ds.as_of : "未打标";
+        dsHead.appendChild(dsName);
+        dsHead.appendChild(dsDate);
+        dsCard.appendChild(dsHead);
+
+        const dsVal = document.createElement("div");
+        dsVal.className = "llm-ind-val";
+        if (ds) {
+          const pill = document.createElement("span");
+          pill.className = "kw-pill" + (ds.veto ? " risk-off" : ds.boost ? " risk-on" : ds.direction === "bearish" ? " watch" : "");
+          pill.textContent = ds.surprise + " / " + ds.direction;
+          dsVal.appendChild(pill);
+          if (ds.veto) {
+            const vp = document.createElement("span");
+            vp.className = "kw-pill risk-off";
+            vp.textContent = "触发否决";
+            dsVal.appendChild(vp);
+          } else if (ds.boost) {
+            const bp = document.createElement("span");
+            bp.className = "kw-pill risk-on";
+            bp.textContent = "强利多补点";
+            dsVal.appendChild(bp);
+          }
+        } else {
+          dsVal.textContent = "暂无记录";
+        }
+        dsCard.appendChild(dsVal);
+        if (ds && ds.evidence) {
+          const dsNote = document.createElement("div");
+          dsNote.className = "llm-ind-note";
+          dsNote.textContent = ds.evidence;
+          dsCard.appendChild(dsNote);
+        }
+        indGrid.appendChild(dsCard);
+
+        const qwCard = document.createElement("div");
+        qwCard.className = "llm-ind-card qwen";
+        const qw = llmInd.qwen;
+        const qwHead = document.createElement("div");
+        qwHead.className = "llm-ind-head";
+        const qwName = document.createElement("span");
+        qwName.className = "llm-ind-name";
+        qwName.textContent = "Qwen · 风险严重度";
+        const qwDate = document.createElement("span");
+        qwDate.className = "llm-ind-date";
+        qwDate.textContent = qw ? qw.as_of : "未打标";
+        qwHead.appendChild(qwName);
+        qwHead.appendChild(qwDate);
+        qwCard.appendChild(qwHead);
+
+        const qwVal = document.createElement("div");
+        qwVal.className = "llm-ind-val";
+        if (qw) {
+          const pill = document.createElement("span");
+          pill.className = "kw-pill" + (qw.veto || qw.regime === "risk_off" ? " risk-off" : qw.regime === "risk_on" ? " risk-on" : "");
+          pill.textContent = qw.regime + " · sev " + Number(qw.severity || 0).toFixed(2);
+          qwVal.appendChild(pill);
+          const mul = document.createElement("span");
+          mul.className = "kw-pill";
+          mul.textContent = "波动 " + Number(qw.size_multiplier || 1).toFixed(2) + "×";
+          qwVal.appendChild(mul);
+          if (qw.veto) {
+            const vp = document.createElement("span");
+            vp.className = "kw-pill risk-off";
+            vp.textContent = "≥0.6 否决";
+            qwVal.appendChild(vp);
+          }
+        } else {
+          qwVal.textContent = "暂无记录";
+        }
+        qwCard.appendChild(qwVal);
+        if (qw && qw.note) {
+          const qwNote = document.createElement("div");
+          qwNote.className = "llm-ind-note";
+          qwNote.textContent = qw.note;
+          qwCard.appendChild(qwNote);
+        }
+        indGrid.appendChild(qwCard);
+        secLlm.appendChild(indGrid);
+
+        if (Array.isArray(llmInd.recent_days) && llmInd.recent_days.length) {
+          const tbl = document.createElement("table");
+          tbl.className = "ref-table";
+          const cap = document.createElement("caption");
+          cap.textContent = "近 7 日双模型新闻打分记录（strong bearish / sev ≥ 0.6 触发否决）";
+          tbl.appendChild(cap);
+          const thead = document.createElement("thead");
+          const htr = document.createElement("tr");
+          ["日期", "DeepSeek", "Qwen regime", "sev"].forEach((t) => {
+            const th = document.createElement("th");
+            th.scope = "col";
+            th.textContent = t;
+            htr.appendChild(th);
+          });
+          thead.appendChild(htr);
+          tbl.appendChild(thead);
+          const tbody = document.createElement("tbody");
+          llmInd.recent_days.slice(0, 6).forEach((row) => {
+            const tr = document.createElement("tr");
+            const th = document.createElement("th");
+            th.scope = "row";
+            th.textContent = row.as_of.slice(5);
+            const tdDs = document.createElement("td");
+            tdDs.textContent = row.deepseek ? (row.deepseek.surprise + "/" + row.deepseek.direction) : "—";
+            if (row.deepseek && row.deepseek.veto) tdDs.className = "down";
+            else if (row.deepseek && row.deepseek.boost) tdDs.className = "up";
+            const tdQwR = document.createElement("td");
+            tdQwR.textContent = row.qwen ? row.qwen.regime : "—";
+            if (row.qwen && row.qwen.regime === "risk_off") tdQwR.className = "down";
+            else if (row.qwen && row.qwen.regime === "risk_on") tdQwR.className = "up";
+            const tdQwS = document.createElement("td");
+            tdQwS.textContent = row.qwen ? Number(row.qwen.severity).toFixed(2) : "—";
+            if (row.qwen && row.qwen.veto) tdQwS.className = "down";
+            tr.appendChild(th);
+            tr.appendChild(tdDs);
+            tr.appendChild(tdQwR);
+            tr.appendChild(tdQwS);
+            tbody.appendChild(tr);
+          });
+          tbl.appendChild(tbody);
+          secLlm.appendChild(tbl);
+        }
+        container.appendChild(secLlm);
+
+        // 3. 宏观日历倒计时（5日预测信号触发/否决窗口）
+        if (cal.available && Array.isArray(cal.events) && cal.events.length) {
+          const secCal = document.createElement("section");
+          secCal.className = "news-section";
+          const h2 = document.createElement("h2");
+          h2.textContent = "宏观事件日历（未来 5 日窗口参考）";
+          secCal.appendChild(h2);
+
+          const grid = document.createElement("div");
+          grid.className = "cal-grid";
+          cal.events.forEach((ev) => {
+            const card = document.createElement("div");
+            card.className = "cal-card";
+            if (ev.in_window) {
+              card.classList.add(ev.key === "fomc" ? "veto-window" : "in-window");
+            }
+            const head = document.createElement("div");
+            head.className = "cal-head";
+            const name = document.createElement("span");
+            name.className = "cal-name";
+            name.textContent = ev.key.toUpperCase();
+            const days = document.createElement("span");
+            days.className = "cal-days";
+            days.textContent = ev.days_away != null ? (ev.days_away === 0 ? "今日" : "D-" + ev.days_away) : "—";
+            head.appendChild(name);
+            head.appendChild(days);
+
+            const dt = document.createElement("div");
+            dt.className = "cal-date";
+            dt.textContent = ev.next_date || "暂无排期";
+
+            const st = document.createElement("div");
+            st.className = "cal-status";
+            st.textContent = ev.window_status || "";
+
+            card.title = ev.rule_hint || "";
+            card.appendChild(head);
+            card.appendChild(dt);
+            card.appendChild(st);
+            grid.appendChild(card);
+          });
+          secCal.appendChild(grid);
+          container.appendChild(secCal);
+        }
+
+        // 3. 跨资产参考指标快照
+        if (assets.length) {
+          const secAssets = document.createElement("section");
+          secAssets.className = "news-section";
+          const h2 = document.createElement("h2");
+          h2.textContent = "跨资产宏观参考（4 因子与波动率风向标）";
+          secAssets.appendChild(h2);
+
+          const table = document.createElement("table");
+          table.className = "ref-table";
+          const caption = document.createElement("caption");
+          caption.textContent = "10Y 美债与美元下行、HYG/TLT 走强、VIX 高于年均中位 → 偏多";
+          table.appendChild(caption);
+
+          const thead = document.createElement("thead");
+          const hrow = document.createElement("tr");
+          ["指标", "最新", "5日", "20日"].forEach((label) => {
+            const th = document.createElement("th");
+            th.scope = "col";
+            th.textContent = label;
+            hrow.appendChild(th);
+          });
+          thead.appendChild(hrow);
+          table.appendChild(thead);
+
+          const tbody = document.createElement("tbody");
+          assets.forEach((a) => {
+            const tr = document.createElement("tr");
+            tr.title = (a.date || "") + " · " + (a.hint || "");
+            const th = document.createElement("th");
+            th.scope = "row";
+            th.textContent = a.label;
+            const tdClose = document.createElement("td");
+            tdClose.textContent = a.close != null ? String(a.close) : "—";
+            const td5 = document.createElement("td");
+            td5.textContent = fmtAssetDelta(a.chg_5d, a.unit);
+            if (a.chg_5d != null) td5.className = a.chg_5d > 0 ? "up" : a.chg_5d < 0 ? "down" : "";
+            const td20 = document.createElement("td");
+            td20.textContent = fmtAssetDelta(a.chg_20d, a.unit);
+            if (a.chg_20d != null) td20.className = a.chg_20d > 0 ? "up" : a.chg_20d < 0 ? "down" : "";
+            tr.appendChild(th);
+            tr.appendChild(tdClose);
+            tr.appendChild(td5);
+            tr.appendChild(td20);
+            tbody.appendChild(tr);
+          });
+          table.appendChild(tbody);
+          secAssets.appendChild(table);
+          container.appendChild(secAssets);
+        }
+
+        // 4. 新闻关键字风险扫描 + LLM 日报摘要
+        const secKw = document.createElement("section");
+        secKw.className = "news-section";
+        const h2Kw = document.createElement("h2");
+        h2Kw.textContent = "新闻情绪关键字扫描（近 " + (kw.items ?? 0) + " 条标题）";
+        secKw.appendChild(h2Kw);
+
+        const kwBar = document.createElement("div");
+        kwBar.className = "kw-bar";
+        if (kw.veto_watch) {
+          const watch = document.createElement("span");
+          watch.className = "kw-pill watch";
+          watch.textContent = "⚠ 风险词 ≥2（否决观察）";
+          kwBar.appendChild(watch);
+        }
+        (kw.risk_off_hits || []).forEach((tag) => {
+          const pill = document.createElement("span");
+          pill.className = "kw-pill risk-off";
+          pill.textContent = "− " + tag;
+          kwBar.appendChild(pill);
+        });
+        (kw.risk_on_hits || []).forEach((tag) => {
+          const pill = document.createElement("span");
+          pill.className = "kw-pill risk-on";
+          pill.textContent = "+ " + tag;
+          kwBar.appendChild(pill);
+        });
+        const neutralTags = (kw.hits || []).filter(
+          (t) => !(kw.risk_off_hits || []).includes(t) && !(kw.risk_on_hits || []).includes(t)
+        );
+        neutralTags.slice(0, 8).forEach((tag) => {
+          const pill = document.createElement("span");
+          pill.className = "kw-pill";
+          pill.textContent = tag;
+          kwBar.appendChild(pill);
+        });
+        if (!kwBar.childNodes.length) {
+          const none = document.createElement("span");
+          none.className = "note";
+          none.textContent = "近期标题未命中特定宏观风险/利好关键字。";
+          kwBar.appendChild(none);
+        }
+        secKw.appendChild(kwBar);
+
+        if (bundle.daily_llm) {
+          const llmNote = document.createElement("div");
+          llmNote.className = "note";
+          llmNote.textContent =
+            "LLM 日报（" + (bundle.daily_llm.as_of || "—") + "）：" +
+            (bundle.daily_llm.tone || "neutral") +
+            " · 置信度 " + Number(bundle.daily_llm.confidence || 0).toFixed(2) +
+            (bundle.daily_llm.note ? " — " + bundle.daily_llm.note : "");
+          secKw.appendChild(llmNote);
+        }
+        container.appendChild(secKw);
+
+        // 5. 最新财经新闻列表（支持分类筛选）
+        const secFeed = document.createElement("section");
+        secFeed.className = "news-section";
+        const h2Feed = document.createElement("h2");
+        const allItems = n.items || [];
+        h2Feed.textContent = "最新财经与宏观新闻（" + allItems.length + " 条）";
+        secFeed.appendChild(h2Feed);
+
+        const filterDefs = [
+          ["all", "全部"],
+          ["us", "美股"],
+          ["macro", "联储/监管"],
+          ["china", "A股/中概"],
+          ["global", "全球"],
+          ["risk", "风险词"],
+        ];
+        const filterRow = document.createElement("div");
+        filterRow.className = "news-filters";
+        filterRow.setAttribute("role", "group");
+        filterRow.setAttribute("aria-label", "筛选新闻分类");
+        filterDefs.forEach(([key, label]) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "news-filter-btn";
+          btn.textContent = label;
+          btn.setAttribute("aria-pressed", String(newsCategoryFilter === key));
+          btn.addEventListener("click", () => {
+            newsCategoryFilter = key;
+            renderNewsPanel(newsBundle);
+          });
+          filterRow.appendChild(btn);
+        });
+        secFeed.appendChild(filterRow);
+
+        const filtered = allItems.filter((item) => {
+          if (newsCategoryFilter === "all") return true;
+          if (newsCategoryFilter === "risk") return item.sentiment === "risk-off" || item.sentiment === "mixed";
+          return item.category === newsCategoryFilter;
+        });
+
+        if (!filtered.length) {
+          const empty = document.createElement("div");
+          empty.className = "news-empty";
+          empty.textContent = "该分类下暂无近期新闻，可切换「全部」或点击「获取新闻」重新抓取。";
+          secFeed.appendChild(empty);
+        } else {
+          const ul = document.createElement("ul");
+          ul.className = "news-feed-list";
+          ul.setAttribute("role", "list");
+          filtered.forEach((item) => {
+            const li = document.createElement("li");
+            li.className = "news-item" + (item.sentiment === "risk-off" ? " risk-off" : item.sentiment === "risk-on" ? " risk-on" : "");
+
+            const meta = document.createElement("div");
+            meta.className = "news-item-meta";
+            const srcSpan = document.createElement("span");
+            srcSpan.textContent = item.domain || item.source || "news";
+            const dtSpan = document.createElement("span");
+            const pub = String(item.published_at || item.as_of || "");
+            dtSpan.textContent = pub.includes("T") ? formatMsgTime(pub) : pub.slice(0, 10);
+            meta.appendChild(srcSpan);
+            meta.appendChild(dtSpan);
+            li.appendChild(meta);
+
+            if (item.url && /^https?:\/\//i.test(item.url)) {
+              const a = document.createElement("a");
+              a.className = "news-item-title";
+              a.href = item.url;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.textContent = item.title;
+              li.appendChild(a);
+            } else {
+              const div = document.createElement("div");
+              div.className = "news-item-title";
+              div.textContent = item.title;
+              li.appendChild(div);
+            }
+
+            if (Array.isArray(item.tags) && item.tags.length) {
+              const tagsWrap = document.createElement("div");
+              tagsWrap.className = "news-item-tags";
+              item.tags.forEach((t) => {
+                const span = document.createElement("span");
+                span.className = "kw-pill";
+                span.textContent = t;
+                tagsWrap.appendChild(span);
+              });
+              li.appendChild(tagsWrap);
+            }
+            ul.appendChild(li);
+          });
+          secFeed.appendChild(ul);
+        }
+
+        if (Array.isArray(n.errors) && n.errors.length) {
+          const errNote = document.createElement("div");
+          errNote.className = "note";
+          errNote.textContent = "部分信源跳过：" + n.errors.slice(0, 3).join("；");
+          secFeed.appendChild(errNote);
+        }
+        container.appendChild(secFeed);
+      }
+
+      async function triggerNewsRefresh(force, { openTab = false } = {}) {
+        if (newsRefreshing) {
+          if (openTab) openNewsTabPanel();
+          return;
+        }
+        newsRefreshing = true;
+        const btn = document.querySelector("#refresh-news-btn");
+        const badgeText = document.querySelector("#news-badge-text");
+        if (btn) {
+          btn.disabled = true;
+          btn.setAttribute("aria-busy", "true");
+          btn.textContent = "获取新闻中…";
+        }
+        if (badgeText && !newsBundle) {
+          badgeText.textContent = "正在获取新闻…";
+        }
+        if (openTab) {
+          openNewsTabPanel();
+        }
+        let ok = false;
+        let freshUpdated = false;
+        try {
+          const url =
+            "/api/news/refresh?market=" +
+            encodeURIComponent(activeMarket) +
+            (force ? "&force=1" : "");
+          const res = await fetch(url, { method: "POST" });
+          if (res.ok) {
+            const payload = await res.json();
+            if (payload && payload.ok) {
+              ok = true;
+              freshUpdated = !payload.cached;
+              newsBundle = payload;
+              updateNewsHeaderBadge(payload);
+              renderNewsPanel(payload);
+              scheduleLlmPoll(payload);
+              const latestAsOf = (payload.news && payload.news.latest_as_of) || "";
+              const cnt = (payload.news && payload.news.items ? payload.news.items.length : 0);
+              if (force || freshUpdated) {
+                announceStatus("新闻与参考资料已更新至 " + latestAsOf + "，共 " + cnt + " 条。");
+                if (payload.llm_indicators && payload.llm_indicators.signals_recomputed) {
+                  cache.clear();
+                  await loadMarket(activeMarket);
+                } else if (!chatState.running && !chatState.activeThreadId) {
+                  loadMarketChat(activeMarket);
+                }
+              }
+            }
+          } else {
+            throw new Error("HTTP " + res.status);
+          }
+        } catch (_) {
+          // Fallback to read-only GET /api/news if POST refresh failed
+          try {
+            const fallback = await fetch("/api/news?market=" + encodeURIComponent(activeMarket) + "&t=" + Date.now());
+            if (fallback.ok) {
+              const doc = await fallback.json();
+              if (doc && doc.ok) {
+                newsBundle = doc;
+                updateNewsHeaderBadge(doc);
+                renderNewsPanel(doc);
+                ok = true;
+              }
+            }
+          } catch (_) {}
+          if (!ok) {
+            updateNewsHeaderBadge(newsBundle);
+            if (!newsBundle) renderNewsPanel(null);
+            if (force) announceStatus("获取新闻失败，请稍后重试。");
+          }
+        } finally {
+          newsRefreshing = false;
+          if (btn) {
+            btn.disabled = false;
+            btn.removeAttribute("aria-busy");
+            if (force && ok) {
+              btn.textContent = "✓ 新闻已更新";
+              setTimeout(() => {
+                if (!newsRefreshing) btn.textContent = "↻ 获取新闻";
+              }, 1600);
+            } else {
+              btn.textContent = "↻ 获取新闻";
+            }
+          }
+          if (newsBundle) renderNewsPanel(newsBundle);
+        }
       }
 
       // ---------------- 多模型群聊状态与渲染 (DeepSeek × Qwen) ----------------
@@ -1353,10 +2106,15 @@
           );
 
           // 页面首次打开时向后端发起一次非强制检查：
-          // 后端会统一判断全库是否有已过收盘的残缺行或超过 5 分钟冷却的盘中行，无需刷新时毫秒级返回 cached: true
+          // 1) 行情刷新：检查是否有已过收盘的残缺行或超过 5 分钟冷却的盘中行，无需刷新时毫秒级返回 cached: true
+          // 2) 新闻与参考资料刷新：自动拉取最新财经新闻、宏观日历与跨资产参考指标（15 分钟冷却，不阻塞行情图渲染）
           if (!autoRefreshed) {
             autoRefreshed = true;
             triggerRefresh(false);
+          }
+          if (!autoNewsRefreshed) {
+            autoNewsRefreshed = true;
+            triggerNewsRefresh(false, { openTab: false });
           }
         } catch (err) {
           if (seq === loadSeq) {
@@ -1369,22 +2127,76 @@
         }
       }
 
-      const tabChatBtn = document.querySelector("#tab-chat-btn");
-      const tabStatsBtn = document.querySelector("#tab-stats-btn");
-      const chatViewEl = document.querySelector("#chat-view");
-      const statsViewEl = document.querySelector("#stats-view");
-      if (tabChatBtn && tabStatsBtn && chatViewEl && statsViewEl) {
-        tabChatBtn.addEventListener("click", () => {
-          tabChatBtn.classList.add("active");
-          tabStatsBtn.classList.remove("active");
-          chatViewEl.classList.remove("hidden");
-          statsViewEl.classList.remove("active");
+      const asideTablist = document.querySelector("#aside-tablist");
+      const asideTitleEl = document.querySelector("#aside-title");
+      const asideTabDefs = [
+        { key: "chat", tab: document.querySelector("#tab-chat-btn"), panel: document.querySelector("#chat-view"), title: "AI 群聊研判 · DeepSeek × Qwen" },
+        { key: "news", tab: document.querySelector("#tab-news-btn"), panel: document.querySelector("#news-view"), title: "新闻与 5 日预测参考资料" },
+        { key: "stats", tab: document.querySelector("#tab-stats-btn"), panel: document.querySelector("#stats-view"), title: "历史回测统计" },
+      ];
+
+      function switchAsideTab(targetKey, { moveFocus = false } = {}) {
+        const chosen = asideTabDefs.find((d) => d.key === targetKey) || asideTabDefs[0];
+        asideTabDefs.forEach(({ key, tab, panel }) => {
+          const isSelected = key === chosen.key;
+          if (tab) {
+            tab.setAttribute("aria-selected", String(isSelected));
+            tab.toggleAttribute("focusgroupstart", isSelected);
+            tab.tabIndex = isSelected ? 0 : -1;
+            if (isSelected) {
+              if (moveFocus) tab.focus();
+              try {
+                tab.scrollIntoView({ block: "nearest", inline: "nearest", container: "nearest" });
+              } catch (_) {}
+            }
+          }
+          if (panel) {
+            panel.hidden = isSelected ? false : "until-found";
+          }
         });
-        tabStatsBtn.addEventListener("click", () => {
-          tabStatsBtn.classList.add("active");
-          tabChatBtn.classList.remove("active");
-          chatViewEl.classList.add("hidden");
-          statsViewEl.classList.add("active");
+        if (asideTitleEl) asideTitleEl.textContent = chosen.title;
+      }
+
+      function openNewsTabPanel() {
+        const panel = document.querySelector("aside");
+        const togglePanelBtn = document.querySelector("#toggle-panel");
+        if (panel && panel.classList.contains("hidden")) {
+          panel.classList.remove("hidden");
+          if (togglePanelBtn) {
+            togglePanelBtn.textContent = "panel ›";
+            togglePanelBtn.title = "Collapse the side panel";
+            togglePanelBtn.setAttribute("aria-expanded", "true");
+          }
+        }
+        switchAsideTab("news");
+      }
+
+      asideTabDefs.forEach(({ key, tab, panel }) => {
+        if (tab) {
+          tab.addEventListener("click", () => switchAsideTab(key));
+          tab.addEventListener("focus", () => {
+            if (tab.getAttribute("aria-selected") !== "true") switchAsideTab(key);
+          });
+        }
+        if (panel) {
+          panel.addEventListener("beforematch", () => switchAsideTab(key));
+        }
+      });
+
+      if (asideTablist) {
+        asideTablist.addEventListener("keydown", (e) => {
+          if (Object.hasOwn(HTMLElement.prototype, "focusGroup")) return;
+          const idx = asideTabDefs.findIndex((d) => d.tab === document.activeElement);
+          if (idx < 0) return;
+          let nextIdx = -1;
+          if (e.key === "ArrowRight") nextIdx = (idx + 1) % asideTabDefs.length;
+          else if (e.key === "ArrowLeft") nextIdx = (idx - 1 + asideTabDefs.length) % asideTabDefs.length;
+          else if (e.key === "Home") nextIdx = 0;
+          else if (e.key === "End") nextIdx = asideTabDefs.length - 1;
+          if (nextIdx >= 0) {
+            e.preventDefault();
+            switchAsideTab(asideTabDefs[nextIdx].key, { moveFocus: true });
+          }
         });
       }
 
@@ -1446,6 +2258,12 @@
 
       const refreshBtn = document.querySelector("#refresh-btn");
       if (refreshBtn) refreshBtn.addEventListener("click", () => triggerRefresh(true));
+
+      const refreshNewsBtn = document.querySelector("#refresh-news-btn");
+      if (refreshNewsBtn) refreshNewsBtn.addEventListener("click", () => triggerNewsRefresh(true, { openTab: true }));
+
+      const newsFreshnessBtn = document.querySelector("#news-freshness-btn");
+      if (newsFreshnessBtn) newsFreshnessBtn.addEventListener("click", () => openNewsTabPanel());
 
       document.querySelector("#market-tabs").addEventListener("click", (e) => {
         const btn = e.target.closest(".market-tab");

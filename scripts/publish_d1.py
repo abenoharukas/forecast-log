@@ -43,6 +43,8 @@ SIGNAL_COLUMNS = (
     "hit3",
     "flag",
     "flag_price_only",
+    "sell_flag",
+    "sell_threshold",
     "news_veto",
     "score",
     "threshold",
@@ -111,7 +113,12 @@ def literal(value) -> str:
         return str(value)
     if isinstance(value, float):
         return repr(value)
-    return "'" + str(value).replace("'", "''") + "'"
+    text = str(value)
+    # D1's `exec()` chokes on raw newlines/control chars inside a string literal
+    # (chat transcripts are multi-line). Send those as a hex blob instead.
+    if any(ord(ch) < 32 for ch in text):
+        return f"CAST(X'{text.encode('utf-8').hex()}' AS TEXT)"
+    return "'" + text.replace("'", "''") + "'"
 
 
 def sql_for(table: str, columns: tuple[str, ...], rows: list[sqlite3.Row]) -> str:

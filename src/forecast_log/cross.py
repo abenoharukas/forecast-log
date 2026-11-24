@@ -334,24 +334,30 @@ def _news_labels(root: Path) -> tuple[dict[str, dict], dict]:
 
 
 def _keyword_features(root: Path, dates: list[str]) -> dict[str, int]:
-    """每天标题里命中的 risk-off 概念数。没有当天记录就是 0。"""
+    """每天标题里命中的 risk-off 概念数。优先读 SQLite `news` 表，兼容回退到旧 JSON 目录。"""
+    from forecast_log.db import load_news_titles_by_day
     from forecast_log.keywords import scan
 
-    news_dir = root / "data" / "news"
-    if not news_dir.is_dir():
-        return {}
     wanted = set(dates)
     out: dict[str, int] = {}
-    for path in news_dir.glob("????-??-??.json"):
-        if path.stem not in wanted:
-            continue
-        try:
-            record = json.loads(path.read_text())
-        except json.JSONDecodeError:
-            continue
-        titles = [document.get("title", "") for document in record.get("documents", [])]
+
+    db_titles = load_news_titles_by_day(root, dates)
+    for day, titles in db_titles.items():
         if titles:
-            out[path.stem] = len(scan(titles)["risk_off_hits"])
+            out[day] = len(scan(titles)["risk_off_hits"])
+
+    news_dir = root / "data" / "news"
+    if news_dir.is_dir():
+        for path in news_dir.glob("????-??-??.json"):
+            if path.stem not in wanted or path.stem in out:
+                continue
+            try:
+                record = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                continue
+            titles = [document.get("title", "") for document in record.get("documents", [])]
+            if titles:
+                out[path.stem] = len(scan(titles)["risk_off_hits"])
     return out
 
 

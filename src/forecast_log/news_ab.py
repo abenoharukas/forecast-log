@@ -96,20 +96,24 @@ def label(
     *,
     workers: int = 4,
     limit_denominator: int | None = None,
+    overwrite_days: set[str] | None = None,
+    batch_days: int = BATCH_DAYS,
 ) -> dict:
     """标这批天，一天一个文件。已有文件的跳过，中断重跑只补缺的。"""
     slug = slug_of(model)
     target = ab_dir(root, slug)
     target.mkdir(parents=True, exist_ok=True)
-    todo = [day for day in days if not (target / f"{day.isoformat()}.json").is_file()]
+    overwrite = overwrite_days or set()
+    todo = [day for day in days if day.isoformat() in overwrite or not (target / f"{day.isoformat()}.json").is_file()]
     stats = {"model": model, "todo": len(todo), "days": 0, "failed": 0, "cost_usd": 0.0, "errors": []}
     if not todo:
         return stats
     titles = read_day_titles(root, todo)
     keys = list(titles)
+    step = max(1, int(batch_days or BATCH_DAYS))
     chunks = [
-        {key: titles[key] for key in keys[start : start + BATCH_DAYS]}
-        for start in range(0, len(keys), BATCH_DAYS)
+        {key: titles[key] for key in keys[start : start + step]}
+        for start in range(0, len(keys), step)
     ]
 
     from concurrent.futures import ThreadPoolExecutor

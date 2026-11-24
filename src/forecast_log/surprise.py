@@ -56,6 +56,17 @@ def day_path(root: Path, day: str) -> Path:
 
 
 def _titles(root: Path, day: str) -> list[str]:
+    from forecast_log.db import get_news_fetch
+
+    try:
+        cached = get_news_fetch(root, date.fromisoformat(day))
+    except ValueError:
+        cached = None
+    if cached and cached.get("documents"):
+        titles = [str(d.get("title", "")).strip() for d in cached["documents"] if d.get("title")]
+        if titles:
+            return titles[:MAX_TITLES]
+
     path = root / "data" / "news" / f"{day}.json"
     if not path.is_file():
         return []
@@ -101,15 +112,29 @@ def _parse(content: str, expected: list[str]) -> list[dict]:
     return out
 
 
-def run(root: Path, days: list[date], llm: LLM | None = None, workers: int = 5, limit: int | None = None) -> dict:
-    todo = [day for day in days if not day_path(root, day.isoformat()).is_file()]
+def run(
+    root: Path,
+    days: list[date],
+    llm: LLM | None = None,
+    workers: int = 5,
+    limit: int | None = None,
+    overwrite_days: set[str] | None = None,
+) -> dict:
+    overwrite = overwrite_days or set()
+    todo = [day for day in days if day.isoformat() in overwrite or not day_path(root, day.isoformat()).is_file()]
     if limit:
         todo = todo[:limit]
     stats = {"todo": len(todo), "days": 0, "failed": 0, "cost_usd": 0.0, "errors": []}
     if not todo:
         return stats
     if llm is None:
-        llm = OpenAICompatLLM.from_env(merged_env(root))
+        env = merged_env(root)
+        if env.get("DEEPSEEK_API_KEY"):
+            from forecast_log import providers
+
+            llm = providers.build(env.get("DEEPSEEK_MODEL") or "deepseek-chat", root, env=env)
+        else:
+            llm = OpenAICompatLLM.from_env(env)
     batch: dict[str, list[str]] = {}
     for day in todo:
         titles = _titles(root, day.isoformat())

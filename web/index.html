@@ -701,6 +701,7 @@
           }
         })
         .catch(() => {});
+      fetch("/api/news/refresh", { method: "POST" }).catch(() => {});
     });
     });
   </script>

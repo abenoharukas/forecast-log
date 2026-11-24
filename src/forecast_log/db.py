@@ -920,7 +920,149 @@ def load_all_news_items(root: Path) -> list[dict]:
         conn.close()
 
 
-# ------------------------------------------------------------------ 多模型群聊存储（chat_messages）
+def latest_news_status(root: Path) -> dict:
+    """汇总 news 表最新日期、抓取时间、总条数与近 7 天按日统计。"""
+    path = db_path(root)
+    if not path.is_file():
+        return {
+            "total_rows": 0,
+            "latest_as_of": None,
+            "latest_fetched_at": "",
+            "latest_day_docs": 0,
+            "recent_days": [],
+        }
+    conn = connect(path)
+    try:
+        agg = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total_rows,
+                MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of,
+                MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at
+            FROM news
+            """
+        ).fetchone()
+        latest_as_of = str(agg["latest_as_of"]) if agg and agg["latest_as_of"] else None
+        latest_day_docs = 0
+        if latest_as_of:
+            cnt_row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM news WHERE as_of = ? AND doc_id != ''",
+                (latest_as_of,),
+            ).fetchone()
+            latest_day_docs = int(cnt_row["cnt"]) if cnt_row else 0
+        day_rows = conn.execute(
+            """
+            SELECT
+                as_of,
+                COUNT(*) AS count,
+                MAX(source) AS source,
+                MAX(fetched_at) AS fetched_at
+            FROM news
+            WHERE doc_id != ''
+            GROUP BY as_of
+            ORDER BY as_of DESC
+            LIMIT 7
+            """
+        ).fetchall()
+        return {
+            "total_rows": int(agg["total_rows"]) if agg and agg["total_rows"] else 0,
+            "latest_as_of": latest_as_of,
+            "latest_fetched_at": str(agg["latest_fetched_at"] or "") if agg else "",
+            "latest_day_docs": latest_day_docs,
+            "recent_days": [
+                {
+                    "as_of": str(r["as_of"]),
+                    "count": int(r["count"]),
+                    "source": str(r["source"] or ""),
+                    "fetched_at": str(r["fetched_at"] or ""),
+                }
+                for r in day_rows
+            ],
+        }
+    finally:
+        conn.close()
+
+
+def load_recent_news(root: Path, limit: int = 60, days: int = 14) -> list[dict]:
+    """按最新日期与发布时间倒序读取最近的新闻条目（自动按标题/链接去重）。"""
+    path = db_path(root)
+    if not path.is_file():
+        return []
+    conn = connect(path)
+    try:
+        max_row = conn.execute("SELECT MAX(as_of) AS max_as_of FROM news WHERE doc_id != ''").fetchone()
+        if not max_row or not max_row["max_as_of"]:
+            return []
+        max_day = date.fromisoformat(str(max_row["max_as_of"]))
+        from datetime import timedelta
+
+        cutoff = (max_day - timedelta(days=max(1, days))).isoformat()
+        rows = conn.execute(
+            """
+            SELECT as_of, doc_id, published_at, title, text, url, domain, source, fetched_at
+            FROM news
+            WHERE doc_id != '' AND as_of >= ?
+            ORDER BY substr(published_at, 1, 10) DESC, published_at DESC, as_of DESC, fetched_at DESC, rowid ASC
+            LIMIT ?
+            """,
+            (cutoff, max(limit * 3, 120)),
+        ).fetchall()
+        out: list[dict] = []
+        seen_keys: set[str] = set()
+        for row in rows:
+            title = str(row["title"] or "").strip()
+            if not title:
+                continue
+            url = str(row["url"] or "").strip()
+            dedup_key = (url.lower() if url and "en.wikipedia.org" not in url else title.lower())
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
+            out.append(
+                {
+                    "as_of": str(row["as_of"]),
+                    "id": str(row["doc_id"]),
+                    "published_at": str(row["published_at"] or row["as_of"]),
+                    "title": title,
+                    "text": str(row["text"] or title),
+                    "url": url,
+                    "domain": str(row["domain"] or ""),
+                    "source": str(row["source"] or ""),
+                    "fetched_at": str(row["fetched_at"] or ""),
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
+    finally:
+        conn.close()
+
+
+def load_news_titles_by_day(root: Path, dates: list[str] | None = None) -> dict[str, list[str]]:
+    """一次性从 SQLite `news` 表按 `as_of` 读取每日标题列表，供关键字风险扫描与信号构建使用。"""
+    path = db_path(root)
+    if not path.is_file():
+        return {}
+    wanted = set(dates) if dates is not None else None
+    conn = connect(path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT as_of, title
+            FROM news
+            WHERE doc_id != '' AND title != ''
+            ORDER BY as_of ASC, rowid ASC
+            """
+        ).fetchall()
+        out: dict[str, list[str]] = {}
+        for row in rows:
+            day = str(row["as_of"])
+            if wanted is not None and day not in wanted:
+                continue
+            out.setdefault(day, []).append(str(row["title"]))
+        return out
+    finally:
+        conn.close()
 
 
 def append_chat_message(

@@ -164,6 +164,61 @@ def build_market_context(root: Path, market: str) -> dict:
             f"处于 3 个月区间 {w90['range_pos'] * 100:.0f}% 分位"
         )
 
+    # 5. 宏观日历与跨资产参考（用于 5 日涨跌辅助研判）
+    try:
+        from forecast_log.news_feed import load_news_bundle
+
+        bundle = load_news_bundle(root, market=mkt, limit=8, cached=True)
+        cal_events = (bundle.get("macro_calendar") or {}).get("events") or []
+        cal_parts = [
+            f"{ev['key'].upper()} {ev['next_date']}({ev['days_away']}天后·{ev['window_status']})"
+            for ev in cal_events
+            if ev.get("next_date") is not None
+        ]
+        asset_parts = []
+        for a in (bundle.get("cross_assets") or [])[:4]:
+            c5 = a.get("chg_5d")
+            c5_str = (
+                f"{'+' if c5 >= 0 else ''}{c5:.2f}" + ("bp" if a.get("unit") == "diff" else "%")
+                if c5 is not None
+                else "—"
+            )
+            asset_parts.append(f"{a['symbol']} {a['close']}(5d {c5_str})")
+        if cal_parts or asset_parts:
+            ref_bits = []
+            if cal_parts:
+                ref_bits.append("宏观日历：" + "；".join(cal_parts))
+            if asset_parts:
+                ref_bits.append("跨资产：" + " · ".join(asset_parts))
+            lines.append("5. 宏观与跨资产参考：" + " | ".join(ref_bits))
+
+        news_items = (bundle.get("news") or {}).get("items") or []
+        llm_ind = bundle.get("llm_indicators") or {}
+        llm_bits = []
+        ds_ind = llm_ind.get("deepseek")
+        if ds_ind:
+            llm_bits.append(
+                f"DeepSeek({ds_ind['as_of']}): surprise={ds_ind['surprise']}/{ds_ind['direction']}"
+                + (" [强利空否决]" if ds_ind.get("veto") else " [强利多补点]" if ds_ind.get("boost") else "")
+            )
+        qw_ind = llm_ind.get("qwen")
+        if qw_ind:
+            llm_bits.append(
+                f"Qwen({qw_ind['as_of']}): regime={qw_ind['regime']}, severity={qw_ind['severity']:.2f}, 波动倍数={qw_ind['size_multiplier']}x"
+                + (" [高严重度否决]" if qw_ind.get("veto") else "")
+            )
+        if news_items or llm_bits:
+            kw = bundle.get("keywords") or {}
+            kw_note = f"风险词：{','.join(kw.get('risk_off_hits') or []) or '无'} / 偏多词：{','.join(kw.get('risk_on_hits') or []) or '无'}"
+            llm_prefix = ("AI新闻指标：" + "；".join(llm_bits) + " | ") if llm_bits else ""
+            headlines_str = "；".join(
+                f"[{str(it.get('published_at') or '')[:10]}] {it['title'][:90]}"
+                for it in news_items[:5]
+            )
+            lines.append(f"6. 最新新闻参考（{llm_prefix}{kw_note}）：{headlines_str}")
+    except Exception:
+        pass
+
     return {
         "market": mkt,
         "symbol": symbol,

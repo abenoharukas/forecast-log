@@ -135,6 +135,19 @@ export default {
       return refreshFromYahoo(env, force);
     }
 
+    if (clean === "/api/news") {
+      const market = url.searchParams.get("market") || "ndx";
+      const limit = Math.max(10, Math.min(Number(url.searchParams.get("limit") || 50) || 50, 120));
+      return loadNewsBundle(env, url, { market, limit, cached: true });
+    }
+
+    if (clean === "/api/news/refresh") {
+      const force = url.searchParams.get("force") === "1";
+      const market = url.searchParams.get("market") || "ndx";
+      const limit = Math.max(10, Math.min(Number(url.searchParams.get("limit") || 50) || 50, 120));
+      return refreshNewsD1(env, url, { force, market, limit });
+    }
+
     if (clean === "/web/points.html" || clean === "/points.html") {
       const market = url.searchParams.get("market") || "";
       return redirect(LEGACY_MARKET[market] || "/ndx");
@@ -984,12 +997,14 @@ function fmtPrice(value) {
 async function chatContext(env, market) {
   const instrument = INSTRUMENT[market] || INSTRUMENT.ndx;
   try {
-    const [barRes, sigRes] = await env.DB.batch([
+    const [barRes, sigRes, newsRes] = await env.DB.batch([
       env.DB.prepare("SELECT date, open, high, low, close, is_closed FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 2").bind(instrument),
       env.DB.prepare("SELECT date, flag, score, threshold FROM signals WHERE market = ? ORDER BY date DESC LIMIT 1").bind(market),
+      env.DB.prepare("SELECT published_at, title FROM news WHERE doc_id != '' ORDER BY substr(published_at,1,10) DESC, published_at DESC LIMIT 5"),
     ]);
     const bars = barRes.results ?? [];
     const signal = sigRes.results?.[0];
+    const recentNews = newsRes.results ?? [];
     if (!bars.length) {
       return { market, symbol: instrument, as_of: "", text: `标的：${instrument}\n暂无行情数据。` };
     }
@@ -1003,6 +1018,9 @@ async function chatContext(env, market) {
           ? `（合成得分 ${Number(signal.score).toFixed(3)} / 阈值 ${Number(signal.threshold).toFixed(3)}）`
           : "")
       : "";
+    const newsLine = recentNews.length
+      ? `3. 最新新闻参考：` + recentNews.map((n) => `[${String(n.published_at || "").slice(0, 10)}] ${String(n.title || "").slice(0, 80)}`).join("；")
+      : "";
     return {
       market,
       symbol: instrument,
@@ -1011,6 +1029,7 @@ async function chatContext(env, market) {
         `【标的】${instrument} · 基准日 ${latest.date}（${Number(latest.is_closed) ? "已收盘" : "盘中未收盘"}）`,
         `1. 当前盘面：收/现价 ${Number(latest.close).toFixed(2)}（当日 ${pct}），开 ${fmtPrice(latest.open)} / 高 ${fmtPrice(latest.high)} / 低 ${fmtPrice(latest.low)}`,
         signalLine ? `2. ${signalLine}` : "",
+        newsLine,
       ]
         .filter(Boolean)
         .join("\n"),
@@ -1307,4 +1326,387 @@ async function settleSignals(env) {
     settled[market] = changed;
   }
   return settled;
+}
+
+// ------------------------------------------------------------------ /api/news & /api/news/refresh
+
+const NEWS_COOLDOWN_MS = 15 * 60 * 1000;
+const LIVE_NEWS_FEEDS = [
+  ["wsj-markets", "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"],
+  ["cnbc-markets", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258"],
+  ["cnbc-world", "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362"],
+  ["fed-monetary", "https://www.federalreserve.gov/feeds/press_monetary.xml"],
+  ["sec-press", "https://www.sec.gov/news/pressreleases.rss"],
+  ["yahoo-ndx", "https://feeds.finance.yahoo.com/rss/2.0/headline?s=%5ENDX,QQQ,SPY&region=US&lang=en-US"],
+  ["yahoo-ssec", "https://feeds.finance.yahoo.com/rss/2.0/headline?s=000001.SS,FXI,KWEB&region=US&lang=en-US"],
+];
+
+const KEYWORD_RULES = [
+  ["fed", /\bfed\b|federal reserve|fomc/i],
+  ["rate hike", /raise rates|rate hike|hike rates|tighten/i],
+  ["rate cut", /cut rates|rate cut|easing|stimulus/i],
+  ["inflation", /inflation|consumer prices/i],
+  ["recession", /recession|downturn|slowdown/i],
+  ["tariff", /tariff|trade war|trade dispute/i],
+  ["jobs", /unemployment|payrolls|jobless|jobs report|job cuts/i],
+  ["gdp", /\bgdp\b|economic growth/i],
+  ["oil", /oil price|crude|opec|barrel/i],
+  ["dollar", /dollar|currency market/i],
+  ["bond yields", /bond yield|treasury yield|yields/i],
+  ["stocks up", /record high|shares (rise|surge|gain)|rally|stocks (rise|jump|climb)/i],
+  ["stocks down", /sell-?off|plunge|slump|crash|tumble|stocks (fall|drop|slide)/i],
+  ["earnings", /earnings|profit warning|quarterly results/i],
+  ["ipo", /\bipo\b|initial public offering/i],
+  ["bankruptcy", /bankrupt|insolven|default/i],
+  ["china", /\bchina\b|beijing|pboc/i],
+  ["europe", /\becb\b|eurozone|european central bank/i],
+  ["geopolitics", /sanction|invasion|missile|air ?strike|military operation|\bwar\b/i],
+  ["trade deal", /trade deal|trade agreement|exports|imports/i],
+  ["crypto", /bitcoin|crypto|blockchain/i],
+  ["housing", /housing|home sales|mortgage/i],
+  ["banks", /\bbank\b|banking crisis|lender/i],
+  ["election", /election|referendum|vote/i],
+];
+const RISK_OFF_KEYS = new Set(["geopolitics", "recession", "bankruptcy", "tariff", "stocks down", "banks"]);
+const RISK_ON_KEYS = new Set(["rate cut", "stocks up", "trade deal", "housing"]);
+
+function decodeXml(str) {
+  return String(str || "")
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hashId(input) {
+  let h1 = 0xdeadbeef ^ input.length;
+  let h2 = 0x41c6ce57 ^ input.length;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return ((h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0")).slice(0, 12);
+}
+
+function parseRssXml(name, url, xml) {
+  const docs = [];
+  const blocks = xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi) || [];
+  const fallbackDomain = url.split("/")[2] || name;
+  for (const block of blocks) {
+    const titleMatch = block.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+    const linkHref = block.match(/<link\b[^>]*href=["']([^"']+)["'][^>]*\/?>/i);
+    const linkBody = block.match(/<link\b[^>]*>([\s\S]*?)<\/link>/i);
+    const guidMatch = block.match(/<guid\b[^>]*>([\s\S]*?)<\/guid>/i);
+    const dateMatch = block.match(/<(pubDate|updated|published|dc:date)\b[^>]*>([\s\S]*?)<\/\1>/i);
+    const title = decodeXml(titleMatch?.[1] || "").slice(0, 400);
+    let link = decodeXml(linkHref?.[1] || linkBody?.[1] || "");
+    if (!link && guidMatch?.[1] && /^https?:\/\//i.test(guidMatch[1].trim())) link = guidMatch[1].trim();
+    const rawDate = decodeXml(dateMatch?.[2] || "");
+    if (!title || !link || !rawDate) continue;
+    const parsed = new Date(rawDate);
+    const publishedAt = Number.isNaN(parsed.getTime())
+      ? (/^\d{4}-\d{2}-\d{2}/.test(rawDate) ? rawDate.slice(0, 10) : "")
+      : parsed.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+    if (!publishedAt) continue;
+    let domain = fallbackDomain;
+    try { domain = new URL(link).hostname; } catch {}
+    docs.push({
+      id: hashId(`${name}|${link}|${title}`),
+      published_at: publishedAt,
+      title,
+      text: title,
+      url: link,
+      domain,
+      source: name,
+    });
+  }
+  return docs;
+}
+
+function scanKeywords(titles) {
+  const joined = titles.join(" ");
+  const hits = KEYWORD_RULES.filter(([, re]) => re.test(joined)).map(([k]) => k);
+  const riskOff = hits.filter((k) => RISK_OFF_KEYS.has(k));
+  const riskOn = hits.filter((k) => RISK_ON_KEYS.has(k));
+  return {
+    items: titles.length,
+    hits,
+    risk_off_hits: riskOff,
+    risk_on_hits: riskOn,
+    tone: rnd((riskOn.length - riskOff.length) / Math.max(titles.length, 1), 4),
+    veto_watch: riskOff.length >= 2,
+  };
+}
+
+function classifyNewsRow(row) {
+  const title = String(row.title || "");
+  const tags = KEYWORD_RULES.filter(([, re]) => re.test(title)).map(([k]) => k);
+  const off = tags.filter((k) => RISK_OFF_KEYS.has(k));
+  const on = tags.filter((k) => RISK_ON_KEYS.has(k));
+  const sentiment = off.length && !on.length ? "risk-off" : on.length && !off.length ? "risk-on" : off.length && on.length ? "mixed" : "neutral";
+  const src = String(row.source || "");
+  const dom = String(row.domain || "").toLowerCase();
+  let category = "global";
+  if (src.includes("yahoo-ssec") || /\b(china|chinese|beijing|pboc|shanghai|csi|hang seng|alibaba|tencent)\b/i.test(title)) category = "china";
+  else if (src.includes("fed-monetary") || src.includes("sec-press") || dom.includes("federalreserve.gov") || dom.includes("sec.gov")) category = "macro";
+  else if (src.includes("wikipedia") || dom.includes("wikipedia.org")) category = "global";
+  else if (/wsj|cnbc-markets|yahoo-ndx/.test(src) || /wsj\.com|cnbc\.com|yahoo\.com/.test(dom)) category = "us";
+  return { ...row, category, tags: tags.slice(0, 5), sentiment };
+}
+
+async function crossAssetsSnapshot(env) {
+  const syms = ["^TNX", "DX-Y.NYB", "HYG", "TLT", "^VIX", "^VXN", "GC=F"];
+  const placeholders = syms.map(() => "?").join(",");
+  const res = await env.DB.prepare(
+    `SELECT symbol, date, close, is_closed FROM bars WHERE symbol IN (${placeholders}) AND date >= date('now', '-400 days') ORDER BY symbol ASC, date ASC`,
+  )
+    .bind(...syms)
+    .all();
+  const bySym = new Map();
+  for (const r of res.results ?? []) {
+    if (!bySym.has(r.symbol)) bySym.set(r.symbol, []);
+    bySym.get(r.symbol).push(r);
+  }
+  const pct = (a, b) => (b ? rnd((a / b - 1) * 100, 2) : null);
+  const buildSingle = (symbol, label, unit, dir) => {
+    const arr = bySym.get(symbol);
+    if (!arr || !arr.length) return null;
+    const last = arr[arr.length - 1];
+    const c0 = Number(last.close);
+    const c1 = arr.length >= 2 ? Number(arr[arr.length - 2].close) : null;
+    const c5 = arr.length >= 6 ? Number(arr[arr.length - 6].close) : null;
+    const c20 = arr.length >= 21 ? Number(arr[arr.length - 21].close) : null;
+    const chg1 = c1 != null ? (unit === "diff" ? rnd(c0 - c1, 3) : pct(c0, c1)) : null;
+    const chg5 = c5 != null ? (unit === "diff" ? rnd(c0 - c5, 3) : pct(c0, c5)) : null;
+    const chg20 = c20 != null ? (unit === "diff" ? rnd(c0 - c20, 3) : pct(c0, c20)) : null;
+    let hint = "中性";
+    if ((symbol === "^VIX" || symbol === "^VXN") && arr.length >= 60) {
+      const w = arr.slice(-252).map((x) => Number(x.close)).sort((a, b) => a - b);
+      const med = w[Math.floor(w.length / 2)];
+      const ratio = med ? (c0 / med - 1) * 100 : 0;
+      hint = `较年均中位 ${ratio >= 0 ? "+" : ""}${ratio.toFixed(1)}%` + (ratio > 5 ? "（偏高→恐慌反向偏多）" : ratio < -5 ? "（偏低→平静）" : "");
+    } else if (chg20 != null) {
+      if (dir === "down") hint = chg20 < 0 ? "20日下行（偏多因子）" : "20日上行（偏空压力）";
+      else if (dir === "up") hint = chg20 > 0 ? "20日走强（偏多因子）" : "20日走弱（偏空压力）";
+    }
+    return { symbol, label, date: last.date, close: rnd(c0, 2), unit, chg_1d: chg1, chg_5d: chg5, chg_20d: chg20, is_closed: Boolean(last.is_closed), hint };
+  };
+
+  const out = [];
+  for (const spec of [
+    ["^TNX", "10Y 美债收益率", "diff", "down"],
+    ["DX-Y.NYB", "美元指数 DXY", "pct", "down"],
+    ["^VIX", "标普波动率 VIX", "pct", "high"],
+    ["^VXN", "纳指波动率 VXN", "pct", "high"],
+    ["GC=F", "黄金期货 GC=F", "pct", "neutral"],
+  ]) {
+    const item = buildSingle(...spec);
+    if (item) out.push(item);
+  }
+  const hyg = bySym.get("HYG") || [];
+  const tlt = bySym.get("TLT") || [];
+  if (hyg.length && tlt.length) {
+    const tltMap = new Map(tlt.map((r) => [r.date, Number(r.close)]));
+    const ratios = hyg.filter((r) => tltMap.get(r.date) > 0).map((r) => [r.date, Number(r.close) / tltMap.get(r.date)]);
+    if (ratios.length) {
+      const [d0, r0] = ratios[ratios.length - 1];
+      const r1 = ratios.length >= 2 ? ratios[ratios.length - 2][1] : null;
+      const r5 = ratios.length >= 6 ? ratios[ratios.length - 6][1] : null;
+      const r20 = ratios.length >= 21 ? ratios[ratios.length - 21][1] : null;
+      const c20 = r20 != null ? pct(r0, r20) : null;
+      out.splice(2, 0, {
+        symbol: "HYG/TLT",
+        label: "信用风险偏好 (HYG/TLT)",
+        date: d0,
+        close: rnd(r0, 4),
+        unit: "pct",
+        chg_1d: r1 != null ? pct(r0, r1) : null,
+        chg_5d: r5 != null ? pct(r0, r5) : null,
+        chg_20d: c20,
+        is_closed: Boolean(hyg[hyg.length - 1].is_closed && tlt[tlt.length - 1].is_closed),
+        hint: (c20 || 0) > 0 ? "20日走强（偏多因子）" : "20日走弱（避险偏空）",
+      });
+    }
+  }
+  return out;
+}
+
+async function macroCalendarSnapshot(env, url, todayStr) {
+  const evDoc = await assetJson(env, url, "/_meta/events.json");
+  const cal = evDoc?.calendar;
+  if (!cal) return { available: false, as_of: todayStr, events: [] };
+  const todayMs = new Date(`${todayStr}T00:00:00Z`).getTime();
+  const specs = [
+    ["cpi", "CPI 通胀数据", "CPI 前 0–3 天且复合分 ≥ 中位触发买入增补"],
+    ["nfp", "NFP 非农就业", "NFP 前 3–7 天且复合分 ≥ 中位触发买入增补"],
+    ["fomc", "FOMC 联储决议", "FOMC 决议当天否决所有买卖信号"],
+  ];
+  return {
+    available: true,
+    as_of: todayStr,
+    events: specs.map(([key, label, ruleHint]) => {
+      const nextDate = (cal[key] || []).find((d) => d >= todayStr) || null;
+      const daysAway = nextDate ? Math.round((new Date(`${nextDate}T00:00:00Z`).getTime() - todayMs) / 86400000) : null;
+      let inWindow = false;
+      let windowStatus = "常规期";
+      if (daysAway != null) {
+        if (key === "cpi" && daysAway >= 0 && daysAway <= 3) { inWindow = true; windowStatus = "触发窗口（临近 CPI）"; }
+        else if (key === "nfp" && daysAway >= 3 && daysAway <= 7) { inWindow = true; windowStatus = "触发窗口（NFP 前 3–7 天）"; }
+        else if (key === "fomc" && daysAway === 0) { inWindow = true; windowStatus = "否决窗口（FOMC 决议日）"; }
+        else if (key === "fomc" && daysAway >= 1 && daysAway <= 3) { windowStatus = "临近决议（观望留意）"; }
+      }
+      return { key, label, next_date: nextDate, days_away: daysAway, in_window: inWindow, window_status: windowStatus, rule_hint: ruleHint };
+    }),
+  };
+}
+
+async function loadNewsBundle(env, url, { market = "ndx", limit = 50, cached = true, fetchMeta = {} } = {}) {
+  const todayBj = beijingDateStr();
+  const [aggRes, daysRes, itemsRes, crossAssets, macroCalendar, ndxMeta, llmIndicators] = await Promise.all([
+    env.DB.prepare("SELECT COUNT(*) AS total_rows, MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of, MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at FROM news").all(),
+    env.DB.prepare("SELECT as_of, COUNT(*) AS count, MAX(source) AS source, MAX(fetched_at) AS fetched_at FROM news WHERE doc_id != '' GROUP BY as_of ORDER BY as_of DESC LIMIT 7").all(),
+    env.DB.prepare("SELECT as_of, doc_id AS id, published_at, title, text, url, domain, source, fetched_at FROM news WHERE doc_id != '' AND as_of >= date('now', '-20 days') ORDER BY substr(published_at,1,10) DESC, published_at DESC, as_of DESC, fetched_at DESC LIMIT ?").bind(Math.max(limit * 3, 120)).all(),
+    crossAssetsSnapshot(env),
+    macroCalendarSnapshot(env, url, todayBj),
+    assetJson(env, url, "/_meta/cross-ndx.json"),
+    assetJson(env, url, "/_meta/news-indicators.json"),
+  ]);
+
+  const agg = aggRes.results?.[0] || {};
+  const recentDays = daysRes.results ?? [];
+  const seen = new Set();
+  const deduped = [];
+  for (const row of itemsRes.results ?? []) {
+    const title = String(row.title || "").trim();
+    if (!title) continue;
+    const u = String(row.url || "").trim();
+    const key = u && !u.includes("en.wikipedia.org") ? u.toLowerCase() : title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(classifyNewsRow(row));
+    if (deduped.length >= limit) break;
+  }
+
+  const kw = scanKeywords(deduped.slice(0, 40).map((it) => it.title));
+  const sourcesSeen = [];
+  for (const it of deduped) {
+    for (const s of String(it.source || "").split("+")) {
+      const clean = s.trim();
+      if (clean && clean !== "none" && !sourcesSeen.includes(clean)) sourcesSeen.push(clean);
+    }
+  }
+
+  return json({
+    ok: true,
+    cached,
+    market,
+    beijing_date: todayBj,
+    refreshed_at: fetchMeta.refreshed_at || agg.latest_fetched_at || new Date().toISOString(),
+    news: {
+      latest_as_of: agg.latest_as_of || null,
+      fetched_at: agg.latest_fetched_at || "",
+      total_rows: Number(agg.total_rows || 0),
+      latest_day_docs: recentDays[0]?.as_of === agg.latest_as_of ? Number(recentDays[0].count || 0) : 0,
+      recent_days: recentDays,
+      sources: fetchMeta.providers || sourcesSeen,
+      backfilled_days: fetchMeta.backfilled_days || [],
+      new_count: fetchMeta.new_count || 0,
+      errors: fetchMeta.errors || [],
+      items: deduped,
+    },
+    keywords: kw,
+    llm_indicators: llmIndicators || { running: false, deepseek: null, qwen: null, recent_days: [], errors: [] },
+    macro_calendar: macroCalendar,
+    cross_assets: crossAssets,
+    daily_llm: ndxMeta?.context || null,
+  });
+}
+
+async function refreshNewsD1(env, url, { force = false, market = "ndx", limit = 50 } = {}) {
+  try {
+    const todayBj = beijingDateStr();
+    if (!force) {
+      const agg = (await env.DB.prepare("SELECT MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of, MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at FROM news").all()).results?.[0];
+      const latestDate = agg?.latest_as_of || "";
+      const fetchedMs = agg?.latest_fetched_at ? new Date(agg.latest_fetched_at).getTime() : 0;
+      if (latestDate >= todayBj && fetchedMs && Date.now() - fetchedMs < NEWS_COOLDOWN_MS) {
+        return loadNewsBundle(env, url, { market, limit, cached: true });
+      }
+    }
+
+    const fetchedUtc = new Date().toISOString().replace(/\.\d{3}Z$/, "+00:00");
+    const providersOk = [];
+    const errors = [];
+    const allDocs = [];
+
+    const results = await Promise.allSettled(
+      LIVE_NEWS_FEEDS.map(async ([name, feedUrl]) => {
+        const res = await fetch(feedUrl, { headers: { "User-Agent": "forecast-log/1.0 (+market news)" } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const xml = await res.text();
+        return { name, docs: parseRssXml(name, feedUrl, xml) };
+      }),
+    );
+
+    for (let i = 0; i < results.length; i += 1) {
+      const [name] = LIVE_NEWS_FEEDS[i];
+      const r = results[i];
+      if (r.status === "fulfilled") {
+        if (r.value.docs.length) {
+          providersOk.push(name);
+          allDocs.push(...r.value.docs);
+        }
+      } else {
+        errors.push(`${name}: ${String(r.reason?.message || r.reason)}`);
+      }
+    }
+
+    const seenUrl = new Set();
+    const unique = [];
+    allDocs.sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
+    for (const doc of allDocs) {
+      const k = doc.url.toLowerCase();
+      if (seenUrl.has(k)) continue;
+      seenUrl.add(k);
+      unique.push(doc);
+      if (unique.length >= 100) break;
+    }
+
+    if (unique.length) {
+      const stmts = [
+        env.DB.prepare("DELETE FROM news WHERE as_of = ? AND doc_id = ''").bind(todayBj),
+        ...unique.map((doc) =>
+          env.DB.prepare(
+            `INSERT OR REPLACE INTO news (as_of, doc_id, published_at, title, text, url, domain, depth, source, page, fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?)`,
+          ).bind(todayBj, doc.id, doc.published_at, doc.title, doc.text, doc.url, doc.domain, doc.source, fetchedUtc),
+        ),
+      ];
+      await env.DB.batch(stmts);
+    }
+
+    return loadNewsBundle(env, url, {
+      market,
+      limit,
+      cached: false,
+      fetchMeta: {
+        refreshed_at: fetchedUtc,
+        providers: providersOk,
+        backfilled_days: [],
+        new_count: unique.length,
+        errors,
+      },
+    });
+  } catch (err) {
+    return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
+  }
 }

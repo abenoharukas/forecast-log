@@ -67,8 +67,16 @@ def day_path(root: Path, day: str) -> Path:
 
 
 def read_day_titles(root: Path, days: list[date]) -> dict[str, list[str]]:
+    from forecast_log.db import get_news_fetch
+
     out: dict[str, list[str]] = {}
     for day in days:
+        cached = get_news_fetch(root, day)
+        if cached and cached.get("documents"):
+            titles = [str(d.get("title", "")).strip() for d in cached["documents"] if d.get("title")]
+            if titles:
+                out[day.isoformat()] = titles[:MAX_TITLES_PER_DAY]
+                continue
         path = root / "data" / "news" / f"{day.isoformat()}.json"
         if not path.is_file():
             continue

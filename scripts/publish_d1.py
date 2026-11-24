@@ -216,6 +216,19 @@ def push(conn: sqlite3.Connection, url: str, token: str, table: str, columns: tu
     return done
 
 
+def _read_env_key(path: Path, key: str) -> str:
+    if not path.is_file():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip() == key:
+            return v.strip().strip("\"'")
+    return ""
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Incrementally push local SQLite deltas into Cloudflare D1")
     parser.add_argument("--url", default=os.environ.get("WORKER_URL", "http://127.0.0.1:8787"))
@@ -225,7 +238,15 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.token:
-        raise SystemExit("缺少 INGEST_TOKEN（本地放 .dev.vars，线上用 wrangler secret put）")
+        is_local = "127.0.0.1" in args.url or "localhost" in args.url
+        order = (ROOT / ".dev.vars", ROOT / ".env") if is_local else (ROOT / ".env", ROOT / ".dev.vars")
+        for env_file in order:
+            args.token = _read_env_key(env_file, "INGEST_TOKEN")
+            if args.token:
+                break
+
+    if not args.token:
+        raise SystemExit("缺少 INGEST_TOKEN（可写入 .env，本地 wrangler dev 放 .dev.vars，线上用 wrangler secret put）")
     if not DB.is_file():
         raise SystemExit("缺少 data/forecast.db")
 

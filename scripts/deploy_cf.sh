@@ -16,6 +16,21 @@ export CI=1
 PY=${PY:-.venv/bin/python}
 NAME=forecast
 SEED_DIR=deploy/seed
+if [ -z "${INGEST_TOKEN:-}" ] && [ -f .env ]; then
+  INGEST_TOKEN=$(
+    $PY -c '
+from pathlib import Path
+for line in Path(".env").read_text(encoding="utf-8").splitlines():
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    k, _, v = line.partition("=")
+    if k.strip() == "INGEST_TOKEN":
+        print(v.strip().strip("\"\x27"))
+        break
+' 2>/dev/null || true
+  )
+fi
 INGEST_TOKEN=${INGEST_TOKEN:-$(openssl rand -hex 24)}
 RESEED=${RESEED:-0}
 

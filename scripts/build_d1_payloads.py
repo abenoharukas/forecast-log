@@ -62,8 +62,10 @@ def main() -> None:
         write("events.json", {"calendar": events_doc.get("calendar") or {}, "generated_at": events_doc.get("generated_at")})
 
     from forecast_log.news_feed import load_llm_indicators
+    from forecast_log.polymarket import load_cached_polymarket
 
     write("news-indicators.json", load_llm_indicators(ROOT))
+    write("polymarket.json", load_cached_polymarket(ROOT))
 
 
 if __name__ == "__main__":

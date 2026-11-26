@@ -216,6 +216,19 @@ def build_market_context(root: Path, market: str) -> dict:
                 for it in news_items[:5]
             )
             lines.append(f"6. 最新新闻参考（{llm_prefix}{kw_note}）：{headlines_str}")
+
+        poly = bundle.get("polymarket") or {}
+        poly_items = poly.get("items") or []
+        if poly_items:
+            poly_parts = []
+            for p in poly_items[:6]:
+                prob_pct = f"{float(p.get('lead_prob') or 0.0) * 100:.1f}%"
+                d24 = p.get("delta_24h")
+                d24_str = f" Δ24h {d24 * 100:+.1f}%" if isinstance(d24, (int, float)) and abs(d24) >= 0.005 else ""
+                vol = float(p.get("volume_24h") or 0.0)
+                vol_str = f"${vol / 1e6:.2f}M" if vol >= 1e6 else f"${vol / 1e3:.0f}K" if vol >= 1e3 else f"${vol:.0f}"
+                poly_parts.append(f"[{p.get('category_label', '')}] {p['title']} → {p.get('lead_label', 'Yes')} {prob_pct}{d24_str} (24h量 {vol_str})")
+            lines.append("7. 预测市场赔率参考 (Polymarket)：" + "；".join(poly_parts))
     except Exception:
         pass
 

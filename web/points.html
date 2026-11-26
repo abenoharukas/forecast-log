@@ -27,7 +27,7 @@
     .sub { color: var(--muted); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11.5px; }
     .sub a { color: var(--blue); }
     .board { flex: 1; min-height: 0; margin-top: 10px; display: flex; gap: 12px; position: relative; }
-    .pane { flex: 1; min-width: 0; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; }
+    .pane { flex: 1; min-width: 0; min-height: 0; background: var(--sheet); border: 1px solid var(--rule); display: flex; flex-direction: column; position: relative; }
     .pane-head {
       display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 7px 12px;
       border-bottom: 1px solid var(--rule); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px;
@@ -148,6 +148,26 @@
     .ref-table th, .ref-table td { padding: 2px 4px; border-bottom: 1px solid var(--grid); }
     .ref-table td.up { color: var(--green-text); }
     .ref-table td.down { color: var(--red); }
+    .poly-list { display: flex; flex-direction: column; gap: 5px; }
+    .poly-item {
+      border: 1px solid var(--rule); border-radius: 3px; padding: 6px 8px;
+      background: var(--paper); display: flex; flex-direction: column; gap: 3px;
+    }
+    .poly-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-size: 10px; color: var(--muted); }
+    .poly-cat {
+      padding: 0 4px; border-radius: 2px; border: 1px solid var(--rule);
+      background: var(--sheet); color: var(--ink); font-size: 9.5px;
+    }
+    .poly-title {
+      color: var(--ink); text-decoration: none; font-size: 11px; line-height: 1.4;
+      word-break: break-word;
+    }
+    .poly-title:hover { color: var(--blue); text-decoration: underline; }
+    .poly-odds { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10.5px; }
+    .poly-prob { font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .poly-delta { font-size: 10px; font-variant-numeric: tabular-nums; }
+    .poly-delta.up { color: var(--green-text); }
+    .poly-delta.down { color: var(--red); }
     .kw-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .kw-pill {
       display: inline-block; padding: 1px 5px; border-radius: 2px; font-size: 10px;
@@ -289,6 +309,78 @@
       animation: fc-spin 700ms linear infinite;
     }
     @keyframes fc-spin { to { transform: rotate(360deg); } }
+    .sig-popover {
+      position: absolute; top: 54px; left: 12px; z-index: 25;
+      width: min(390px, calc(100% - 24px)); max-height: calc(100% - 66px);
+      display: flex; flex-direction: column;
+      background: color-mix(in oklab, var(--sheet) 96%, var(--paper));
+      border: 1px solid var(--control); border-radius: 4px;
+      box-shadow: 0 8px 28px color-mix(in oklab, var(--ink) 18%, transparent);
+      font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; line-height: 1.45;
+      overflow: hidden;
+    }
+    .sig-popover.dock-right { left: auto; right: 12px; }
+    .sig-popover[hidden] { display: none !important; }
+    .sig-pop-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 7px 10px; border-bottom: 1px solid var(--rule); background: var(--paper); flex: none;
+    }
+    .sig-pop-title { font-weight: 500; color: var(--ink); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sig-pop-actions { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+    .sig-pin-badge {
+      font-size: 9.5px; padding: 1px 5px; border-radius: 2px;
+      border: 1px solid var(--rule); color: var(--muted); background: var(--sheet);
+    }
+    .sig-pin-badge.pinned { color: var(--blue); border-color: var(--blue); background: color-mix(in oklab, var(--blue) 10%, var(--sheet)); }
+    .sig-pop-close {
+      font: inherit; font-size: 11px; line-height: 1; padding: 2px 5px;
+      border: 1px solid transparent; border-radius: 2px; background: transparent;
+      color: var(--muted); cursor: pointer;
+    }
+    .sig-pop-close:hover { color: var(--ink); border-color: var(--control); background: var(--sheet); }
+    .sig-pop-body {
+      flex: 1; min-height: 0; overflow-y: auto; padding: 8px 10px 10px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .sig-step {
+      display: flex; flex-direction: column; gap: 4px;
+      padding-bottom: 7px; border-bottom: 1px solid var(--rule);
+    }
+    .sig-step:last-child { padding-bottom: 0; border-bottom: 0; }
+    .sig-step-title {
+      font-size: 10px; font-weight: 500; color: var(--muted);
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    }
+    .sig-mini-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+    .sig-mini-table th, .sig-mini-table td { padding: 2px 4px; border-bottom: 1px solid var(--grid); }
+    .sig-mini-table th { text-align: left; font-weight: 400; color: var(--ink); }
+    .sig-mini-table td { text-align: right; font-variant-numeric: tabular-nums; }
+    .sig-mini-table td.bull { color: var(--green-text); }
+    .sig-mini-table td.bear { color: var(--red); }
+    .sig-cal-strip { display: flex; flex-wrap: wrap; gap: 4px; }
+    .sig-news-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .sig-news-li {
+      padding: 4px 6px; border: 1px solid var(--rule); border-radius: 3px; background: var(--paper);
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .sig-news-li.risk-off { border-left: 2px solid var(--red); }
+    .sig-news-li.risk-on { border-left: 2px solid var(--green); }
+    .sig-news-a { color: var(--ink); text-decoration: none; font-size: 10.5px; line-height: 1.38; word-break: break-word; }
+    .sig-news-a:hover { color: var(--blue); text-decoration: underline; }
+    .sig-news-meta { font-size: 9.5px; color: var(--muted); display: flex; justify-content: space-between; gap: 6px; }
+    .sig-check-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 10.5px; }
+    .sig-check-li { display: flex; align-items: baseline; gap: 5px; color: var(--muted); }
+    .sig-check-li.active { color: var(--ink); }
+    .sig-verdict-box {
+      margin-top: 3px; padding: 7px 9px; border-radius: 3px; border: 1px solid var(--rule);
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .sig-verdict-box.up { border-color: var(--green); background: color-mix(in oklab, var(--green) 11%, var(--sheet)); }
+    .sig-verdict-box.down { border-color: var(--red); background: color-mix(in oklab, var(--red) 11%, var(--sheet)); }
+    .sig-verdict-main { font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .sig-verdict-box.up .sig-verdict-main { color: var(--green-text); }
+    .sig-verdict-box.down .sig-verdict-main { color: var(--red); }
+    .sig-verdict-sub { font-size: 10px; color: var(--ink); font-variant-numeric: tabular-nums; }
     @media (max-width: 900px) {
       body { overflow: auto; } main { height: auto; }
       .board { flex-direction: column; } .pane { min-height: 340px; } aside { width: auto; height: 520px; }
@@ -377,6 +469,16 @@
           </div>
         </div>
         <div class="chart" id="chart" role="img" aria-label="Candlestick K-line chart with risk-on signal markers. The side panel hosts the multi-AI group chat."></div>
+        <div class="sig-popover" id="signal-popover" role="region" aria-label="信号决策依据面板" hidden>
+          <div class="sig-pop-head">
+            <span class="sig-pop-title" id="sig-pop-title">信号溯源</span>
+            <div class="sig-pop-actions">
+              <span class="sig-pin-badge" id="sig-pin-badge">悬停预览 · 点击固定</span>
+              <button type="button" class="sig-pop-close" id="sig-pop-close" title="关闭面板 (Esc)" aria-label="关闭信号面板">✕</button>
+            </div>
+          </div>
+          <div class="sig-pop-body" id="sig-pop-body"></div>
+        </div>
       </div>
       <aside id="side-panel">
         <div class="aside-top">
@@ -514,6 +616,7 @@
       let shown = { flags: [], sellFlags: [], data: null, market: "ndx" };
       let entryOf = {};
       let sellEntryOf = {};
+      let arrowMap = {};
       let indexOf = {};
 
       const percent = (v) => (v == null ? "—" : (v * 100).toFixed(1) + "%");
@@ -582,6 +685,7 @@
         const markers = [];
         entryOf = {};
         sellEntryOf = {};
+        arrowMap = {};
         const showBuy = signalFilter === "both" || signalFilter === "buy";
         const showSell = signalFilter === "both" || signalFilter === "sell";
 
@@ -591,6 +695,18 @@
             const resolved = data.outcome[index] !== null && data.outcome[index] !== undefined;
             const when = cfg.markerOnEntryAt ? (data.entry_at[index] || data.time[index]) : data.time[index];
             if (!when) return;
+            const hit = resolved ? data.outcome[index] === 1 : null;
+            const fast = resolved ? Boolean(hit && data.hit3[index] === 1) : false;
+            arrowMap[when] = {
+              markerDay: when,
+              sigIndex: index,
+              marketDay: data.time[index],
+              sigDay: marketKey === "ssec" ? ((data.us_date && data.us_date[index]) || data.time[index]) : data.time[index],
+              direction: "BUY",
+              resolved,
+              hit,
+              fast,
+            };
             if (!resolved) {
               markers.push({
                 time: when,
@@ -603,8 +719,6 @@
               return;
             }
             entryOf[when] = index;
-            const hit = data.outcome[index] === 1;
-            const fast = hit && data.hit3[index] === 1;
             markers.push({
               time: when,
               position: "belowBar",
@@ -624,6 +738,18 @@
             const resolved = base !== null && base !== undefined && c5 !== null && c5 !== undefined;
             const when = cfg.markerOnEntryAt ? (data.entry_at[index] || data.time[index]) : data.time[index];
             if (!when) return;
+            const hit = resolved ? c5 < base : null;
+            const fast = resolved ? Boolean(hit && c3 !== null && c3 !== undefined && c3 < base) : false;
+            arrowMap[when] = {
+              markerDay: when,
+              sigIndex: index,
+              marketDay: data.time[index],
+              sigDay: marketKey === "ssec" ? ((data.us_date && data.us_date[index]) || data.time[index]) : data.time[index],
+              direction: "SELL",
+              resolved,
+              hit,
+              fast,
+            };
             if (!resolved) {
               markers.push({
                 time: when,
@@ -636,8 +762,6 @@
               return;
             }
             sellEntryOf[when] = index;
-            const hit = c5 < base;
-            const fast = hit && c3 !== null && c3 !== undefined && c3 < base;
             markers.push({
               time: when,
               position: "aboveBar",
@@ -651,6 +775,9 @@
         markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
         candles.setMarkers(markers);
         shown = { flags, sellFlags: sellFlags || [], data, market: marketKey };
+        if (typeof syncPopoverWithMarkers === "function") {
+          syncPopoverWithMarkers();
+        }
       }
 
       function candleOptions(p, marketKey) {
@@ -763,9 +890,559 @@
       }
 
       const IDLE_READOUT = "hover a candle: open / high / low / close, plus day-3 and day-5 outcomes";
+
+      // ---------------- 信号箭头悬停 & 点击溯源面板 ----------------
+      const signalDetailCache = new Map();
+      let popoverState = {
+        activeArrow: null,
+        pinned: false,
+        hoveringPopover: false,
+        hideTimer: null,
+        fetchTimer: null,
+        reqSeq: 0,
+      };
+
+      const popEl = document.querySelector("#signal-popover");
+      const popTitleEl = document.querySelector("#sig-pop-title");
+      const popPinEl = document.querySelector("#sig-pin-badge");
+      const popBodyEl = document.querySelector("#sig-pop-body");
+      const popCloseEl = document.querySelector("#sig-pop-close");
+
+      if (popEl) {
+        popEl.addEventListener("mouseenter", () => {
+          popoverState.hoveringPopover = true;
+          if (popoverState.hideTimer) {
+            clearTimeout(popoverState.hideTimer);
+            popoverState.hideTimer = null;
+          }
+        });
+        popEl.addEventListener("mouseleave", () => {
+          popoverState.hoveringPopover = false;
+          if (!popoverState.pinned) {
+            scheduleHidePopover(180);
+          }
+        });
+      }
+      if (popCloseEl) {
+        popCloseEl.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeSignalPopover();
+        });
+      }
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && popEl && !popEl.hidden) {
+          closeSignalPopover();
+        }
+      });
+
+      function closeSignalPopover() {
+        if (popoverState.hideTimer) clearTimeout(popoverState.hideTimer);
+        if (popoverState.fetchTimer) clearTimeout(popoverState.fetchTimer);
+        popoverState.activeArrow = null;
+        popoverState.pinned = false;
+        if (popEl) popEl.hidden = true;
+      }
+
+      function scheduleHidePopover(delayMs = 240) {
+        if (popoverState.pinned) return;
+        if (popoverState.hideTimer) clearTimeout(popoverState.hideTimer);
+        popoverState.hideTimer = setTimeout(() => {
+          if (!popoverState.pinned && !popoverState.hoveringPopover) {
+            popoverState.activeArrow = null;
+            if (popEl) popEl.hidden = true;
+          }
+        }, delayMs);
+      }
+
+      function findArrowAtParam(param) {
+        if (!param || !shown.data) return null;
+        const exactDay = dayOf(param.time);
+        if (exactDay && arrowMap[exactDay]) {
+          return arrowMap[exactDay];
+        }
+        if (param.point && Number.isFinite(param.point.x)) {
+          let best = null;
+          let bestDist = 8;
+          for (const key of Object.keys(arrowMap)) {
+            const x = chart.timeScale().timeToCoordinate(key);
+            if (x !== null && Number.isFinite(x)) {
+              const dist = Math.abs(x - param.point.x);
+              if (dist < bestDist) {
+                bestDist = dist;
+                best = arrowMap[key];
+              }
+            }
+          }
+          return best;
+        }
+        return null;
+      }
+
+      function positionPopoverAwayFromArrow(arrow, pointX) {
+        if (!popEl) return;
+        const chartEl = document.querySelector("#chart");
+        if (!chartEl) return;
+        const w = chartEl.clientWidth || 800;
+        const x = Number.isFinite(pointX) ? pointX : (chart.timeScale().timeToCoordinate(arrow.markerDay) ?? w * 0.7);
+        popEl.classList.toggle("dock-right", x < w * 0.48);
+      }
+
+      function renderSignalPopover(arrow, detail, loadingDetail) {
+        if (!popEl || !popBodyEl || !shown.data) return;
+        const data = shown.data;
+        const mkt = shown.market;
+        const idx = arrow.sigIndex;
+
+        if (popTitleEl) {
+          if (mkt === "ssec") {
+            popTitleEl.textContent = "美股信号 " + arrow.sigDay + " → A股入场 " + arrow.marketDay;
+          } else if (arrow.markerDay !== arrow.marketDay) {
+            popTitleEl.textContent = "信号日 " + arrow.marketDay + " → 次日开盘 " + arrow.markerDay;
+          } else {
+            popTitleEl.textContent = "信号基准日 " + arrow.marketDay;
+          }
+        }
+        if (popPinEl) {
+          popPinEl.textContent = popoverState.pinned ? "📌 已固定 · Esc关闭" : "悬停预览 · 点击箭头固定";
+          popPinEl.classList.toggle("pinned", popoverState.pinned);
+        }
+
+        popBodyEl.textContent = "";
+
+        // ---- Step 1: 参考市场与宏观日历数据 ----
+        const step1 = document.createElement("div");
+        step1.className = "sig-step";
+        const s1Head = document.createElement("div");
+        s1Head.className = "sig-step-title";
+        const s1L = document.createElement("span");
+        s1L.textContent = "① 参考跨资产因子与宏观日历";
+        const s1R = document.createElement("span");
+        const sc = (detail && detail.signal_row && detail.signal_row.score != null)
+          ? detail.signal_row.score
+          : (data.score ? data.score[idx] : null);
+        const thBuy = (detail && detail.signal_row && detail.signal_row.threshold != null)
+          ? detail.signal_row.threshold
+          : (data.threshold ? data.threshold[idx] : null);
+        const thSell = (detail && detail.signal_row && detail.signal_row.sell_threshold != null)
+          ? detail.signal_row.sell_threshold
+          : (data.sell_threshold ? data.sell_threshold[idx] : null);
+        if (sc != null) {
+          const refTh = arrow.direction === "SELL" && thSell != null
+            ? " ≤ 10%分位(" + Number(thSell).toFixed(2) + ")"
+            : thBuy != null
+              ? " vs 90%分位(" + Number(thBuy).toFixed(2) + ")"
+              : "";
+          s1R.textContent = "合成得分 " + Number(sc).toFixed(3) + refTh;
+        }
+        s1Head.appendChild(s1L);
+        s1Head.appendChild(s1R);
+        step1.appendChild(s1Head);
+
+        const factors = detail && Array.isArray(detail.cross_factors) ? detail.cross_factors : [];
+        if (factors.length) {
+          const tbl = document.createElement("table");
+          tbl.className = "sig-mini-table";
+          factors.forEach((f) => {
+            const tr = document.createElement("tr");
+            tr.title = f.note || "";
+            const th = document.createElement("th");
+            th.textContent = f.label;
+            const tdVal = document.createElement("td");
+            tdVal.textContent = String(f.close);
+            const tdMet = document.createElement("td");
+            tdMet.textContent = f.metric || "—";
+            if (f.tone === "bull") tdMet.className = "bull";
+            else if (f.tone === "bear") tdMet.className = "bear";
+            tr.appendChild(th);
+            tr.appendChild(tdVal);
+            tr.appendChild(tdMet);
+            tbl.appendChild(tr);
+          });
+          step1.appendChild(tbl);
+        } else if (loadingDetail) {
+          const wait = document.createElement("div");
+          wait.className = "note";
+          wait.textContent = "正在读取当日跨资产定量快照…";
+          step1.appendChild(wait);
+        }
+
+        const calItems = detail && Array.isArray(detail.macro_calendar) ? detail.macro_calendar : [];
+        if (calItems.length) {
+          const calStrip = document.createElement("div");
+          calStrip.className = "sig-cal-strip";
+          calItems.forEach((ev) => {
+            const pill = document.createElement("span");
+            pill.className =
+              "kw-pill" +
+              (ev.active_kind === "trigger" ? " risk-on" : ev.active_kind === "veto" ? " risk-off" : "");
+            const away = ev.days_away != null ? (ev.days_away === 0 ? "当日" : "D-" + ev.days_away) : "—";
+            pill.textContent = ev.key.toUpperCase() + " " + away + (ev.active_kind ? " · " + ev.status : "");
+            calStrip.appendChild(pill);
+          });
+          step1.appendChild(calStrip);
+        }
+        popBodyEl.appendChild(step1);
+
+        // ---- Step 2: 当日参考新闻与 AI 情绪判读 ----
+        const step2 = document.createElement("div");
+        step2.className = "sig-step";
+        const s2Head = document.createElement("div");
+        s2Head.className = "sig-step-title";
+        const s2L = document.createElement("span");
+        s2L.textContent = "② 当日参考新闻 (" + arrow.sigDay + ")";
+        const s2R = document.createElement("span");
+        const dayNews = detail && detail.news ? detail.news : null;
+        if (dayNews) {
+          s2R.textContent = "共扫描 " + (dayNews.total_count || 0) + " 条";
+        }
+        s2Head.appendChild(s2L);
+        s2Head.appendChild(s2R);
+        step2.appendChild(s2Head);
+
+        if (dayNews) {
+          const badgeRow = document.createElement("div");
+          badgeRow.className = "kw-bar";
+          const llm = dayNews.llm || {};
+          if (llm.deepseek) {
+            const p = document.createElement("span");
+            p.className =
+              "kw-pill" +
+              (llm.deepseek.veto ? " risk-off" : llm.deepseek.boost ? " risk-on" : llm.deepseek.direction === "bearish" ? " watch" : "");
+            p.textContent = "DS: " + llm.deepseek.surprise + "/" + llm.deepseek.direction;
+            if (llm.deepseek.evidence) p.title = llm.deepseek.evidence;
+            badgeRow.appendChild(p);
+          }
+          if (llm.qwen) {
+            const p = document.createElement("span");
+            p.className = "kw-pill" + (llm.qwen.veto ? " risk-off" : llm.qwen.regime === "risk_on" ? " risk-on" : "");
+            p.textContent = "Qwen: " + llm.qwen.regime + " (" + Number(llm.qwen.severity || 0).toFixed(2) + ")";
+            if (llm.qwen.note) p.title = llm.qwen.note;
+            badgeRow.appendChild(p);
+          }
+          const kw = dayNews.keywords || {};
+          (kw.risk_off_hits || []).forEach((k) => {
+            const p = document.createElement("span");
+            p.className = "kw-pill risk-off";
+            p.textContent = "−" + k;
+            badgeRow.appendChild(p);
+          });
+          (kw.risk_on_hits || []).forEach((k) => {
+            const p = document.createElement("span");
+            p.className = "kw-pill risk-on";
+            p.textContent = "+" + k;
+            badgeRow.appendChild(p);
+          });
+          if (badgeRow.childNodes.length) step2.appendChild(badgeRow);
+
+          if (llm.deepseek && llm.deepseek.evidence) {
+            const evLine = document.createElement("div");
+            evLine.className = "llm-ind-note";
+            evLine.textContent = "AI 摘录依据：" + llm.deepseek.evidence;
+            step2.appendChild(evLine);
+          }
+
+          const nItems = dayNews.items || [];
+          if (nItems.length) {
+            const ul = document.createElement("ul");
+            ul.className = "sig-news-list";
+            nItems.slice(0, 5).forEach((it) => {
+              const li = document.createElement("li");
+              li.className = "sig-news-li" + (it.sentiment === "risk-off" ? " risk-off" : it.sentiment === "risk-on" ? " risk-on" : "");
+              if (it.url && (String(it.url).startsWith("https://") || String(it.url).startsWith("http://"))) {
+                const a = document.createElement("a");
+                a.className = "sig-news-a";
+                a.href = it.url;
+                a.target = "_blank";
+                a.rel = "noopener noreferrer";
+                a.textContent = it.title;
+                li.appendChild(a);
+              } else {
+                const d = document.createElement("div");
+                d.className = "sig-news-a";
+                d.textContent = it.title;
+                li.appendChild(d);
+              }
+              const meta = document.createElement("div");
+              meta.className = "sig-news-meta";
+              const dom = document.createElement("span");
+              dom.textContent = (it.domain || "news") + (it.as_of && it.as_of !== arrow.sigDay ? " · " + it.as_of : "");
+              const tgs = document.createElement("span");
+              tgs.textContent = Array.isArray(it.tags) && it.tags.length ? it.tags.join(", ") : "";
+              meta.appendChild(dom);
+              meta.appendChild(tgs);
+              li.appendChild(meta);
+              ul.appendChild(li);
+            });
+            step2.appendChild(ul);
+          } else {
+            const emptyN = document.createElement("div");
+            emptyN.className = "note";
+            emptyN.textContent = "库内暂无 " + arrow.sigDay + " 当日归档标题。";
+            step2.appendChild(emptyN);
+          }
+        } else if (loadingDetail) {
+          const wait = document.createElement("div");
+          wait.className = "note";
+          wait.textContent = "正在检索当日历史新闻…";
+          step2.appendChild(wait);
+        }
+        popBodyEl.appendChild(step2);
+
+        // ---- Step 3: Polymarket 预测市场当时赔率 ----
+        const step3 = document.createElement("div");
+        step3.className = "sig-step";
+        const s3Head = document.createElement("div");
+        s3Head.className = "sig-step-title";
+        const s3L = document.createElement("span");
+        s3L.textContent = "③ Polymarket 预测市场当时赔率";
+        const s3R = document.createElement("span");
+        const poly = detail && detail.polymarket ? detail.polymarket : null;
+        s3R.textContent = poly && poly.mode === "live" ? "实时盘口" : "截至当日收盘";
+        s3Head.appendChild(s3L);
+        s3Head.appendChild(s3R);
+        step3.appendChild(s3Head);
+
+        if (poly && Array.isArray(poly.items) && poly.items.length) {
+          const pList = document.createElement("div");
+          pList.className = "poly-list";
+          poly.items.slice(0, 4).forEach((p) => {
+            const row = document.createElement("div");
+            row.className = "poly-item";
+            const head = document.createElement("div");
+            head.className = "poly-head";
+            const cat = document.createElement("span");
+            cat.className = "poly-cat";
+            cat.textContent = p.category_label || p.category || "宏观";
+            const oddsSpan = document.createElement("span");
+            oddsSpan.className = "poly-prob";
+            const pctStr = (Number(p.lead_prob || 0) * 100).toFixed(1) + "%";
+            let dStr = "";
+            if (p.delta_24h !== null && p.delta_24h !== undefined && Number.isFinite(Number(p.delta_24h))) {
+              const d = Number(p.delta_24h) * 100;
+              if (Math.abs(d) >= 0.1) dStr = " (" + (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(1) + "%)";
+            }
+            oddsSpan.textContent = (p.lead_label || "Yes") + " · " + pctStr + dStr;
+            head.appendChild(cat);
+            head.appendChild(oddsSpan);
+            row.appendChild(head);
+
+            if (p.url && (String(p.url).startsWith("https://") || String(p.url).startsWith("http://"))) {
+              const a = document.createElement("a");
+              a.className = "poly-title";
+              a.href = p.url;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.textContent = p.title;
+              row.appendChild(a);
+            } else {
+              const d = document.createElement("div");
+              d.className = "poly-title";
+              d.textContent = p.title;
+              row.appendChild(d);
+            }
+            pList.appendChild(row);
+          });
+          step3.appendChild(pList);
+        } else if (loadingDetail) {
+          const wait = document.createElement("div");
+          wait.className = "note";
+          wait.textContent = "正在回溯当日 Polymarket 历史隐含概率…";
+          step3.appendChild(wait);
+        } else {
+          const pNote = document.createElement("div");
+          pNote.className = "note";
+          pNote.textContent = (poly && poly.note) || "暂无当日关联的宏观利率/关税中国/美股指数盘口记录。";
+          step3.appendChild(pNote);
+        }
+        popBodyEl.appendChild(step3);
+
+        // ---- Step 4: 最终决策推导与信号结论（最后给出这个信号） ----
+        const step4 = document.createElement("div");
+        step4.className = "sig-step";
+        const exp = typeof window.explainCtxAt === "function" ? window.explainCtxAt(idx, arrow.direction) : null;
+        const s4Head = document.createElement("div");
+        s4Head.className = "sig-step-title";
+        const s4L = document.createElement("span");
+        s4L.textContent = "④ 决策规则检验 → 最终给出信号";
+        const s4R = document.createElement("span");
+        s4R.textContent = exp ? exp.ruleSummary : "";
+        s4Head.appendChild(s4L);
+        s4Head.appendChild(s4R);
+        step4.appendChild(s4Head);
+
+        if (exp && Array.isArray(exp.checks) && exp.checks.length) {
+          const cl = document.createElement("ul");
+          cl.className = "sig-check-list";
+          exp.checks.forEach((chk) => {
+            if ((chk.kind === "trigger" || chk.kind === "boost") && !chk.hit && exp.checks.some((x) => (x.kind === "trigger" || x.kind === "boost") && x.hit)) {
+              // 未命中的次要触发项弱化一行显示，突出真正触发信号的依据
+            }
+            const li = document.createElement("li");
+            const isKey = chk.kind === "veto" ? chk.passed : chk.hit;
+            li.className = "sig-check-li" + (isKey ? " active" : "");
+            const mark = chk.kind === "veto"
+              ? (chk.passed ? "✓ 未触发否决：" : "✗ 触发否决：")
+              : (chk.hit ? "★ 命中触发：" : "· 未触发：");
+            li.textContent = mark + chk.label;
+            cl.appendChild(li);
+          });
+          step4.appendChild(cl);
+        }
+
+        const isChina = mkt === "ssec";
+        const isBuy = arrow.direction === "BUY";
+        const boxTone = isBuy ? (isChina ? "down" : "up") : (isChina ? "up" : "down");
+        const vbox = document.createElement("div");
+        vbox.className = "sig-verdict-box " + boxTone;
+
+        const vmain = document.createElement("div");
+        vmain.className = "sig-verdict-main";
+        const sigText = document.createElement("span");
+        sigText.textContent = isBuy ? "最终信号：▲ 买入 (BUY)" : "最终信号：▼ 卖出 (SELL)";
+        const outBadge = document.createElement("span");
+        if (!arrow.resolved) {
+          outBadge.textContent = "⏳ 待结算";
+        } else if (arrow.fast) {
+          outBadge.textContent = "✓ 1–3日快速命中";
+        } else if (arrow.hit) {
+          outBadge.textContent = "✓ 4–5日命中";
+        } else {
+          outBadge.textContent = "✗ 5日未命中";
+        }
+        vmain.appendChild(sigText);
+        vmain.appendChild(outBadge);
+        vbox.appendChild(vmain);
+
+        const base = data.base_close && data.base_close[idx] != null ? data.base_close[idx] : data.close[idx];
+        const entry = data.entry && data.entry[idx] != null ? data.entry[idx] : null;
+        const c3 = data.close3 ? data.close3[idx] : null;
+        const c5 = data.close5 ? data.close5[idx] : null;
+        const vsub = document.createElement("div");
+        vsub.className = "sig-verdict-sub";
+        const fmtRel = (v) => {
+          if (v == null || base == null) return "—";
+          const pctMove = ((v - base) / base) * 100;
+          return v.toFixed(2) + " (" + (pctMove >= 0 ? "+" : "−") + Math.abs(pctMove).toFixed(2) + "%)";
+        };
+        const subParts = [];
+        if (base != null) subParts.push("基准收 " + Number(base).toFixed(2));
+        if (entry != null) subParts.push("入场开 " + Number(entry).toFixed(2));
+        if (c3 != null) subParts.push("d3 " + fmtRel(c3));
+        if (c5 != null) subParts.push("d5 " + fmtRel(c5));
+        vsub.textContent = subParts.join(" · ");
+        vbox.appendChild(vsub);
+
+        step4.appendChild(vbox);
+        popBodyEl.appendChild(step4);
+
+        popEl.hidden = false;
+      }
+
+      async function openArrowPopover(arrow, { pin = false, pointX = null } = {}) {
+        if (!arrow || !shown.data) return;
+        if (popoverState.hideTimer) {
+          clearTimeout(popoverState.hideTimer);
+          popoverState.hideTimer = null;
+        }
+        const sameArrow =
+          popoverState.activeArrow &&
+          popoverState.activeArrow.markerDay === arrow.markerDay &&
+          popoverState.activeArrow.direction === arrow.direction &&
+           shown.market === activeMarket;
+
+        popoverState.activeArrow = arrow;
+        if (pin) popoverState.pinned = true;
+        positionPopoverAwayFromArrow(arrow, pointX);
+
+        const cacheKey = shown.market + "|" + arrow.marketDay + "|" + arrow.sigDay;
+        const cached = signalDetailCache.get(cacheKey);
+        if (cached) {
+          renderSignalPopover(arrow, cached, false);
+          return;
+        }
+
+        if (!sameArrow || popEl.hidden) {
+          renderSignalPopover(arrow, null, true);
+        }
+
+        if (popoverState.fetchTimer) clearTimeout(popoverState.fetchTimer);
+        const seq = ++popoverState.reqSeq;
+        popoverState.fetchTimer = setTimeout(async () => {
+          try {
+            const url =
+              "/api/signal-detail?market=" +
+              encodeURIComponent(shown.market) +
+              "&date=" +
+              encodeURIComponent(arrow.marketDay) +
+              "&us_date=" +
+              encodeURIComponent(arrow.sigDay);
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(String(res.status));
+            const doc = await res.json();
+            if (doc && doc.ok) {
+              signalDetailCache.set(cacheKey, doc);
+              if (
+                seq === popoverState.reqSeq &&
+                popoverState.activeArrow &&
+                popoverState.activeArrow.markerDay === arrow.markerDay
+              ) {
+                renderSignalPopover(popoverState.activeArrow, doc, false);
+              }
+              return;
+            }
+          } catch (_) {}
+          if (
+            seq === popoverState.reqSeq &&
+            popoverState.activeArrow &&
+            popoverState.activeArrow.markerDay === arrow.markerDay
+          ) {
+            renderSignalPopover(popoverState.activeArrow, null, false);
+          }
+        }, pin ? 0 : 75);
+      }
+
+      function syncPopoverWithMarkers() {
+        if (!popoverState.activeArrow) return;
+        const updated = arrowMap[popoverState.activeArrow.markerDay];
+        if (!updated) {
+          closeSignalPopover();
+          return;
+        }
+        popoverState.activeArrow = updated;
+        const cacheKey = shown.market + "|" + updated.marketDay + "|" + updated.sigDay;
+        renderSignalPopover(updated, signalDetailCache.get(cacheKey) || null, false);
+      }
+
       chart.subscribeCrosshairMove((param) => {
-        const text = describeDay(dayOf(param && param.time));
+        const day = dayOf(param && param.time);
+        const text = describeDay(day);
         document.querySelector("#readout").textContent = text || IDLE_READOUT;
+
+        if (popoverState.pinned) return;
+        const hitArrow = findArrowAtParam(param);
+        if (hitArrow) {
+          openArrowPopover(hitArrow, { pin: false, pointX: param && param.point ? param.point.x : null });
+        } else if (!popoverState.hoveringPopover && popoverState.activeArrow) {
+          scheduleHidePopover(220);
+        }
+      });
+
+      chart.subscribeClick((param) => {
+        const hitArrow = findArrowAtParam(param);
+        if (hitArrow) {
+          const isSamePinned =
+            popoverState.pinned &&
+            popoverState.activeArrow &&
+            popoverState.activeArrow.markerDay === hitArrow.markerDay &&
+            popoverState.activeArrow.direction === hitArrow.direction;
+          if (isSamePinned) {
+            closeSignalPopover();
+          } else {
+            openArrowPopover(hitArrow, { pin: true, pointX: param && param.point ? param.point.x : null });
+          }
+        } else if (popoverState.pinned) {
+          closeSignalPopover();
+        }
       });
 
       function makeTable(rows, headers) {
@@ -1423,6 +2100,72 @@
           container.appendChild(secAssets);
         }
 
+        // 3b. Polymarket 预测市场赔率（宏观利率 / 关税中国 / 美股指数）
+        const poly = bundle.polymarket || {};
+        const polyItems = Array.isArray(poly.items) ? poly.items : [];
+        if (polyItems.length) {
+          const secPoly = document.createElement("section");
+          secPoly.className = "news-section";
+          const h2Poly = document.createElement("h2");
+          h2Poly.textContent = "预测市场赔率 · Polymarket（宏观利率 / 关税中国 / 美股指数）";
+          secPoly.appendChild(h2Poly);
+
+          const polyList = document.createElement("div");
+          polyList.className = "poly-list";
+          polyItems.slice(0, 8).forEach((p) => {
+            const card = document.createElement("div");
+            card.className = "poly-item";
+
+            const head = document.createElement("div");
+            head.className = "poly-head";
+            const cat = document.createElement("span");
+            cat.className = "poly-cat";
+            cat.textContent = p.category_label || p.category || "macro";
+            const vol = Number(p.volume_24h || 0);
+            const volStr = vol >= 1e6 ? "$" + (vol / 1e6).toFixed(2) + "M" : vol >= 1e3 ? "$" + Math.round(vol / 1e3) + "K" : "$" + Math.round(vol);
+            const meta = document.createElement("span");
+            meta.textContent = "24h量 " + volStr + (p.end_date ? " · 截止 " + p.end_date : "");
+            head.appendChild(cat);
+            head.appendChild(meta);
+            card.appendChild(head);
+
+            if (p.url && (String(p.url).startsWith("https://") || String(p.url).startsWith("http://"))) {
+              const a = document.createElement("a");
+              a.className = "poly-title";
+              a.href = p.url;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.textContent = p.title;
+              card.appendChild(a);
+            } else {
+              const div = document.createElement("div");
+              div.className = "poly-title";
+              div.textContent = p.title;
+              card.appendChild(div);
+            }
+
+            const odds = document.createElement("div");
+            odds.className = "poly-odds";
+            const probSpan = document.createElement("span");
+            probSpan.className = "poly-prob";
+            const pct = (Number(p.lead_prob || 0) * 100).toFixed(1) + "%";
+            probSpan.textContent = (p.lead_label || "Yes") + " · " + pct;
+            odds.appendChild(probSpan);
+
+            if (p.delta_24h !== null && p.delta_24h !== undefined && Number.isFinite(Number(p.delta_24h))) {
+              const d24 = Number(p.delta_24h) * 100;
+              const dSpan = document.createElement("span");
+              dSpan.className = "poly-delta" + (d24 > 0.05 ? " up" : d24 < -0.05 ? " down" : "");
+              dSpan.textContent = "Δ24h " + (d24 >= 0 ? "+" : "−") + Math.abs(d24).toFixed(1) + "%";
+              odds.appendChild(dSpan);
+            }
+            card.appendChild(odds);
+            polyList.appendChild(card);
+          });
+          secPoly.appendChild(polyList);
+          container.appendChild(secPoly);
+        }
+
         // 4. 新闻关键字风险扫描 + LLM 日报摘要
         const secKw = document.createElement("section");
         secKw.className = "news-section";
@@ -2046,6 +2789,7 @@
         const cfg = MARKETS[marketKey] || MARKETS.ndx;
         const seq = ++loadSeq;
         activeMarket = cfg.key;
+        closeSignalPopover();
 
         document.querySelectorAll("#market-tabs .market-tab").forEach((btn) => {
           const isCurrent = btn.dataset.market === cfg.key;

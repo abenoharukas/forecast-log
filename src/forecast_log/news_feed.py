@@ -28,7 +28,7 @@ from typing import Any
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
-from forecast_log import daily, events, keywords, news_ab, news_labels, providers, surprise, wiki_news
+from forecast_log import daily, events, keywords, news_ab, news_labels, polymarket, providers, surprise, wiki_news
 from forecast_log.agent.env import merged_env
 from forecast_log.db import (
     existing_news_dates,
@@ -787,6 +787,7 @@ def load_news_bundle(
         "llm_indicators": load_llm_indicators(root),
         "macro_calendar": _macro_calendar_reference(root, today_bj),
         "cross_assets": _cross_assets_reference(root),
+        "polymarket": polymarket.load_cached_polymarket(root),
         "daily_llm": _daily_llm_summary(root),
     }
 
@@ -803,6 +804,11 @@ def refresh_news(
     """刷新新闻并落库，自动触发 DeepSeek + Qwen 新闻解读与信号重算，返回完整参考资料包。"""
     with _NEWS_REFRESH_LOCK:
         if not force and not needs_news_refresh(root, cooldown_sec=cooldown_sec):
+            if polymarket.needs_polymarket_refresh(root, cooldown_sec=cooldown_sec):
+                try:
+                    polymarket.refresh_polymarket(root, force=False, cooldown_sec=cooldown_sec)
+                except Exception:
+                    pass
             if score_llm:
                 trigger_llm_news_scoring(root, force_today=False, sync=sync_llm)
             return load_news_bundle(root, market=market, limit=limit, cached=True)
@@ -816,12 +822,13 @@ def refresh_news(
         errors: list[str] = []
         backfilled_days: list[str] = []
 
-        with ThreadPoolExecutor(max_workers=len(LIVE_FEEDS) + 1) as pool:
+        with ThreadPoolExecutor(max_workers=len(LIVE_FEEDS) + 2) as pool:
             feed_futs = {
                 pool.submit(_fetch_rss, name, url): name
                 for name, url, _, _ in LIVE_FEEDS
             }
             wiki_fut = pool.submit(_backfill_recent_wiki_gap, root, today_bj)
+            poly_fut = pool.submit(polymarket.refresh_polymarket, root, force, cooldown_sec)
 
             for fut in as_completed(feed_futs):
                 name = feed_futs[fut]
@@ -844,6 +851,15 @@ def refresh_news(
                     errors.append(f"wikipedia: {wiki_err}")
             except Exception as exc:
                 errors.append(f"wikipedia: {exc}")
+
+            try:
+                poly_res = poly_fut.result()
+                if poly_res.get("available"):
+                    providers_ok.append("polymarket")
+                for perr in (poly_res.get("errors") or [])[:2]:
+                    errors.append(f"polymarket: {perr}")
+            except Exception as exc:
+                errors.append(f"polymarket: {exc}")
 
         seen_ids: set[str] = set()
         seen_urls: set[str] = set()

@@ -398,6 +398,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_json(load_cross_market(ROOT, slug), f"no data for {slug}")
             return
 
+        if path.rstrip("/") == "/api/signal-detail":
+            from urllib.parse import parse_qs
+            from forecast_log.signal_detail import load_signal_detail
+
+            qs = parse_qs(query)
+            market = (qs.get("market") or ["ndx"])[0]
+            date_str = (qs.get("date") or [""])[0]
+            us_date_str = (qs.get("us_date") or [None])[0]
+            fetch_poly = (qs.get("poly") or ["1"])[0] != "0"
+            self._send_json(
+                load_signal_detail(ROOT, market=market, date_str=date_str, us_date_str=us_date_str, fetch_poly=fetch_poly)
+                if date_str
+                else None,
+                "signal detail unavailable",
+            )
+            return
+
         if path.rstrip("/") == "/api/timeline":
             from forecast_log.artifacts_db import load_timeline
 

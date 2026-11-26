@@ -521,6 +521,92 @@
     });
   }
 
+  window.explainCtxAt = function (index, direction) {
+    if (!data || index == null || index < 0 || index >= data.time.length) return null;
+    const c = data.components || {};
+    const active = new Set(selected);
+    requiredKeys(data).forEach((key) => active.add(key));
+
+    if (direction === "SELL") {
+      const baseSell = Array.isArray(c.sell_composite)
+        ? Boolean(c.sell_composite[index])
+        : Boolean(data.sell_flag && data.sell_flag[index]);
+      const checks = [
+        {
+          key: "sell_composite",
+          label: "跨资产复合因子 ≤ 历史 10% 分位",
+          kind: "trigger",
+          hit: baseSell,
+          passed: baseSell,
+        },
+      ];
+      if (active.has("fomc_day") && Array.isArray(c.fomc_day)) {
+        const isFomc = Boolean(c.fomc_day[index]);
+        checks.push({
+          key: "fomc_day",
+          label: "FOMC 决议日否决检查",
+          kind: "veto",
+          hit: isFomc,
+          passed: !isFomc,
+        });
+      }
+      if (active.has("news_bullish") && Array.isArray(c.news_bullish)) {
+        const isBull = Boolean(c.news_bullish[index]);
+        checks.push({
+          key: "news_bullish",
+          label: "强利多意外否决做空检查",
+          kind: "veto",
+          hit: isBull,
+          passed: !isBull,
+        });
+      }
+      return {
+        direction: "SELL",
+        ruleSummary: "复合因子 ≤ 10% 分位 + 否决门控通过",
+        checks,
+      };
+    }
+
+    const contexts = data.contexts.filter((item) => active.has(item.key) && Array.isArray(c[item.key]));
+    const triggers = contexts.filter((item) => item.kind === "trigger" || item.kind === "boost");
+    const vetoes = contexts.filter((item) => item.kind === "veto");
+    const checks = [];
+    triggers.forEach((item) => {
+      const hit = isHit(item, c[item.key][index]);
+      checks.push({
+        key: item.key,
+        label: item.label,
+        kind: item.kind,
+        hit,
+        passed: hit,
+        raw: c[item.key][index],
+      });
+    });
+    vetoes.forEach((item) => {
+      const vetoed = isHit(item, c[item.key][index]);
+      checks.push({
+        key: item.key,
+        label: item.label,
+        kind: "veto",
+        hit: vetoed,
+        passed: !vetoed,
+        raw: c[item.key][index],
+      });
+    });
+    const trigLabel =
+      ruleConfig.triggerMode === "consensus"
+        ? "多因子共振 ≥2"
+        : ruleConfig.triggerMode === "all"
+          ? "全部触发 AND"
+          : "任一触发 OR";
+    const vetoLabel = ruleConfig.vetoMode === "consensus" ? "双重否决 ≥2" : "一票否决";
+    return {
+      direction: "BUY",
+      ruleSummary: "触发规则：" + trigLabel + " · 否决规则：" + vetoLabel,
+      checks,
+    };
+  };
+
   window.initCtxbar = function (document_, callback, options) {
     data = document_;
     onFlags = callback;

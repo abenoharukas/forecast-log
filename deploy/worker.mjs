@@ -177,6 +177,14 @@ export default {
         return await refreshNews(db, env, url, { force, market, limit });
       }
 
+      if (clean === "/api/signal-detail") {
+        const market = MARKET_BY_SLUG[url.searchParams.get("market") || "ndx"] || "ndx";
+        const dateStr = (url.searchParams.get("date") || "").slice(0, 10);
+        const usDateStr = (url.searchParams.get("us_date") || "").slice(0, 10) || null;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return json({ ok: false, error: "invalid date" }, 400);
+        return await loadSignalDetail(db, env, url, { market, dateStr, usDateStr });
+      }
+
       return env.ASSETS.fetch(request);
     } finally {
       const closing = db.close();
@@ -1762,6 +1770,199 @@ async function refreshNews(db, env, url, { force = false, market = "ndx", limit 
         new_count: unique.length,
         errors,
       },
+    });
+  } catch (err) {
+    return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
+  }
+}
+
+async function loadSignalDetail(db, env, url, { market = "ndx", dateStr, usDateStr = null }) {
+  try {
+    const sigRow = await db.first("SELECT * FROM signals WHERE market = ? AND date = ?", [market, dateStr]);
+    let sigIso = dateStr;
+    if (market === "ssec" && (usDateStr || sigRow?.us_date)) {
+      sigIso = String(usDateStr || sigRow.us_date).slice(0, 10);
+    }
+    let score = sigRow?.score ?? null;
+    let threshold = sigRow?.threshold ?? null;
+    let sellThreshold = sigRow?.sell_threshold ?? null;
+    if (market === "ssec" && sigIso !== dateStr) {
+      const usRow = await db.first("SELECT score, threshold, sell_threshold FROM signals WHERE market = 'ndx' AND date = ?", [sigIso]);
+      if (usRow) {
+        score = usRow.score;
+        threshold = usRow.threshold;
+        sellThreshold = usRow.sell_threshold;
+      }
+    }
+
+    const startCutoff = new Date(new Date(`${sigIso}T00:00:00Z`).getTime() - 400 * 86400000).toISOString().slice(0, 10);
+    const syms = ["^TNX", "DX-Y.NYB", "HYG", "TLT", "^VIX", "QQQ", "000001.SS"];
+    const maxDay = dateStr > sigIso ? dateStr : sigIso;
+    const newsDays = market === "ssec" && dateStr !== sigIso ? [sigIso, dateStr] : [sigIso];
+    const newsPlaceholders = newsDays.map(() => "?").join(",");
+
+    const [barRows, newsRows, evDoc, llmInd, polyMeta] = await Promise.all([
+      db.all(
+        `SELECT symbol, date, close FROM bars WHERE symbol IN (${syms.map(() => "?").join(",")}) AND date >= ? AND date <= ? ORDER BY symbol ASC, date ASC`,
+        [...syms, startCutoff, maxDay],
+      ),
+      db.all(
+        `SELECT as_of, title, url, domain, source FROM news WHERE doc_id != '' AND as_of IN (${newsPlaceholders}) ORDER BY as_of DESC`,
+        newsDays,
+      ),
+      assetJson(env, url, "/_meta/events.json"),
+      assetJson(env, url, "/_meta/news-indicators.json"),
+      assetJson(env, url, "/_meta/polymarket.json"),
+    ]);
+
+    const bySym = new Map();
+    for (const r of barRows) {
+      if (r.symbol !== "000001.SS" && r.date > sigIso) continue;
+      if (!bySym.has(r.symbol)) bySym.set(r.symbol, []);
+      bySym.get(r.symbol).push(r);
+    }
+    const pct = (a, b) => (b ? rnd((a / b - 1) * 100, 2) : null);
+    const crossFactors = [];
+
+    const tnx = bySym.get("^TNX") || [];
+    if (tnx.length) {
+      const c0 = Number(tnx[tnx.length - 1].close);
+      const d20 = tnx.length >= 21 ? rnd(c0 - Number(tnx[tnx.length - 21].close), 3) : null;
+      crossFactors.push({
+        symbol: "^TNX",
+        label: "10Y 美债收益率",
+        date: tnx[tnx.length - 1].date,
+        close: rnd(c0, 3),
+        metric: d20 != null ? `20d ${d20 >= 0 ? "+" : ""}${d20.toFixed(2)}` : "—",
+        tone: d20 != null && d20 < 0 ? "bull" : d20 != null && d20 > 0 ? "bear" : "neutral",
+        note: d20 != null && d20 < 0 ? "收益率下行 → 估值偏多" : "收益率上行 → 贴现偏空",
+      });
+    }
+    const dxy = bySym.get("DX-Y.NYB") || [];
+    if (dxy.length) {
+      const c0 = Number(dxy[dxy.length - 1].close);
+      const p20 = dxy.length >= 21 ? pct(c0, Number(dxy[dxy.length - 21].close)) : null;
+      crossFactors.push({
+        symbol: "DX-Y.NYB",
+        label: "美元指数 DXY",
+        date: dxy[dxy.length - 1].date,
+        close: rnd(c0, 2),
+        metric: p20 != null ? `20d ${p20 >= 0 ? "+" : ""}${p20.toFixed(2)}%` : "—",
+        tone: p20 != null && p20 < 0 ? "bull" : p20 != null && p20 > 0 ? "bear" : "neutral",
+        note: p20 != null && p20 < 0 ? "美元走弱 → 风险偏好偏多" : "美元走强 → 流动性收紧",
+      });
+    }
+    const hyg = bySym.get("HYG") || [];
+    const tlt = bySym.get("TLT") || [];
+    if (hyg.length && tlt.length) {
+      const tltMap = new Map(tlt.map((r) => [r.date, Number(r.close)]));
+      const ratios = hyg.filter((r) => tltMap.get(r.date) > 0).map((r) => [r.date, Number(r.close) / tltMap.get(r.date)]);
+      if (ratios.length) {
+        const [d0, r0] = ratios[ratios.length - 1];
+        const p20 = ratios.length >= 21 ? pct(r0, ratios[ratios.length - 21][1]) : null;
+        crossFactors.push({
+          symbol: "HYG/TLT",
+          label: "信用利差比 HYG/TLT",
+          date: d0,
+          close: rnd(r0, 4),
+          metric: p20 != null ? `20d ${p20 >= 0 ? "+" : ""}${p20.toFixed(2)}%` : "—",
+          tone: p20 != null && p20 > 0 ? "bull" : p20 != null && p20 < 0 ? "bear" : "neutral",
+          note: p20 != null && p20 > 0 ? "高收益债跑赢长债 → 信用偏多" : "信用利差走弱 → 避险偏空",
+        });
+      }
+    }
+    const vix = bySym.get("^VIX") || [];
+    if (vix.length) {
+      const c0 = Number(vix[vix.length - 1].close);
+      let vsMed = null;
+      if (vix.length >= 60) {
+        const w = vix.slice(-252).map((x) => Number(x.close)).sort((a, b) => a - b);
+        vsMed = pct(c0, w[Math.floor(w.length / 2)]);
+      }
+      crossFactors.push({
+        symbol: "^VIX",
+        label: "恐慌指数 VIX",
+        date: vix[vix.length - 1].date,
+        close: rnd(c0, 2),
+        metric: vsMed != null ? `vs年均中位 ${vsMed >= 0 ? "+" : ""}${vsMed.toFixed(1)}%` : "—",
+        tone: vsMed != null && vsMed > 0 ? "bull" : "neutral",
+        note: vsMed != null && vsMed > 0 ? "高于年均中位 → 恐慌溢价补偿偏多" : "低于年均中位 → 波动平静",
+      });
+    }
+
+    const cal = evDoc?.calendar || {};
+    const sigMs = new Date(`${sigIso}T00:00:00Z`).getTime();
+    const macroCalendar = [
+      ["cpi", "CPI 通胀"],
+      ["nfp", "NFP 非农"],
+      ["fomc", "FOMC 决议"],
+    ].map(([key, label]) => {
+      const nextDate = (cal[key] || []).find((d) => d >= sigIso) || null;
+      const daysAway = nextDate ? Math.round((new Date(`${nextDate}T00:00:00Z`).getTime() - sigMs) / 86400000) : null;
+      let status = "常规期";
+      let activeKind = "";
+      if (daysAway != null) {
+        if (key === "cpi" && daysAway <= 3) { status = "买入触发窗口 (0-3d)"; activeKind = "trigger"; }
+        else if (key === "nfp" && daysAway >= 3 && daysAway <= 7) { status = "买入触发窗口 (3-7d)"; activeKind = "trigger"; }
+        else if (key === "fomc" && daysAway === 0) { status = "决议日否决窗口"; activeKind = "veto"; }
+      }
+      return { key, label, next_date: nextDate, days_away: daysAway, status, active_kind: activeKind };
+    });
+
+    const seenNews = new Set();
+    const enrichedNews = [];
+    for (const r of newsRows) {
+      const title = String(r.title || "").trim();
+      if (!title || seenNews.has(title.toLowerCase())) continue;
+      seenNews.add(title.toLowerCase());
+      const cls = classifyNewsRow(r);
+      const isFin = /wsj|cnbc|yahoo|federalreserve|sec\.gov|reuters|bloomberg/i.test(String(r.domain || ""));
+      enrichedNews.push({
+        as_of: r.as_of,
+        title,
+        url: String(r.url || ""),
+        domain: String(r.domain || r.source || ""),
+        tags: cls.tags.slice(0, 4),
+        sentiment: cls.sentiment,
+        _rel: (isFin ? 3 : 0) + cls.tags.length * 2,
+      });
+    }
+    const kw = scanKeywords(enrichedNews.map((x) => x.title));
+    enrichedNews.sort((a, b) => b._rel - a._rel);
+    const dayRec = (llmInd?.recent_days || []).find((d) => d.as_of === sigIso) || {};
+    const polyOut = sigIso < "2023-01-01"
+      ? { available: false, as_of: sigIso, mode: "pre_polymarket", note: `该信号日（${sigIso}）早于 Polymarket 宏观与利率 CLOB 盘口覆盖期（2023+）。`, items: [] }
+      : (polyMeta && Array.isArray(polyMeta.items) && sigIso >= daysAgoStr(3)
+        ? { available: polyMeta.items.length > 0, as_of: sigIso, mode: "snapshot", items: polyMeta.items.slice(0, 6), note: "" }
+        : { available: false, as_of: sigIso, mode: "edge_static", note: "历史按日 CLOB 赔率在本地服务实时回溯。", items: [] });
+
+    return json({
+      ok: true,
+      market,
+      market_date: dateStr,
+      signal_date: sigIso,
+      signal_row: {
+        score: score != null ? rnd(score, 4) : null,
+        threshold: threshold != null ? rnd(threshold, 4) : null,
+        sell_threshold: sellThreshold != null ? rnd(sellThreshold, 4) : null,
+        entry: sigRow?.entry != null ? rnd(sigRow.entry, 2) : null,
+        entry_at: sigRow?.entry_at || null,
+        base_close: sigRow?.base_close != null ? rnd(sigRow.base_close, 2) : null,
+        close3: sigRow?.close3 != null ? rnd(sigRow.close3, 2) : null,
+        close5: sigRow?.close5 != null ? rnd(sigRow.close5, 2) : null,
+        outcome: sigRow?.outcome ?? null,
+        hit3: sigRow?.hit3 ?? null,
+      },
+      cross_factors: crossFactors,
+      macro_calendar: macroCalendar,
+      news: {
+        as_of: sigIso,
+        total_count: enrichedNews.length,
+        keywords: { risk_off_hits: kw.risk_off_hits, risk_on_hits: kw.risk_on_hits, hits: kw.hits.slice(0, 8) },
+        llm: { deepseek: dayRec.deepseek || null, qwen: dayRec.qwen || null },
+        items: enrichedNews.slice(0, 10).map(({ _rel, ...rest }) => rest),
+      },
+      polymarket: polyOut,
     });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);

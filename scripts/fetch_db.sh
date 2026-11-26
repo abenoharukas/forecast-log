@@ -20,7 +20,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 dest_path="$root/$DEST"
 
 if [ -f "$dest_path" ] && [ "$FORCE" != "1" ]; then
-  printf 'data/forecast.db 已存在（%s），跳过下载。要更新到最新：make data-refresh\n' "$(du -h "$dest_path" | cut -f1)"
+  printf 'data/forecast.db 已存在（%s），跳过下载。要更新到最新：make gh-db-pull-force\n' "$(du -h "$dest_path" | cut -f1)"
   exit 0
 fi
 

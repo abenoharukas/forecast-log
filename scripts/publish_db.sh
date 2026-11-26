@@ -4,7 +4,7 @@
 # 数据库不进 git 历史（见 scripts/fetch_db.sh 的说明），所以「推上去」= 覆盖
 # Release 资产，而不是 git commit。同名覆盖，远端永远只有一份，不累积。
 #
-#   make data-publish          # 或 bash scripts/publish_db.sh
+#   make gh-db-push            # 或 bash scripts/publish_db.sh
 set -euo pipefail
 
 REPO=${REPO:-abenoharukas/forecast-log}
@@ -14,7 +14,7 @@ ASSET=${ASSET:-forecast.db}
 root=$(cd "$(dirname "$0")/.." && pwd)
 db="$root/data/forecast.db"
 
-[ -f "$db" ] || { echo 'data/forecast.db 不存在，先跑 make data' >&2; exit 1; }
+[ -f "$db" ] || { echo 'data/forecast.db 不存在，先跑 make gh-db-pull' >&2; exit 1; }
 
 # sqlite3 是硬依赖：既要用它合并 WAL，也要用它做完整性检查。缺了就不发——
 # 没 checkpoint 的快照可能缺最新写入，没校验的快照可能是坏库。

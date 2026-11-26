@@ -17,8 +17,16 @@
 ## 一条命令
 
 ```bash
-make cf              # 常规部署：建库（不存在时）、建表、空库时灌种子、部署、增量同步
-RESEED=1 make cf     # 删掉线上 D1，按本地 data/forecast.db 重新全量导入
+# 当前线上：Cloudflare Worker + Supabase Postgres（Hyperdrive）
+make cf-supabase-deploy   # 常规部署（增量同步 Supabase + 部署 CF Worker）
+make cf-supabase-reseed   # 全量清空重灌 Supabase + 部署 CF Worker
+make supabase-sync        # 仅增量同步 Supabase（不发 Worker）
+make supabase-reseed      # 仅全量清空重灌 Supabase（不发 Worker）
+make cf-worker-deploy     # 仅打包并部署 CF Worker（不动数据库）
+
+# 旧版备用：Cloudflare Worker + Cloudflare D1
+make cf-d1-deploy         # 常规部署：建库/建表、空库灌种子、部署 Worker、增量同步 D1
+make cf-d1-reseed         # 删掉线上 D1，按本地 data/forecast.db 重新全量导入
 ```
 
 `scripts/deploy_cf.sh` 的步骤：
@@ -32,7 +40,7 @@ RESEED=1 make cf     # 删掉线上 D1，按本地 data/forecast.db 重新全量
 7. `wrangler deploy`
 8. `scripts/publish_d1.py` 做一次增量同步（刚灌过种子时基本空转）
 
-`deploy/seed/` 是 70 MB 左右的生成物，已在 `.gitignore` 里；`make seed` 可单独重新生成。
+`deploy/seed/` 是 70 MB 左右的生成物，已在 `.gitignore` 里；`make cf-d1-seed` 可单独重新生成。
 
 ## 数据怎么读
 
@@ -67,13 +75,13 @@ Worker 的 CPU 预算里重算，数据变了要重新部署静态资源（`make
 
 ## `/api/refresh`
 
-线上只做两件安全的事：从 Yahoo 补 `bars`，以及按新 K 线重算已存在信号行的
-`entry/close3/close5/hit3/outcome/peak`。**它不会生成新交易日的信号**——`flag` / `score`
-依赖完整的 Python 因子计算。要推进到新的一天：
+线上刷新会自动完成两件事：并发从 Yahoo 补抓全品种最新 `bars`（含盘中未收盘 K 线），随后在 Worker 侧通过 `deploy/signals.mjs` 直接重算 `ndx` / `qqq` / `ssec` 的跨资产因子与新交易日 `signals`（与本地 Python `cross.py` / `china.py` 口径逐位一致）并增量写回数据库；同时按市场时区做 5 分钟盘中冷却。
+
+只有当静态派生资源（如 VXN `_meta/timeline.json` 或新增 LLM 每日新闻标注）变动时，才需要本地重新打包部署：
 
 ```bash
-make refresh     # 本地拉行情并重算信号
-make cf          # 重新打包派生数据 + 增量同步
+make refresh              # 本地拉行情并重算信号
+make cf-supabase-deploy   # 重新打包派生数据 + 增量同步 Supabase + 部署 CF Worker
 ```
 
 ## 本地验证

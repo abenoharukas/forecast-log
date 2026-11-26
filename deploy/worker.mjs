@@ -2,20 +2,25 @@
  * Cloudflare Worker for forecast-log.
  *
  * Data model: the same five tables as the local `data/forecast.db`
- * (`bars`, `signals`, `news`, `agent_eval`, `chat_messages`). Nothing else lives in D1.
+ * (`bars`, `signals`, `news`, `agent_eval`, `chat_messages`).
+ * Supports Supabase PostgreSQL (via Cloudflare Hyperdrive or `DATABASE_URL`)
+ * with automatic fallback to Cloudflare D1 (`env.DB`).
  *
- * What is read from D1 vs. served as an asset:
- *   - /api/cross/<market>  D1: signals + bars joined on (instrument, date). The per-day
+ * What is read from the DB vs. served as an asset:
+ *   - /api/cross/<market>  DB: signals + bars joined on (instrument, date). The per-day
  *                          series, hit-rate summaries and A-share bands are computed here.
  *                          `_meta/cross-<market>.json` only supplies the static bits
  *                          (question text, context switch definitions, provenance).
- *   - /api/agent/<dataset> D1: the flat `agent_eval` table. Brier / log-loss / ECE are
+ *   - /api/agent/<dataset> DB: the flat `agent_eval` table. Brier / log-loss / ECE are
  *                          recomputed here, exactly like the local Python server.
  *   - /api/timeline        Asset: the VXN analogue-model fan charts are ~900 lines of
  *                          numpy and are built once at deploy time by
  *                          `scripts/build_d1_payloads.py`.
  *   - /api/state, /api/chat/*, /api/ingest, /api/refresh use the five tables directly.
  */
+
+import { createDb } from "./db.mjs";
+import { recomputeAllSignals } from "./signals.mjs";
 
 const MARKET_BY_SLUG = { ndx: "ndx", qqq: "qqq", ssec: "ssec", "a-shares": "ssec" };
 const INSTRUMENT = { ndx: "^NDX", qqq: "QQQ", ssec: "000001.SS" };
@@ -90,62 +95,17 @@ const ARRAY_COLUMNS = [
 ];
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const clean = url.pathname.replace(/\/+$/, "") || "/";
 
-    const api = clean.match(/^\/api\/cross\/([\w-]+)$/);
-    if (api) {
-      const market = MARKET_BY_SLUG[api[1]];
-      if (!market) return json({ ok: false, error: "unknown market" }, 404);
-      const doc = await loadMarket(env, url, market);
-      if (!doc) return json({ ok: false, error: `no rows for ${market}; run make cf` }, 404);
-      return json(doc);
-    }
-
     if (clean === "/api/timeline") {
       const res = await env.ASSETS.fetch(new Request(new URL("/_meta/timeline.json", url)));
-      if (!res.ok) return json({ ok: false, error: "timeline payload missing; run make cf" }, 404);
+      if (!res.ok) return json({ ok: false, error: "timeline payload missing; run make cf-supabase-deploy or make cf-worker-deploy" }, 404);
       return new Response(res.body, {
         status: 200,
         headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
       });
-    }
-
-    const agentApi = clean.match(/^\/api\/agent\/([a-z0-9_-]+)$/);
-    if (agentApi) {
-      const doc = await loadAgentEval(env, agentApi[1]);
-      if (!doc) return json({ ok: false, error: `no agent rows for ${agentApi[1]}; run make cf` }, 404);
-      return json(doc);
-    }
-
-    if (clean === "/api/state") return getD1State(env);
-
-    if (clean === "/api/chat/threads") return chatThreads(env, url);
-
-    if (clean === "/api/chat/messages") return chatMessages(env, url);
-
-    if (clean === "/api/ingest") {
-      if (request.method !== "POST") return json({ ok: false, error: "POST only" }, 405);
-      return ingest(request, env);
-    }
-
-    if (clean === "/api/refresh" || clean === "/api/fetch") {
-      const force = url.searchParams.get("force") === "1";
-      return refreshFromYahoo(env, force);
-    }
-
-    if (clean === "/api/news") {
-      const market = url.searchParams.get("market") || "ndx";
-      const limit = Math.max(10, Math.min(Number(url.searchParams.get("limit") || 50) || 50, 120));
-      return loadNewsBundle(env, url, { market, limit, cached: true });
-    }
-
-    if (clean === "/api/news/refresh") {
-      const force = url.searchParams.get("force") === "1";
-      const market = url.searchParams.get("market") || "ndx";
-      const limit = Math.max(10, Math.min(Number(url.searchParams.get("limit") || 50) || 50, 120));
-      return refreshNewsD1(env, url, { force, market, limit });
     }
 
     if (clean === "/web/points.html" || clean === "/points.html") {
@@ -166,7 +126,63 @@ export default {
       return new Response(res.body, { status: res.status, headers });
     }
 
-    return env.ASSETS.fetch(request);
+    if (!clean.startsWith("/api/")) {
+      return env.ASSETS.fetch(request);
+    }
+
+    const db = createDb(env);
+    try {
+      const api = clean.match(/^\/api\/cross\/([\w-]+)$/);
+      if (api) {
+        const market = MARKET_BY_SLUG[api[1]];
+        if (!market) return json({ ok: false, error: "unknown market" }, 404);
+        const doc = await loadMarket(db, env, url, market);
+        if (!doc) return json({ ok: false, error: `no rows for ${market}; run sync first` }, 404);
+        return json(doc);
+      }
+
+      const agentApi = clean.match(/^\/api\/agent\/([a-z0-9_-]+)$/);
+      if (agentApi) {
+        const doc = await loadAgentEval(db, agentApi[1]);
+        if (!doc) return json({ ok: false, error: `no agent rows for ${agentApi[1]}; run sync first` }, 404);
+        return json(doc);
+      }
+
+      if (clean === "/api/state") return await getDbState(db);
+
+      if (clean === "/api/chat/threads") return await chatThreads(db, url);
+
+      if (clean === "/api/chat/messages") return await chatMessages(db, url);
+
+      if (clean === "/api/ingest") {
+        if (request.method !== "POST") return json({ ok: false, error: "POST only" }, 405);
+        return await ingest(request, db, env);
+      }
+
+      if (clean === "/api/refresh" || clean === "/api/fetch") {
+        const force = url.searchParams.get("force") === "1";
+        return await refreshFromYahoo(db, env, url, force);
+      }
+
+      if (clean === "/api/news") {
+        const market = url.searchParams.get("market") || "ndx";
+        const limit = Math.max(10, Math.min(Number(url.searchParams.get("limit") || 50) || 50, 120));
+        return await loadNewsBundle(db, env, url, { market, limit, cached: true });
+      }
+
+      if (clean === "/api/news/refresh") {
+        const force = url.searchParams.get("force") === "1";
+        const market = url.searchParams.get("market") || "ndx";
+        const limit = Math.max(10, Math.min(Number(url.searchParams.get("limit") || 50) || 50, 120));
+        return await refreshNews(db, env, url, { force, market, limit });
+      }
+
+      return env.ASSETS.fetch(request);
+    } finally {
+      const closing = db.close();
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(closing);
+      else await closing;
+    }
   },
 };
 
@@ -264,6 +280,20 @@ function sum(values) {
   return values.reduce((acc, value) => acc + value, 0);
 }
 
+function daysAgoStr(days) {
+  return new Date(Date.now() - days * 86400 * 1000).toISOString().slice(0, 10);
+}
+
+function timingSafeEqualStr(a, b) {
+  const enc = new TextEncoder();
+  const ba = enc.encode(String(a || ""));
+  const bb = enc.encode(String(b || ""));
+  if (ba.length !== bb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ba.length; i += 1) diff |= ba[i] ^ bb[i];
+  return diff === 0;
+}
+
 async function assetJson(env, url, path) {
   const res = await env.ASSETS.fetch(new Request(new URL(path, url)));
   if (!res.ok) return null;
@@ -272,9 +302,9 @@ async function assetJson(env, url, path) {
 
 // ------------------------------------------------------------------ /api/cross
 
-async function loadMarket(env, url, market) {
+async function loadMarket(db, env, url, market) {
   const instrument = INSTRUMENT[market];
-  const res = await env.DB.prepare(
+  const rows = await db.all(
     `SELECT s.*, b.open, b.high, b.low, b.close, b.volume,
             COALESCE(b.is_closed, 1) AS is_closed,
             COALESCE(NULLIF(s.fetched_at, ''), b.fetched_at, '') AS eff_fetched_at
@@ -282,14 +312,12 @@ async function loadMarket(env, url, market) {
      LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
      WHERE s.market = ?
      ORDER BY s.date ASC`,
-  )
-    .bind(instrument, market)
-    .all();
-  const rows = res.results ?? [];
+    [instrument, market],
+  );
   if (!rows.length) return null;
 
   const meta = (await assetJson(env, url, `/_meta/cross-${market}.json`)) || {};
-  const ndxDoc = market === "ndx" ? null : await loadMarketRows(env, "ndx");
+  const ndxDoc = market === "ndx" ? null : await loadMarketRows(db, "ndx");
 
   const doc = {};
   if (meta.name) doc.name = meta.name;
@@ -381,19 +409,17 @@ async function loadMarket(env, url, market) {
 }
 
 /** Load only the per-session rows (no meta) — used for the NDX cross-reference. */
-async function loadMarketRows(env, market) {
+async function loadMarketRows(db, market) {
   const instrument = INSTRUMENT[market];
-  const res = await env.DB.prepare(
+  const rows = await db.all(
     `SELECT s.*, b.open, b.high, b.low, b.close, b.volume,
             COALESCE(b.is_closed, 1) AS is_closed
      FROM signals s
      LEFT JOIN bars b ON b.symbol = ? AND b.date = s.date
      WHERE s.market = ?
      ORDER BY s.date ASC`,
-  )
-    .bind(instrument, market)
-    .all();
-  const rows = res.results ?? [];
+    [instrument, market],
+  );
   if (!rows.length) return null;
   const doc = {
     instrument,
@@ -702,13 +728,11 @@ function comparison(primary, other) {
 
 // ------------------------------------------------------------------ /api/agent
 
-async function loadAgentEval(env, dataset) {
-  const res = await env.DB.prepare(
+async function loadAgentEval(db, dataset) {
+  const rows = await db.all(
     "SELECT * FROM agent_eval WHERE dataset = ? ORDER BY as_of ASC, horizon ASC, question_id ASC",
-  )
-    .bind(dataset)
-    .all();
-  const rows = res.results ?? [];
+    [dataset],
+  );
   if (!rows.length) return null;
 
   const first = rows[0];
@@ -898,11 +922,11 @@ function ece(pairs, bins = 5) {
 
 // ------------------------------------------------------------------ state / chat
 
-async function getD1State(env) {
+async function getDbState(db) {
   try {
-    const [marketRes, barRes, newsRes, agentRes, chatRes] = await env.DB.batch([
-      env.DB.prepare(
-        `SELECT s.market,
+    const [marketRows, barRows, newsRows, agentRows, chatRows] = await db.batch([
+      {
+        sql: `SELECT s.market,
                 COUNT(*) AS cnt,
                 MAX(s.date) AS max_date,
                 MIN(CASE WHEN s.outcome IS NULL THEN s.date END) AS first_unresolved,
@@ -912,17 +936,15 @@ async function getD1State(env) {
          LEFT JOIN bars b ON b.symbol = CASE s.market WHEN 'ndx' THEN '^NDX' WHEN 'qqq' THEN 'QQQ' ELSE '000001.SS' END
                           AND b.date = s.date
          GROUP BY s.market`,
-      ),
-      env.DB.prepare("SELECT symbol, COUNT(*) AS cnt, MAX(date) AS max_date FROM bars GROUP BY symbol"),
-      env.DB.prepare("SELECT COUNT(*) AS cnt, MAX(as_of) AS max_as_of FROM news"),
-      env.DB.prepare(
-        "SELECT dataset, COUNT(*) AS cnt, MAX(generated_at) AS generated_at FROM agent_eval GROUP BY dataset",
-      ),
-      env.DB.prepare("SELECT COUNT(*) AS cnt, MAX(created_at) AS max_created_at FROM chat_messages"),
+      },
+      { sql: "SELECT symbol, COUNT(*) AS cnt, MAX(date) AS max_date FROM bars GROUP BY symbol" },
+      { sql: "SELECT COUNT(*) AS cnt, MAX(as_of) AS max_as_of FROM news" },
+      { sql: "SELECT dataset, COUNT(*) AS cnt, MAX(generated_at) AS generated_at FROM agent_eval GROUP BY dataset" },
+      { sql: "SELECT COUNT(*) AS cnt, MAX(created_at) AS max_created_at FROM chat_messages" },
     ]);
 
     const markets = {};
-    for (const row of marketRes.results ?? []) {
+    for (const row of marketRows) {
       markets[row.market] = {
         count: row.cnt,
         max_date: row.max_date,
@@ -932,43 +954,39 @@ async function getD1State(env) {
       };
     }
     const bars = {};
-    for (const row of barRes.results ?? []) bars[row.symbol] = { count: row.cnt, max_date: row.max_date };
-    const news = newsRes.results?.[0] ?? { cnt: 0, max_as_of: null };
+    for (const row of barRows) bars[row.symbol] = { count: row.cnt, max_date: row.max_date };
+    const news = newsRows[0] ?? { cnt: 0, max_as_of: null };
     const agents = {};
-    for (const row of agentRes.results ?? []) agents[row.dataset] = { count: row.cnt, generated_at: row.generated_at };
-    const chat = chatRes.results?.[0] ?? { cnt: 0, max_created_at: null };
+    for (const row of agentRows) agents[row.dataset] = { count: row.cnt, generated_at: row.generated_at };
+    const chat = chatRows[0] ?? { cnt: 0, max_created_at: null };
 
-    return json({ ok: true, markets, bars, news, agents, chat });
+    return json({ ok: true, backend: db.backend, markets, bars, news, agents, chat });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
   }
 }
 
-async function chatThreads(env, url) {
+async function chatThreads(db, url) {
   const market = url.searchParams.get("market") || "ndx";
   try {
-    const res = await env.DB.prepare(
+    const threads = await db.all(
       `SELECT thread_id, market, MAX(as_of) AS as_of, MIN(created_at) AS created_at,
               MAX(created_at) AS updated_at, COUNT(*) AS message_count
        FROM chat_messages WHERE market = ?
        GROUP BY thread_id, market ORDER BY updated_at DESC, thread_id DESC LIMIT 20`,
-    )
-      .bind(market)
-      .all();
-    const threads = res.results ?? [];
+      [market],
+    );
     let messages = [];
     if (threads.length) {
-      const msg = await env.DB.prepare(
+      messages = await db.all(
         "SELECT thread_id, seq, market, as_of, role, model, stance, content, created_at FROM chat_messages WHERE thread_id = ? ORDER BY seq ASC",
-      )
-        .bind(threads[0].thread_id)
-        .all();
-      messages = msg.results ?? [];
+        [threads[0].thread_id],
+      );
     }
     return json({
       ok: true,
       market,
-      context: await chatContext(env, market),
+      context: await chatContext(db, market),
       threads,
       active_thread_id: threads.length ? threads[0].thread_id : null,
       messages,
@@ -978,15 +996,14 @@ async function chatThreads(env, url) {
   }
 }
 
-async function chatMessages(env, url) {
+async function chatMessages(db, url) {
   const threadId = url.searchParams.get("thread_id") || "";
   if (!threadId) return json({ ok: true, thread_id: "", messages: [] });
-  const res = await env.DB.prepare(
+  const messages = await db.all(
     "SELECT thread_id, seq, market, as_of, role, model, stance, content, created_at FROM chat_messages WHERE thread_id = ? ORDER BY seq ASC",
-  )
-    .bind(threadId)
-    .all();
-  return json({ ok: true, thread_id: threadId, messages: res.results ?? [] });
+    [threadId],
+  );
+  return json({ ok: true, thread_id: threadId, messages });
 }
 
 /** Short market snapshot for the group-chat side panel (the full Python builder is not portable). */
@@ -994,17 +1011,15 @@ function fmtPrice(value) {
   return value === null || value === undefined ? "-" : Number(value).toFixed(2);
 }
 
-async function chatContext(env, market) {
+async function chatContext(db, market) {
   const instrument = INSTRUMENT[market] || INSTRUMENT.ndx;
   try {
-    const [barRes, sigRes, newsRes] = await env.DB.batch([
-      env.DB.prepare("SELECT date, open, high, low, close, is_closed FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 2").bind(instrument),
-      env.DB.prepare("SELECT date, flag, score, threshold FROM signals WHERE market = ? ORDER BY date DESC LIMIT 1").bind(market),
-      env.DB.prepare("SELECT published_at, title FROM news WHERE doc_id != '' ORDER BY substr(published_at,1,10) DESC, published_at DESC LIMIT 5"),
+    const [bars, sigRows, recentNews] = await db.batch([
+      { sql: "SELECT date, open, high, low, close, is_closed FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 2", params: [instrument] },
+      { sql: "SELECT date, flag, score, threshold FROM signals WHERE market = ? ORDER BY date DESC LIMIT 1", params: [market] },
+      { sql: "SELECT published_at, title FROM news WHERE doc_id != '' ORDER BY substr(published_at,1,10) DESC, published_at DESC LIMIT 5" },
     ]);
-    const bars = barRes.results ?? [];
-    const signal = sigRes.results?.[0];
-    const recentNews = newsRes.results ?? [];
+    const signal = sigRows[0];
     if (!bars.length) {
       return { market, symbol: instrument, as_of: "", text: `标的：${instrument}\n暂无行情数据。` };
     }
@@ -1041,10 +1056,10 @@ async function chatContext(env, market) {
 
 // ------------------------------------------------------------------ ingest
 
-async function ingest(request, env) {
+async function ingest(request, db, env) {
   const token = (request.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   if (!env.INGEST_TOKEN) return json({ ok: false, error: "INGEST_TOKEN is not set on the Worker" }, 500);
-  if (token !== env.INGEST_TOKEN) return json({ ok: false, error: "bad token" }, 401);
+  if (!timingSafeEqualStr(token, env.INGEST_TOKEN)) return json({ ok: false, error: "bad token" }, 401);
 
   let body;
   try {
@@ -1054,16 +1069,19 @@ async function ingest(request, env) {
   }
 
   try {
-    if (body.op === "state") return getD1State(env);
+    if (body.op === "state") return getDbState(db);
     if (body.op !== "sql") return json({ ok: false, error: "unknown op" }, 400);
     if (typeof body.sql !== "string") return json({ ok: false, error: "sql must be a string" }, 400);
     if (body.sql.length > 95_000) return json({ ok: false, error: "sql too large; send fewer rows per statement" }, 400);
+    if (db.dialect === "postgres" && /^\s*INSERT\s+OR\s+(REPLACE|IGNORE)\b/i.test(body.sql)) {
+      return json({ ok: false, error: "Postgres backend active; use scripts/sync_supabase.py or Postgres INSERT ... ON CONFLICT syntax" }, 400);
+    }
     if (
       !/^\s*INSERT\s+(OR\s+(REPLACE|IGNORE)\s+)?INTO\s+(bars|signals|news|agent_eval|chat_messages)\b/i.test(body.sql)
     ) {
       return json({ ok: false, error: "INSERT only on bars/signals/news/agent_eval/chat_messages" }, 400);
     }
-    const result = await env.DB.exec(body.sql);
+    const result = await db.execRaw(body.sql);
     return json({ ok: true, op: "sql", count: result.count ?? null });
   } catch (error) {
     return json({ ok: false, error: String(error && error.message ? error.message : error) }, 400);
@@ -1072,34 +1090,103 @@ async function ingest(request, env) {
 
 // ------------------------------------------------------------------ /api/refresh
 
-function beijingDateStr(date = new Date()) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
+function tzForSymbol(symbol) {
+  return symbol.endsWith(".SS") || symbol.endsWith(".SZ") ? "Asia/Shanghai" : "America/New_York";
+}
+
+function localDateTimeParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(date);
+    hour: "2-digit",
+    minute: "2-digit",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type) => parts.find((part) => part.type === type)?.value || "00";
+  const wd = get("weekday");
+  const isWeekday = wd !== "Sat" && wd !== "Sun";
+  const hour = Number(get("hour")) % 24;
+  const minute = Number(get("minute"));
+  return {
+    dateStr: `${get("year")}-${get("month")}-${get("day")}`,
+    mins: hour * 60 + minute,
+    isWeekday,
+  };
+}
+
+function beijingDateStr(date = new Date()) {
+  return localDateTimeParts(date, "Asia/Shanghai").dateStr;
 }
 
 function isSessionClosed(sessionDate, tzName = "America/New_York", now = new Date()) {
   const isChina = tzName === "Asia/Shanghai";
   const targetTz = isChina ? "Asia/Shanghai" : "America/New_York";
   const closeHm = isChina ? 15 * 60 + 5 : 16 * 60 + 15;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: targetTz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const get = (type) => parts.find((part) => part.type === type)?.value || "00";
-  const localDate = `${get("year")}-${get("month")}-${get("day")}`;
+  const { dateStr: localDate, mins } = localDateTimeParts(now, targetTz);
   if (sessionDate < localDate) return 1;
   if (sessionDate > localDate) return 0;
-  const mins = Number(get("hour")) * 60 + Number(get("minute"));
   return mins >= closeHm ? 1 : 0;
+}
+
+/**
+ * Mirrors local `server.py::_needs_refresh` + `db.py::refresh_check_summary`:
+ *   1. Any market whose `signals` lags behind `bars` -> refresh immediately
+ *   2. Any unclosed bar past market close (overdue) -> refresh immediately
+ *   3. Any active intraday unclosed bar older than 5 min -> refresh
+ *   4. Any market whose `signals.fetched_at` hasn't crossed today's open/close -> refresh
+ */
+async function checkNeedsRefresh(db, now = new Date()) {
+  const freshCutMs = now.getTime() - 5 * 60 * 1000;
+  const [unclosed, markets, barHeads] = await db.batch([
+    { sql: "SELECT symbol, date, fetched_at FROM bars WHERE is_closed = 0" },
+    { sql: "SELECT market, MAX(date) AS last_session, MAX(fetched_at) AS fetched_at FROM signals GROUP BY market" },
+    { sql: "SELECT symbol, MAX(date) AS max_date FROM bars WHERE symbol IN ('^NDX', 'QQQ', '000001.SS') GROUP BY symbol" },
+  ]);
+
+  const sessions = Object.fromEntries(markets.map((row) => [row.market, row.last_session]));
+  if (markets.length < 3) return { needed: true, sessions };
+
+  const barMaxBySym = new Map(barHeads.map((r) => [r.symbol, r.max_date]));
+  for (const row of markets) {
+    const sym = INSTRUMENT[row.market];
+    const barMax = barMaxBySym.get(sym);
+    if (barMax && (!row.last_session || row.last_session < barMax)) {
+      return { needed: true, sessions };
+    }
+  }
+
+  for (const row of unclosed) {
+    if (isSessionClosed(row.date, tzForSymbol(row.symbol), now)) {
+      return { needed: true, sessions };
+    }
+    const fetchedMs = row.fetched_at ? Date.parse(row.fetched_at) : NaN;
+    if (!Number.isFinite(fetchedMs) || fetchedMs < freshCutMs) {
+      return { needed: true, sessions };
+    }
+  }
+
+  for (const row of markets) {
+    const fetchedMs = row.fetched_at ? Date.parse(row.fetched_at) : NaN;
+    if (!Number.isFinite(fetchedMs)) return { needed: true, sessions };
+    const isChina = row.market === "ssec";
+    const tz = isChina ? "Asia/Shanghai" : "America/New_York";
+    const openHm = isChina ? 9 * 60 + 25 : 9 * 60 + 30;
+    const closeHm = isChina ? 15 * 60 + 5 : 16 * 60 + 15;
+    const localNow = localDateTimeParts(now, tz);
+    const localFetched = localDateTimeParts(new Date(fetchedMs), tz);
+
+    if (localFetched.dateStr < localNow.dateStr) {
+      if (localFetched.mins < closeHm) return { needed: true, sessions };
+      if (localNow.isWeekday && localNow.mins >= openHm) return { needed: true, sessions };
+    } else if (localFetched.dateStr === localNow.dateStr) {
+      if (localFetched.mins < closeHm && localNow.mins >= closeHm) return { needed: true, sessions };
+    }
+  }
+
+  return { needed: false, sessions };
 }
 
 async function fetchYahooBars(symbol, startUnix, endUnix) {
@@ -1109,9 +1196,7 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
   const payload = await res.json();
   const result = payload?.chart?.result?.[0];
   if (!result) return [];
-  const tz =
-    result?.meta?.exchangeTimezoneName ||
-    (symbol.endsWith(".SS") || symbol.endsWith(".SZ") ? "Asia/Shanghai" : "America/New_York");
+  const tz = result?.meta?.exchangeTimezoneName || tzForSymbol(symbol);
   const stamps = result.timestamp || [];
   const quote = result.indicators?.quote?.[0] || {};
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -1123,209 +1208,159 @@ async function fetchYahooBars(symbol, startUnix, endUnix) {
   const now = new Date();
   const byDate = new Map();
   for (let i = 0; i < stamps.length; i += 1) {
-    const close = quote.close?.[i];
-    if (close === null || close === undefined) continue;
+    const closeRaw = quote.close?.[i];
+    if (closeRaw === null || closeRaw === undefined) continue;
+    const close = rnd(closeRaw, 4);
+    if (!Number.isFinite(close) || close <= 0) continue;
     const day = fmt.format(new Date(stamps[i] * 1000));
+    const open = quote.open?.[i] != null && Number(quote.open[i]) > 0 ? rnd(quote.open[i], 4) : null;
+    let high = quote.high?.[i] != null && Number(quote.high[i]) > 0 ? rnd(quote.high[i], 4) : null;
+    let low = quote.low?.[i] != null && Number(quote.low[i]) > 0 ? rnd(quote.low[i], 4) : null;
+    if (high !== null && low !== null && low > high) [low, high] = [high, low];
+    const volRaw = quote.volume?.[i];
+    const volume = volRaw != null && Number(volRaw) >= 0 ? Math.trunc(volRaw) : null;
     byDate.set(day, {
       date: day,
       // Same precision as forecast_log.yahoo: bars store 4 decimals; the API
       // rounds to 2 when it builds the chart series.
-      open: quote.open?.[i] != null ? rnd(quote.open[i], 4) : null,
-      high: quote.high?.[i] != null ? rnd(quote.high[i], 4) : null,
-      low: quote.low?.[i] != null ? rnd(quote.low[i], 4) : null,
-      close: rnd(close, 4),
-      volume: quote.volume?.[i] != null ? Math.trunc(quote.volume[i]) : null,
+      open,
+      high,
+      low,
+      close,
+      volume,
       is_closed: isSessionClosed(day, tz, now),
     });
   }
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-async function refreshFromYahoo(env, force = false) {
-  try {
-    const todayBj = beijingDateStr();
-    const symbols = (await env.DB.prepare("SELECT DISTINCT symbol FROM bars ORDER BY symbol").all()).results ?? [];
-    if (!symbols.length) return json({ ok: false, error: "D1 尚未初始化，请先运行 make cf" }, 404);
+async function mapConcurrent(items, limit, fn) {
+  const results = new Array(items.length);
+  let nextIdx = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIdx < items.length) {
+      const idx = nextIdx;
+      nextIdx += 1;
+      results[idx] = await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
-    // 盘中 5 分钟冷却：页面每次加载都会 non-force 调一次，不能每次都打 Yahoo。
+async function refreshFromYahoo(db, env, url, force = false) {
+  try {
+    const now = new Date();
+    const todayBj = beijingDateStr(now);
+    const symbolStats = await db.all(
+      `SELECT symbol,
+              MAX(date) AS max_date,
+              MIN(CASE WHEN is_closed = 0 THEN date END) AS min_unclosed
+       FROM bars
+       GROUP BY symbol
+       ORDER BY symbol`,
+    );
+    if (!symbolStats.length) return json({ ok: false, error: "数据库尚未初始化，请先同步数据" }, 404);
+
     if (!force) {
-      const freshCut = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const unclosed = (await env.DB.prepare("SELECT symbol, date, fetched_at FROM bars WHERE is_closed = 0").all())
-        .results ?? [];
-      const stale = unclosed.filter((row) => !row.fetched_at || row.fetched_at < freshCut);
-      const markets = (await env.DB.prepare("SELECT market, MAX(date) AS last_session, MAX(fetched_at) AS fetched_at FROM signals GROUP BY market").all())
-        .results ?? [];
-      const allFresh = markets.length > 0 && markets.every((row) => (row.fetched_at || "").slice(0, 10) >= todayBj);
-      if (stale.length === 0 && allFresh) {
+      const check = await checkNeedsRefresh(db, now);
+      if (!check.needed) {
         return json({
           ok: true,
           cached: true,
           beijing_date: todayBj,
-          sessions: Object.fromEntries(markets.map((row) => [row.market, row.last_session])),
+          sessions: check.sessions,
         });
       }
     }
 
     const updated = {};
     const errors = {};
-    const nowSec = Math.floor(Date.now() / 1000) + 172800;
+    const nowSec = Math.floor(now.getTime() / 1000) + 172800;
+    const chunkSize = db.dialect === "postgres" ? 50 : 10;
 
-    for (const { symbol } of symbols) {
+    await mapConcurrent(symbolStats, 6, async ({ symbol, max_date: maxDate, min_unclosed: minUnclosed }) => {
       try {
-        const tail = (
-          await env.DB.prepare("SELECT date FROM bars WHERE symbol = ? ORDER BY date DESC LIMIT 1")
-            .bind(symbol)
-            .all()
-        ).results ?? [];
-        if (!tail.length) continue;
-        const startUnix = Math.floor(new Date(`${tail[0].date}T00:00:00Z`).getTime() / 1000) - 86400 * 10;
+        if (!maxDate) return;
+        const anchor = minUnclosed && minUnclosed < maxDate ? minUnclosed : maxDate;
+        const startUnix = Math.floor(new Date(`${anchor}T00:00:00Z`).getTime() / 1000) - 86400 * 6;
         const bars = await fetchYahooBars(symbol, startUnix, nowSec);
-        if (!bars.length) continue;
-        const statements = bars.map((bar) =>
-          env.DB.prepare(
-            `INSERT OR REPLACE INTO bars (symbol, date, open, high, low, close, volume, is_closed, fetched_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          ).bind(
-            symbol,
-            bar.date,
-            bar.open,
-            bar.high,
-            bar.low,
-            bar.close,
-            bar.volume,
-            bar.is_closed,
-            new Date().toISOString(),
-          ),
-        );
-        await env.DB.batch(statements);
-        updated[symbol] = bars[bars.length - 1].date;
+        if (!bars.length) return;
+        const fetchedAt = new Date().toISOString();
+        for (let offset = 0; offset < bars.length; offset += chunkSize) {
+          const slice = bars.slice(offset, offset + chunkSize);
+          const tuples = slice.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+          const params = [];
+          for (const bar of slice) {
+            params.push(symbol, bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.is_closed, fetchedAt);
+          }
+          await db.run(
+            `INSERT INTO bars (symbol, date, open, high, low, close, volume, is_closed, fetched_at)
+             VALUES ${tuples}
+             ON CONFLICT (symbol, date) DO UPDATE SET
+               open = excluded.open,
+               high = excluded.high,
+               low = excluded.low,
+               close = excluded.close,
+               volume = excluded.volume,
+               is_closed = excluded.is_closed,
+               fetched_at = excluded.fetched_at`,
+            params,
+          );
+        }
+        const latestDate = bars[bars.length - 1].date;
+        if (minUnclosed && minUnclosed < latestDate) {
+          // Close any stale historical intraday bar that Yahoo no longer emits
+          const tz = tzForSymbol(symbol);
+          if (isSessionClosed(minUnclosed, tz, now)) {
+            await db.run(
+              "UPDATE bars SET is_closed = 1, fetched_at = ? WHERE symbol = ? AND is_closed = 0 AND date < ?",
+              [fetchedAt, symbol, latestDate],
+            );
+          }
+        }
+        updated[symbol] = latestDate;
       } catch (err) {
         errors[symbol] = String(err && err.message ? err.message : err);
       }
-    }
+    });
 
-    const settled = await settleSignals(env);
-    const sessions = (await env.DB.prepare("SELECT market, MAX(date) AS last_session FROM signals GROUP BY market").all())
-      .results ?? [];
+    const [eventsMeta, newsIndicators, ndxMeta, qqqMeta, ssecMeta] = await Promise.all([
+      assetJson(env, url, "/_meta/events.json"),
+      assetJson(env, url, "/_meta/news-indicators.json"),
+      assetJson(env, url, "/_meta/cross-ndx.json"),
+      assetJson(env, url, "/_meta/cross-qqq.json"),
+      assetJson(env, url, "/_meta/cross-ssec.json"),
+    ]);
+
+    const refreshedAt = new Date().toISOString();
+    const signalsUpdated = await recomputeAllSignals(db, {
+      calendar: eventsMeta?.calendar || null,
+      newsIndicators,
+      contextsByMarket: {
+        ndx: (ndxMeta?.contexts || []).map((c) => c.key),
+        qqq: (qqqMeta?.contexts || []).map((c) => c.key),
+        ssec: (ssecMeta?.contexts || []).map((c) => c.key),
+      },
+      fetchedAt: refreshedAt,
+      rnd,
+      scanKeywords,
+    });
+
+    const sessions = await db.all("SELECT market, MAX(date) AS last_session FROM signals GROUP BY market");
     return json({
       ok: true,
-      refreshed_at: new Date().toISOString(),
+      refreshed_at: refreshedAt,
       beijing_date: beijingDateStr(),
       force,
       sessions: Object.fromEntries(sessions.map((row) => [row.market, row.last_session])),
       updated,
-      settled,
+      signals_updated: signalsUpdated,
       errors,
-      note: "线上只增量抓取 bars 并结算已存在信号；新交易日的信号仍需本地 make refresh 后 publish。",
     });
   } catch (err) {
     return json({ ok: false, error: String(err && err.message ? err.message : err) }, 500);
   }
-}
-
-/** Fill close3/close5/hit3/outcome/entry/peak for existing signal rows from the bars table. */
-async function settleSignals(env) {
-  const settled = {};
-  for (const market of Object.keys(INSTRUMENT)) {
-    const instrument = INSTRUMENT[market];
-    const bars = (await env.DB.prepare("SELECT date, open, close FROM bars WHERE symbol = ? ORDER BY date ASC").bind(instrument).all())
-      .results ?? [];
-    if (!bars.length) continue;
-    const index = new Map(bars.map((bar, i) => [bar.date, i]));
-    const tail = (
-      await env.DB.prepare("SELECT * FROM signals WHERE market = ? AND outcome IS NULL ORDER BY date DESC LIMIT 60")
-        .bind(market)
-        .all()
-    ).results ?? [];
-    let changed = 0;
-    for (const row of tail) {
-      const i = index.get(row.date);
-      if (i === undefined) continue;
-      const baseClose = bars[i].close;
-      if (baseClose === null) continue;
-      const H = HORIZON;
-      if (market === "ssec") {
-        if (i + H >= bars.length) continue;
-        const window = bars.slice(i + 1, i + 1 + H);
-        let peak = null;
-        let peakAt = null;
-        for (const bar of window) {
-          if (bar.close === null) continue;
-          if (peak === null || bar.close > peak) {
-            peak = bar.close;
-            peakAt = bar.date;
-          }
-        }
-        const close5 = bars[i + H].close;
-        const outcome = close5 > baseClose ? 1 : 0;
-        const close3 = bars[i + 3]?.close ?? null;
-        const flagged = Number(row.flag || 0) ? 1 : 0;
-        await env.DB.prepare(
-          `UPDATE signals SET outcome = ?, peak = ?, peak_at = ?,
-                              base_close = CASE WHEN ? THEN ? ELSE base_close END,
-                              close3 = CASE WHEN ? THEN ? ELSE close3 END,
-                              close5 = CASE WHEN ? THEN ? ELSE close5 END,
-                              hit3 = CASE WHEN ? THEN ? ELSE hit3 END
-           WHERE market = ? AND date = ?`,
-        )
-          .bind(
-            outcome,
-            rnd(peak, 2),
-            peakAt,
-            flagged,
-            rnd(baseClose, 2),
-            flagged,
-            rnd(close3, 2),
-            flagged,
-            rnd(close5, 2),
-            flagged,
-            close3 !== null && close3 > baseClose ? 1 : 0,
-            market,
-            row.date,
-          )
-          .run();
-        changed += 1;
-      } else {
-        if (i + H + 1 >= bars.length) continue;
-        const next = bars[i + 1];
-        const window = bars.slice(i + 2, i + 2 + H);
-        if (next.open === null || window.some((bar) => bar.close === null)) continue;
-        let peak = null;
-        let peakAt = null;
-        for (const bar of window) {
-          if (peak === null || bar.close > peak) {
-            peak = bar.close;
-            peakAt = bar.date;
-          }
-        }
-        const close3 = bars[i + 3]?.close ?? null;
-        const close5 = bars[i + H].close;
-        await env.DB.prepare(
-          `UPDATE signals SET entry = ?, entry_at = ?, base_close = ?, close3 = ?, close5 = ?, hit3 = ?,
-                              outcome = ?, target = ?, peak = ?, peak_at = ?
-           WHERE market = ? AND date = ?`,
-        )
-          .bind(
-            rnd(next.open, 2),
-            next.date,
-            rnd(baseClose, 2),
-            rnd(close3, 2),
-            rnd(close5, 2),
-            close3 !== null && close3 > baseClose ? 1 : 0,
-            close5 > baseClose ? 1 : 0,
-            bars[i + H].date,
-            rnd(peak, 2),
-            peakAt,
-            market,
-            row.date,
-          )
-          .run();
-        changed += 1;
-      }
-    }
-    settled[market] = changed;
-  }
-  return settled;
 }
 
 // ------------------------------------------------------------------ /api/news & /api/news/refresh
@@ -1463,16 +1498,16 @@ function classifyNewsRow(row) {
   return { ...row, category, tags: tags.slice(0, 5), sentiment };
 }
 
-async function crossAssetsSnapshot(env) {
+async function crossAssetsSnapshot(db) {
   const syms = ["^TNX", "DX-Y.NYB", "HYG", "TLT", "^VIX", "^VXN", "GC=F"];
   const placeholders = syms.map(() => "?").join(",");
-  const res = await env.DB.prepare(
-    `SELECT symbol, date, close, is_closed FROM bars WHERE symbol IN (${placeholders}) AND date >= date('now', '-400 days') ORDER BY symbol ASC, date ASC`,
-  )
-    .bind(...syms)
-    .all();
+  const cutoff = daysAgoStr(400);
+  const rows = await db.all(
+    `SELECT symbol, date, close, is_closed FROM bars WHERE symbol IN (${placeholders}) AND date >= ? ORDER BY symbol ASC, date ASC`,
+    [...syms, cutoff],
+  );
   const bySym = new Map();
-  for (const r of res.results ?? []) {
+  for (const r of rows) {
     if (!bySym.has(r.symbol)) bySym.set(r.symbol, []);
     bySym.get(r.symbol).push(r);
   }
@@ -1569,23 +1604,26 @@ async function macroCalendarSnapshot(env, url, todayStr) {
   };
 }
 
-async function loadNewsBundle(env, url, { market = "ndx", limit = 50, cached = true, fetchMeta = {} } = {}) {
+async function loadNewsBundle(db, env, url, { market = "ndx", limit = 50, cached = true, fetchMeta = {} } = {}) {
   const todayBj = beijingDateStr();
-  const [aggRes, daysRes, itemsRes, crossAssets, macroCalendar, ndxMeta, llmIndicators] = await Promise.all([
-    env.DB.prepare("SELECT COUNT(*) AS total_rows, MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of, MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at FROM news").all(),
-    env.DB.prepare("SELECT as_of, COUNT(*) AS count, MAX(source) AS source, MAX(fetched_at) AS fetched_at FROM news WHERE doc_id != '' GROUP BY as_of ORDER BY as_of DESC LIMIT 7").all(),
-    env.DB.prepare("SELECT as_of, doc_id AS id, published_at, title, text, url, domain, source, fetched_at FROM news WHERE doc_id != '' AND as_of >= date('now', '-20 days') ORDER BY substr(published_at,1,10) DESC, published_at DESC, as_of DESC, fetched_at DESC LIMIT ?").bind(Math.max(limit * 3, 120)).all(),
-    crossAssetsSnapshot(env),
+  const newsCutoff = daysAgoStr(20);
+  const [aggRows, recentDays, itemRows, crossAssets, macroCalendar, ndxMeta, llmIndicators] = await Promise.all([
+    db.all("SELECT COUNT(*) AS total_rows, MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of, MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at FROM news"),
+    db.all("SELECT as_of, COUNT(*) AS count, MAX(source) AS source, MAX(fetched_at) AS fetched_at FROM news WHERE doc_id != '' GROUP BY as_of ORDER BY as_of DESC LIMIT 7"),
+    db.all(
+      "SELECT as_of, doc_id AS id, published_at, title, text, url, domain, source, fetched_at FROM news WHERE doc_id != '' AND as_of >= ? ORDER BY substr(published_at,1,10) DESC, published_at DESC, as_of DESC, fetched_at DESC LIMIT ?",
+      [newsCutoff, Math.max(limit * 3, 120)],
+    ),
+    crossAssetsSnapshot(db),
     macroCalendarSnapshot(env, url, todayBj),
     assetJson(env, url, "/_meta/cross-ndx.json"),
     assetJson(env, url, "/_meta/news-indicators.json"),
   ]);
 
-  const agg = aggRes.results?.[0] || {};
-  const recentDays = daysRes.results ?? [];
+  const agg = aggRows[0] || {};
   const seen = new Set();
   const deduped = [];
-  for (const row of itemsRes.results ?? []) {
+  for (const row of itemRows) {
     const title = String(row.title || "").trim();
     if (!title) continue;
     const u = String(row.url || "").trim();
@@ -1631,15 +1669,17 @@ async function loadNewsBundle(env, url, { market = "ndx", limit = 50, cached = t
   });
 }
 
-async function refreshNewsD1(env, url, { force = false, market = "ndx", limit = 50 } = {}) {
+async function refreshNews(db, env, url, { force = false, market = "ndx", limit = 50 } = {}) {
   try {
     const todayBj = beijingDateStr();
     if (!force) {
-      const agg = (await env.DB.prepare("SELECT MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of, MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at FROM news").all()).results?.[0];
+      const agg = await db.first(
+        "SELECT MAX(CASE WHEN doc_id != '' THEN as_of END) AS latest_as_of, MAX(CASE WHEN doc_id != '' THEN fetched_at END) AS latest_fetched_at FROM news",
+      );
       const latestDate = agg?.latest_as_of || "";
       const fetchedMs = agg?.latest_fetched_at ? new Date(agg.latest_fetched_at).getTime() : 0;
       if (latestDate >= todayBj && fetchedMs && Date.now() - fetchedMs < NEWS_COOLDOWN_MS) {
-        return loadNewsBundle(env, url, { market, limit, cached: true });
+        return loadNewsBundle(db, env, url, { market, limit, cached: true });
       }
     }
 
@@ -1671,30 +1711,47 @@ async function refreshNewsD1(env, url, { force = false, market = "ndx", limit = 
     }
 
     const seenUrl = new Set();
+    const seenId = new Set();
     const unique = [];
     allDocs.sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""));
     for (const doc of allDocs) {
       const k = doc.url.toLowerCase();
-      if (seenUrl.has(k)) continue;
+      if (seenUrl.has(k) || seenId.has(doc.id)) continue;
       seenUrl.add(k);
+      seenId.add(doc.id);
       unique.push(doc);
       if (unique.length >= 100) break;
     }
 
     if (unique.length) {
-      const stmts = [
-        env.DB.prepare("DELETE FROM news WHERE as_of = ? AND doc_id = ''").bind(todayBj),
-        ...unique.map((doc) =>
-          env.DB.prepare(
-            `INSERT OR REPLACE INTO news (as_of, doc_id, published_at, title, text, url, domain, depth, source, page, fetched_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?)`,
-          ).bind(todayBj, doc.id, doc.published_at, doc.title, doc.text, doc.url, doc.domain, doc.source, fetchedUtc),
-        ),
-      ];
-      await env.DB.batch(stmts);
+      await db.run("DELETE FROM news WHERE as_of = ? AND doc_id = ''", [todayBj]);
+      const chunkSize = db.dialect === "postgres" ? 50 : 8;
+      for (let offset = 0; offset < unique.length; offset += chunkSize) {
+        const slice = unique.slice(offset, offset + chunkSize);
+        const tuples = slice.map(() => "(?, ?, ?, ?, ?, ?, ?, NULL, ?, '', ?)").join(", ");
+        const params = [];
+        for (const doc of slice) {
+          params.push(todayBj, doc.id, doc.published_at, doc.title, doc.text, doc.url, doc.domain, doc.source, fetchedUtc);
+        }
+        await db.run(
+          `INSERT INTO news (as_of, doc_id, published_at, title, text, url, domain, depth, source, page, fetched_at)
+           VALUES ${tuples}
+           ON CONFLICT (as_of, doc_id) DO UPDATE SET
+             published_at = excluded.published_at,
+             title = excluded.title,
+             text = excluded.text,
+             url = excluded.url,
+             domain = excluded.domain,
+             depth = excluded.depth,
+             source = excluded.source,
+             page = excluded.page,
+             fetched_at = excluded.fetched_at`,
+          params,
+        );
+      }
     }
 
-    return loadNewsBundle(env, url, {
+    return loadNewsBundle(db, env, url, {
       market,
       limit,
       cached: false,

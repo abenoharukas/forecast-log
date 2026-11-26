@@ -10,7 +10,7 @@ marks (`/api/state`) and only uploads the tail that can have changed — recent 
 unsettled signals, the newest news days, agent reports whose `generated_at` moved, and
 new chat messages. Completed history is never re-sent.
 
-    make publish                       # against local `wrangler dev`
+    make cf-d1-local-sync              # against local `wrangler dev`
     python3 scripts/publish_d1.py --url https://forecast.lumixraku.org --token ...
 """
 
@@ -291,7 +291,7 @@ def main() -> None:
         if not args.skip_news:
             remote_as_of = remote_news.get("max_as_of")
             if not remote_as_of and not remote_news.get("cnt"):
-                print("news: D1 还是空的，请用 make cf 做一次全量 seed（跳过增量）", flush=True)
+                print("news: D1 还是空的，请用 make cf-d1-deploy 做一次全量 seed（跳过增量）", flush=True)
             else:
                 cutoff = (date.fromisoformat(remote_as_of) - timedelta(days=2)).isoformat() if remote_as_of else "1900-01-01"
                 push(conn, args.url, args.token, "news", NEWS_COLUMNS, "as_of >= ?", (cutoff,), max(args.batch, 100))
@@ -333,7 +333,7 @@ def main() -> None:
         conn.close()
 
     print("D1 增量同步完成", flush=True)
-    print("提示：/api/timeline 与 cross 元数据随静态资源发布；数据变化后请跑 make cf（或至少 make static 后 wrangler deploy）", flush=True)
+    print("提示：/api/timeline 与 cross 元数据随静态资源发布；数据变化后请跑 make cf-d1-deploy（或至少 make cf-worker-deploy）", flush=True)
 
 
 if __name__ == "__main__":

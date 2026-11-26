@@ -13,11 +13,14 @@ make            # Creates .venv, downloads data/forecast.db, starts http://127.0
 | Command | Description |
 |---|---|
 | `make` / `make dev` | Start local dashboard server on port `8731` (`make dev PORT=9000` to override) |
-| `make data` / `make data-refresh` | Download `data/forecast.db` if missing / force latest snapshot |
-| `make refresh` | Incrementally fetch latest Yahoo Finance bars across all 15 symbols and recompute signals |
+| `make refresh` | Incrementally fetch latest Yahoo Finance bars across all 15 symbols and recompute local signals |
 | `make test` | Run the offline test suite (`pytest -q`, no network or API keys needed) |
-| `make cf` / `make worker` | Deploy static assets + Worker + incremental D1 sync to Cloudflare / run local Worker on `8787` (`RESEED=1 make cf` reloads D1 from the local DB) |
-| `make status` / `make stop` | Check or stop the process listening on `PORT` |
+| `make cf-supabase-deploy` / `make cf-supabase-reseed` | Build static assets + incremental sync (or full truncate-and-reload) to **Supabase Postgres** + deploy **Cloudflare Worker** |
+| `make supabase-sync` / `make supabase-reseed` | Incremental sync / full reseed to **Supabase Postgres** only (no Worker deploy) |
+| `make cf-worker-deploy` / `make cf-worker-dev` | Deploy **Cloudflare Worker** & static assets only (no DB sync) / run local Worker on `8787` |
+| `make cf-d1-deploy` / `make cf-d1-reseed` | Legacy **Cloudflare D1** incremental deploy / full reseed |
+| `make gh-db-pull` / `make gh-db-pull-force` / `make gh-db-push` | Pull / force-pull / overwrite-push `data/forecast.db` on GitHub Release `data-latest` |
+| `make status` / `make stop` / `make help` | Check or stop local server on `PORT`, or print grouped command list |
 
 ## Pages & Features
 

@@ -2,10 +2,21 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "forecast",
   "main": "deploy/worker.mjs",
-  "compatibility_date": "2026-11-01",
+  "compatibility_date": "2026-11-25",
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
   },
+  // Supabase PostgreSQL via Cloudflare Hyperdrive:
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "d8df72bbd63448ca94263f7a009557c3"
+    }
+  ],
+  "placement": { "region": "aws:us-east-1" },
   "d1_databases": [
     {
       "binding": "DB",

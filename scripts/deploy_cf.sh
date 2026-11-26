@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Deploy forecast-log to Cloudflare: D1 schema/seed → static assets → Worker → incremental sync.
 #
-#   make cf                 # normal deploy; creates the DB if missing, seeds only when empty
-#   RESEED=1 make cf        # drop the D1 database and reload it from local data/forecast.db
+#   make cf-d1-deploy       # normal deploy; creates the DB if missing, seeds only when empty
+#   make cf-d1-reseed       # drop the D1 database and reload it from local data/forecast.db
 #
 # The D1 schema mirrors the local SQLite exactly (bars / signals / news / agent_eval /
 # chat_messages). Derived payloads that cannot be recomputed cheaply at the edge
@@ -90,7 +90,7 @@ if [ "$ROWS" = "0" ] || [ ! -d "$SEED_DIR" ] || [ -z "$(ls -A "$SEED_DIR" 2>/dev
   done
   printf '\r  导入完成：%s 个文件\n' "$total"
 else
-  echo "D1 已有 $ROWS 行 bars，跳过全量种子（需要重灌请用 RESEED=1 make cf）"
+  echo "D1 已有 $ROWS 行 bars，跳过全量种子（需要重灌请用 make cf-d1-reseed）"
 fi
 
 say "6/8 写入 INGEST_TOKEN"
